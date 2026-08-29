@@ -1,10 +1,7 @@
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { delimiter, join } from "node:path";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
 
 export interface LarkUserProfile {
   openId: string;
@@ -16,11 +13,9 @@ export type LarkCliStatus = "ready" | "missing" | "not_authenticated";
 
 /** 调用项目本地 lark-cli，封装跨平台命令入口和身份错误。 */
 export class LarkCli {
-  private readonly command: string;
   private readonly profileDir: string;
 
   constructor(dataDir = join(process.cwd(), "memory", "users")) {
-    this.command = process.platform === "win32" ? "lark-cli.cmd" : "lark-cli";
     this.profileDir = dataDir;
   }
 
@@ -66,9 +61,19 @@ export class LarkCli {
   }
 
   private async exec(args: string[]): Promise<string> {
-    const env = { ...process.env, PATH: `${join(process.cwd(), "node_modules", ".bin")}${delimiter}${process.env.PATH ?? ""}` };
-    const result = await execFileAsync(this.command, args, { env, windowsHide: true, maxBuffer: 1024 * 1024 });
-    return result.stdout;
+    const binPath = join(process.cwd(), "node_modules", ".bin", process.platform === "win32" ? "lark-cli.cmd" : "lark-cli");
+    return new Promise((resolve, reject) => {
+      const child = spawn(binPath, args, { shell: true, windowsHide: true });
+      let stdout = "";
+      let stderr = "";
+      child.stdout.on("data", (data) => { stdout += data; });
+      child.stderr.on("data", (data) => { stderr += data; });
+      child.on("error", reject);
+      child.on("close", (code) => {
+        if (code === 0) resolve(stdout);
+        else reject(new Error(`lark-cli exited with code ${code}: ${stderr}`));
+      });
+    });
   }
 
   private async readCached(openId: string): Promise<LarkUserProfile | undefined> {
