@@ -32,9 +32,14 @@ export class FeishuAgentBridge {
       await this.conversations.prompt(
         { conversationId, prompt: { text: message.text, images: message.images, context: message.context } },
         async (event) => {
-          latestText = event.text;
           await this.onEvent?.(event, message);
-          if (event.text) await reply.update(event.text);
+          if (event.type === "assistant_text") {
+            latestText = event.text;
+            if (event.text) await reply.update(event.text);
+          }
+          if (event.type === "tool_started") await reply.update(`正在调用工具：${event.toolName}`);
+          if (event.type === "tool_updated") await reply.update(`工具执行中：${event.toolName}`);
+          if (event.type === "tool_finished" && event.isError) await reply.update(`工具执行失败：${event.toolName}`);
         },
       );
       await reply.close(latestText);

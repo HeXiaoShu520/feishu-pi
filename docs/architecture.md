@@ -68,7 +68,7 @@ chat:<chatId>
 
 ### Agent 运行时
 
-`FeishuPiRuntime` 通过 Pi 公开 SDK 创建 `AgentSession`。默认可用工具为：
+`FeishuPiRuntime` 通过 Pi 公开 SDK 创建 `AgentSession`，并将 Pi 的工具生命周期转换为 feishu-pi 事件：工具开始、执行中和完成/失败。Bridge 当前将这些状态用普通文本反馈；CardKit 仍待后续接入。默认可用工具为：
 
 ```text
 read / write / edit / bash
