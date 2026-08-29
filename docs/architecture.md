@@ -96,7 +96,7 @@ Agent 处理失败时，Bridge 会将占位回复更新为“处理失败，请�
 
 服务从环境变量读取飞书凭据、模型 Provider、工作目录和 Pi Session 目录。Pi 的 Session 文件由 `SessionManager` 创建；当前进程内按会话键复用 Session。
 
-当前未实现会话键到 Session 文件的持久映射。因此服务重启后会创建新的会话，旧 Session 文件仍由 Pi 保留但不会自动按飞书会话恢复。会话内容继续使用 Pi 原生 Session 格式；Markdown 只用于后续的长期记忆，不作为会话历史格式。
+会话键到 Session 文件的映射保存在 `FEISHU_PI_SESSION_DIR/conversations.json`，服务重启后会尝试恢复原 Pi Session；会话内容继续使用 Pi 原生 Session 格式，Markdown 只用于后续的长期记忆，不作为会话历史格式。消息处理状态保存在同目录的 `messages.json`，以 `messageId` 避免重复执行 Agent。
 
 ## 安全边界
 
@@ -107,6 +107,6 @@ Agent 处理失败时，Bridge 会将占位回复更新为“处理失败，请�
 
 ## 当前范围
 
-已实现：飞书 WebSocket、Pi Session、会话内串行、内置编码工具、业务工具注入、文本回复更新、回复节流、TypeScript 类型检查和基础单元测试（2 个测试文件、3 个测试用例）。
+已实现：飞书 WebSocket、Pi Session、会话内串行、会话映射持久化、消息去重、内置编码工具、业务工具注入、文本回复更新、回复节流、TypeScript 类型检查和基础单元测试（3 个测试文件、6 个测试用例）。
 
-未实现：CardKit producer 式流、图片/文件/音频解析、长期记忆注入、业务飞书工具、会话恢复映射、断线重连策略、优雅关闭和真实飞书环境验收。
+未实现：CardKit producer 式流、图片/文件/音频解析、长期记忆注入、业务飞书工具、断线重连策略、优雅关闭和真实飞书环境验收。

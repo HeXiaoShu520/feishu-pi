@@ -41,7 +41,8 @@ feishu-pi 最终要成为一个飞书原生的轻量 Agent 后端：
 ### 当前限制
 
 - [ ] 尚未完成真实飞书和真实模型 smoke test。
-- [ ] Session 文件尚未与飞书 `conversationId` 建立持久映射。
+- [x] Session 文件已通过 JSON 映射与飞书 `conversationId` 持久关联。
+- [x] 消息已通过持久化 `messageId` 状态避免重复执行。
 - [ ] 自定义工具注册仍有运行时类型断言。
 - [ ] 目前使用普通文本编辑，不是 CardKit Producer 流。
 - [ ] 尚未接入长期记忆、Skills 和飞书业务工具。
