@@ -8,6 +8,8 @@ export interface LarkTransportConfig {
   botOpenId?: string;
   source?: string;
   userProfileDir?: string;
+  handshakeTimeoutMs?: number;
+  pingTimeout?: number;
 }
 
 /** 基于飞书官方高层 Channel 的最小消息传输实现。 */
@@ -16,6 +18,8 @@ export class LarkTransport implements FeishuTransport {
   private readonly botOpenId?: string;
   private readonly larkCli: LarkCli;
   private handler?: (message: FeishuInboundMessage) => Promise<void>;
+  private messageHandlerRegistered = false;
+  private connecting?: Promise<void>;
 
   constructor(config: LarkTransportConfig) {
     this.botOpenId = config.botOpenId;
@@ -25,43 +29,55 @@ export class LarkTransport implements FeishuTransport {
       appSecret: config.appSecret,
       transport: "websocket",
       source: config.source ?? "feishu-pi",
-      safety: { dedup: { maxEntries: 10_000 } },
+      handshakeTimeoutMs: config.handshakeTimeoutMs ?? 15_000,
+      wsConfig: { pingTimeout: config.pingTimeout ?? 30 },
+      safety: { dedup: { maxEntries: 10_000, ttl: 10 * 60 * 1000 } },
     });
+    this.channel.on("reconnecting", () => console.warn("[LarkTransport] 飞书 WebSocket 正在重连"));
+    this.channel.on("reconnected", () => console.info("[LarkTransport] 飞书 WebSocket 已恢复"));
+    this.channel.on("error", (error) => console.error("[LarkTransport] 飞书 WebSocket 错误", error));
   }
 
   /** 建立飞书长连接并开始接收消息。 */
   async connect(): Promise<void> {
-    this.channel.on("message", async (message) => {
-      if (this.botOpenId && message.senderId === this.botOpenId) return;
-      const chatId = message.chatId;
-      const threadId = message.threadId;
-      const conversationId = threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`;
-      try {
-        const profile = await this.larkCli.getUserProfile(message.senderId);
-        const displayName = profile.englishName ?? profile.openId;
-        console.info(`[${displayName} (${profile.openId})] 收到飞书消息`);
-        await this.handler?.({
-          messageId: message.messageId,
-          context: {
-            userOpenId: profile.openId,
-            userName: displayName,
-            departmentIds: profile.departmentIds,
-            chatId,
-            threadId,
-            conversationId,
-          },
-          text: message.content,
-        });
-      } catch (error) {
-        const detail = error instanceof Error ? error.message : String(error);
-        console.error(`[${message.senderId}] ${detail}`);
-        await this.channel.send(`无法读取用户资料：${detail}`, { text: `无法读取用户资料：${detail}` }, { replyTo: message.messageId, replyInThread: true });
-      }
+    if (this.connecting) return this.connecting;
+    if (!this.messageHandlerRegistered) {
+      this.messageHandlerRegistered = true;
+      this.channel.on("message", async (message) => {
+        if (this.botOpenId && message.senderId === this.botOpenId) return;
+        const chatId = message.chatId;
+        const threadId = message.threadId;
+        const conversationId = threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`;
+        try {
+          const profile = await this.larkCli.getUserProfile(message.senderId);
+          const displayName = profile.englishName ?? profile.openId;
+          console.info(`[${displayName} (${profile.openId})] 收到飞书消息`);
+          await this.handler?.({
+            messageId: message.messageId,
+            context: {
+              userOpenId: profile.openId,
+              userName: displayName,
+              departmentIds: profile.departmentIds,
+              chatId,
+              threadId,
+              conversationId,
+            },
+            text: message.content,
+          });
+        } catch (error) {
+          const detail = error instanceof Error ? error.message : String(error);
+          console.error(`[${message.senderId}] ${detail}`);
+          await this.channel.send(`无法读取用户资料：${detail}`, { text: `无法读取用户资料：${detail}` }, { replyTo: message.messageId, replyInThread: true });
+        }
+      });
+    }
+    this.connecting = this.channel.connect().finally(() => {
+      this.connecting = undefined;
     });
-    await this.channel.connect();
+    return this.connecting;
   }
 
-  /** 关闭飞书长连接。 */
+  /** 关闭飞书长连接，并阻止主动关闭期间的重连竞争。 */
   async disconnect(): Promise<void> {
     await this.channel.disconnect();
   }
