@@ -24,20 +24,19 @@ feishu-pi 最终要成为一个飞书原生的轻量 Agent 后端：
 
 ### 已完成
 
-- [x] 基于 Pi 公开 SDK 创建 Agent Session。
-- [x] 接入 `pi-coding-agent`、`pi-agent-core` 和 `pi-ai`。
-- [x] 启用 `read`、`write`、`edit`、`bash` 内置工具。
-- [x] 支持注入自定义 `AgentTool`。
-- [x] 接入飞书官方 Node SDK WebSocket Channel。
-- [x] 实现飞书消息到 Pi Prompt 的转换。
-- [x] 按 `chatId` 和 `threadId` 隔离会话。
-- [x] 保证同一会话内消息串行处理。
-- [x] 支持不同会话并行处理。
-- [x] 实现飞书引用回复和占位消息编辑。
-- [x] 合并高频文本更新，保证回复写入顺序。
-- [x] 建立 TypeScript 检查和 Vitest 测试配置。
-- [ ] 修复 Vitest 测试运行时异常，并确认测试用例实际执行。
-- [x] 删除旧 Python miniClaw 和桌面宠物代码，统一为根目录 Node.js 工程。
+- [X] 基于 Pi 公开 SDK 创建 Agent Session。
+- [X] 接入 `pi-coding-agent`、`pi-agent-core` 和 `pi-ai`。
+- [X] 启用 `read`、`write`、`edit`、`bash` 内置工具。
+- [X] 支持注入自定义 `AgentTool`。
+- [X] 接入飞书官方 Node SDK WebSocket Channel。
+- [X] 实现飞书消息到 Pi Prompt 的转换。
+- [X] 按 `chatId` 和 `threadId` 隔离会话。
+- [X] 保证同一会话内消息串行处理。
+- [X] 支持不同会话并行处理。
+- [X] 实现飞书引用回复和占位消息编辑。
+- [X] 合并高频文本更新，保证回复写入顺序。
+- [X] 建立 TypeScript 检查和 Vitest 测试配置，并确认测试用例实际执行。
+- [X] 删除旧 Python miniClaw 和桌面宠物代码，统一为根目录 Node.js 工程。
 
 ### 当前限制
 
@@ -56,8 +55,8 @@ feishu-pi 最终要成为一个飞书原生的轻量 Agent 后端：
 
 任务：
 
-- [x] 获取并标准化用户 Open ID、英文名和部门信息；首次聊天保存到 `memory/users/`。
-- [x] 定义所有技能共享的 `FeishuContext`。
+- [X] 获取并标准化用户 Open ID、英文名和部门信息；首次聊天保存到 `memory/users/`。
+- [X] 定义所有技能共享的 `FeishuContext`。
 - [ ] 按用户或群生成稳定的会话 ID。
 - [ ] 定义人员、部门、技能和工具的权限配置。
 - [ ] 在技能和 Agent 工具调用前执行权限检查。
@@ -74,7 +73,6 @@ feishu-pi 最终要成为一个飞书原生的轻量 Agent 后端：
 ### Phase 2：真实运行闭环
 
 目标：证明飞书、身份、模型、Pi Agent 和回复更新能够稳定连通。
-
 
 目标：证明飞书、模型、Pi Agent 和回复更新能够稳定连通。
 
