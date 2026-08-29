@@ -87,10 +87,42 @@ export class LarkTransport implements FeishuTransport {
   }
 
   async startReply(message: FeishuInboundMessage): Promise<FeishuReply> {
-    const result = await this.channel.send("", { text: "正在处理…" }, { replyTo: message.messageId, replyInThread: true });
+    type CardController = { update(next: object | ((current: object) => object)): Promise<void>; messageId: string; current: object };
+    let controller: CardController | undefined;
+    let resolveController: ((value: CardController) => void) | undefined;
+    let streamControllerResolve: (() => void) | undefined;
+    const controllerReady = new Promise<CardController>((resolve) => {
+      resolveController = resolve;
+    });
+    const streamPromise = this.channel.stream("", {
+      card: {
+        initial: this.processingCard("正在处理…"),
+        producer: async (streamController) => {
+          controller = streamController;
+          resolveController?.(streamController);
+          await new Promise<void>((resolve) => {
+            streamControllerResolve = resolve;
+          });
+        },
+      },
+    }, { replyTo: message.messageId, replyInThread: true });
+    controller = await controllerReady;
+    streamPromise.catch((error) => console.error("[LarkTransport] CardKit 流式回复失败", error));
     return {
-      update: (text) => this.channel.editMessage(result.messageId, text),
-      close: (text) => this.channel.editMessage(result.messageId, text || "（无响应）"),
+      update: (text) => controller!.update(this.processingCard(text)),
+      close: async (text) => {
+        await controller!.update(this.finalCard(text || "（无响应）"));
+        streamControllerResolve?.();
+        await streamPromise;
+      },
     };
+  }
+
+  private processingCard(text: string): object {
+    return { schema: "2.0", body: { elements: [{ tag: "markdown", content: text }] } };
+  }
+
+  private finalCard(text: string): object {
+    return { schema: "2.0", body: { elements: [{ tag: "markdown", content: text }] } };
   }
 }

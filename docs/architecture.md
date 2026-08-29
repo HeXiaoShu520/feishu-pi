@@ -51,7 +51,7 @@ interface FeishuContext {
 
 ### 飞书层
 
-`LarkTransport` 使用飞书官方 Node SDK 建立 WebSocket 长连接，接收标准化消息并发送引用回复。连接由官方 SDK 自动重连；应用层设置 15 秒握手超时、30 秒心跳超时，并记录重连和错误事件。`connect()` 只注册一次消息处理器且可重复调用。每条新用户消息先通过项目本地 `lark-cli contact +get-user --as bot` 查询英文名和部门 ID，并保存到 `memory/users/`；CLI 缺失、未登录或查询失败时，在原会话反馈明确错误。回复从“正在处理…”占位文本开始，后续通过编辑同一条飞书消息展示 Agent 输出。
+`LarkTransport` 使用飞书官方 Node SDK 建立 WebSocket 长连接，接收标准化消息并发送引用回复。连接由官方 SDK 自动重连；应用层设置 15 秒握手超时、30 秒心跳超时，并记录重连和错误事件。`connect()` 只注册一次消息处理器且可重复调用。每条新用户消息先通过项目本地 `lark-cli contact +get-user --as bot` 查询英文名和部门 ID，并保存到 `memory/users/`；CLI 缺失、未登录或查询失败时，在原会话反馈明确错误。需要注意，机器人应用的通讯录可见范围可能不足以搜索或读取全部人员资料，后续可能改为按配置使用 CLI 的用户授权身份，并增加权限不足时的降级处理。回复从“正在处理…”占位文本开始，后续通过编辑同一条飞书消息展示 Agent 输出。
 
 `FeishuAgentBridge` 负责把飞书的 `chatId`、`threadId` 和文本转换为运行时消息。它持有单次回复的 `ThrottledReply`，将高频文本更新按 80ms 合并，并保证飞书写入按顺序执行。
 

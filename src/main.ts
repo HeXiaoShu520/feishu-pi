@@ -1,3 +1,4 @@
+import "dotenv/config";
 import { ConversationManager } from "./runtime/conversation-manager.ts";
 import { FeishuPiRuntime } from "./runtime/feishu-pi-runtime.ts";
 import { FeishuAgentBridge } from "./feishu/agent-bridge.ts";
@@ -6,6 +7,7 @@ import { loadConfig } from "./config.ts";
 import { ConversationStore } from "./runtime/conversation-store.ts";
 import { MessageStore } from "./feishu/message-store.ts";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 
 /** 启动轻量飞书 Agent 服务。 */
 export async function main(): Promise<void> {
@@ -23,4 +25,4 @@ export async function main(): Promise<void> {
   await transport.connect();
 }
 
-if (import.meta.url === `file://${process.argv[1]?.replaceAll("\\", "/")}`) await main();
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();
