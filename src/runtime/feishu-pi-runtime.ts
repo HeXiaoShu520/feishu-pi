@@ -1,7 +1,7 @@
 import { createAgentSession, SessionManager, type AgentSession, DefaultResourceLoader, type ResourceLoader } from "@earendil-works/pi-coding-agent";
 import { getModel, type ImageContent } from "@earendil-works/pi-ai/compat";
 import type { FeishuPiConfig, FeishuPiEvent, FeishuPiPrompt, FeishuPiSession, FeishuPiTool, UserRole } from "./types.ts";
-import { createToolRegistry, DEFAULT_BUILTIN_TOOLS } from "../tools/registry.ts";
+import { createToolRegistryAsync, DEFAULT_BUILTIN_TOOLS } from "../tools/registry.ts";
 import { logger, colors } from "../utils/logger.ts";
 import { createRestrictedReadTool } from "../tools/restricted-read.ts";
 
@@ -168,8 +168,8 @@ export class FeishuPiRuntime {
       logger.warn(`[Runtime] 未找到任何 Skills`);
     }
 
-    // 根据角色过滤 custom tools
-    const allCustomTools = createToolRegistry(this.tools);
+    // 从 .agent/tools/ 加载用户自定义工具
+    const allCustomTools = await createToolRegistryAsync(this.config.cwd, this.tools);
     let customTools = allCustomTools.filter((tool) => {
       const permission = (tool as any).permission || "default";
       if (permission === "default") return true;

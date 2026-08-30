@@ -19,7 +19,7 @@ export function createRestrictedReadTool(cwd: string, agentDir: string): ToolDef
       },
       required: ["file_path"],
     },
-    execute: async (toolCallId: string, params: unknown, signal: AbortSignal | undefined) => {
+    execute: async (toolCallId: string, params: unknown, signal: AbortSignal | undefined, onUpdate: any, ctx: any) => {
       const { file_path } = params as { file_path: string };
 
       try {
