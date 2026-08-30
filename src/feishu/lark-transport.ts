@@ -65,25 +65,24 @@ export class LarkTransport implements FeishuTransport {
           const profile = await this.larkCli.getUserProfile(message.senderId);
           const displayName = profile.englishName ?? profile.openId;
 
-          // 记录收到的消息
-          const msgPreview = formatLogText(message.content);
-          console.info(`[${displayName}] 收到消息: ${msgPreview}`);
-
           // 处理图片附件
           let images;
+          let imageCount = 0;
           if (this.imageProcessor && message.resources && message.resources.length > 0) {
             const imageKeys = message.resources
               .filter((r) => r.type === "image")
               .map((r) => r.fileKey);
 
             if (imageKeys.length > 0) {
-              console.info(`[${displayName}] 处理 ${imageKeys.length} 张图片`);
+              imageCount = imageKeys.length;
               images = await this.imageProcessor.processImages(imageKeys);
-              if (images.length > 0) {
-                console.info(`[${displayName}] 成功处理 ${images.length} 张图片`);
-              }
             }
           }
+
+          // 记录收到的消息
+          const msgPreview = formatLogText(message.content);
+          const imageInfo = imageCount > 0 ? `（含 ${imageCount} 张图片）` : "";
+          console.info(`[${displayName}] 收到消息${imageInfo}: ${msgPreview}`);
 
           await this.handler?.({
             messageId: message.messageId,
