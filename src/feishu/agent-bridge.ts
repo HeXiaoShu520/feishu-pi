@@ -1,7 +1,9 @@
 import { ConversationManager } from "../runtime/conversation-manager.ts";
 import type { FeishuInboundMessage, FeishuEventHandler, FeishuTransport } from "./types.ts";
 import { ThrottledReply } from "./throttled-reply.ts";
+import { CardKitReply } from "./cardkit-reply.ts";
 import { MessageStore } from "./message-store.ts";
+import type { Client } from "@larksuiteoapi/node-sdk";
 
 /** 将飞书消息转换为 Pi 会话，并把增量文本交给飞书传输层。 */
 export class FeishuAgentBridge {
@@ -9,12 +11,25 @@ export class FeishuAgentBridge {
   private readonly transport: FeishuTransport;
   private readonly onEvent?: FeishuEventHandler;
   private readonly messages?: MessageStore;
+  private readonly client?: Client;
+  private readonly enableCardKit: boolean;
 
-  constructor(conversations: ConversationManager, transport: FeishuTransport, onEvent?: FeishuEventHandler, messages?: MessageStore) {
+  constructor(
+    conversations: ConversationManager,
+    transport: FeishuTransport,
+    options?: {
+      onEvent?: FeishuEventHandler;
+      messages?: MessageStore;
+      client?: Client;
+      enableCardKit?: boolean;
+    },
+  ) {
     this.conversations = conversations;
     this.transport = transport;
-    this.onEvent = onEvent;
-    this.messages = messages;
+    this.onEvent = options?.onEvent;
+    this.messages = options?.messages;
+    this.client = options?.client;
+    this.enableCardKit = options?.enableCardKit ?? true;
   }
 
   /** 注册飞书消息处理器。 */
@@ -27,7 +42,19 @@ export class FeishuAgentBridge {
     if (this.messages && !(await this.messages.claim(message.messageId))) return;
     const conversationId = message.context.conversationId;
     let latestText = "";
-    const reply = new ThrottledReply(await this.transport.startReply(message));
+
+    // 创建回复：优先使用 CardKit，失败时自动降级
+    const baseReply = new ThrottledReply(await this.transport.startReply(message));
+    const reply = this.client && this.enableCardKit
+      ? new CardKitReply({
+          client: this.client,
+          chatId: message.chatId,
+          fallbackReply: baseReply,
+          enableCardKit: true,
+          onError: (err) => console.error("[CardKit]", err),
+        })
+      : baseReply;
+
     try {
       await this.conversations.prompt(
         { conversationId, prompt: { text: message.text, images: message.images, context: message.context } },

@@ -4,6 +4,7 @@ import type { FeishuContext } from "../context/types.ts";
 
 export interface FeishuInboundMessage {
   messageId: string;
+  chatId: string;
   context: FeishuContext;
   text: string;
   images?: FeishuPiPrompt["images"];

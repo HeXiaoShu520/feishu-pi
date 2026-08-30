@@ -27,7 +27,7 @@ export class LarkCli {
       return "missing";
     }
     try {
-      const result = JSON.parse(await this.exec(["auth", "status", "--format", "json"])) as { identities?: { bot?: { available?: boolean } } };
+      const result = JSON.parse(await this.exec(["auth", "status"])) as { identities?: { bot?: { available?: boolean } } };
       return result.identities?.bot?.available ? "ready" : "not_authenticated";
     } catch {
       return "not_authenticated";
@@ -41,7 +41,7 @@ export class LarkCli {
     const status = await this.status();
     if (status !== "ready") throw new Error(this.statusMessage(status));
     try {
-      const raw = JSON.parse(await this.exec(["contact", "+get-user", "--as", "bot", "--user-id", openId, "--user-id-type", "open_id", "--format", "json"]));
+      const raw = JSON.parse(await this.exec(["contact", "+get-user", "--as", "bot", "--user-id", openId, "--user-id-type", "open_id"]));
       const user = raw?.data?.user;
       if (!user?.open_id) throw new Error("CLI 返回的用户资料缺少 open_id");
       const profile: LarkUserProfile = { openId: user.open_id, englishName: user.en_name || undefined, departmentIds: user.department_ids ?? [] };

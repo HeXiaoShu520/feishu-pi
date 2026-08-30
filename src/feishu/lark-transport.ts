@@ -1,6 +1,8 @@
 import { createLarkChannel, type LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { FeishuInboundMessage, FeishuReply, FeishuTransport } from "./types.ts";
 import { LarkCli } from "./lark-cli.ts";
+import { LarkImageProcessor } from "./image-processor.ts";
+import type { Client } from "@larksuiteoapi/node-sdk";
 
 export interface LarkTransportConfig {
   appId: string;
@@ -10,6 +12,10 @@ export interface LarkTransportConfig {
   userProfileDir?: string;
   handshakeTimeoutMs?: number;
   pingTimeout?: number;
+  /** 飞书 Client 实例（用于图片下载） */
+  client?: Client;
+  /** 图片缓存目录（可选） */
+  imageCacheDir?: string;
 }
 
 /** 基于飞书官方高层 Channel 的最小消息传输实现。 */
@@ -17,6 +23,7 @@ export class LarkTransport implements FeishuTransport {
   private readonly channel: LarkChannel;
   private readonly botOpenId?: string;
   private readonly larkCli: LarkCli;
+  private readonly imageProcessor?: LarkImageProcessor;
   private handler?: (message: FeishuInboundMessage) => Promise<void>;
   private messageHandlerRegistered = false;
   private connecting?: Promise<void>;
@@ -24,6 +31,11 @@ export class LarkTransport implements FeishuTransport {
   constructor(config: LarkTransportConfig) {
     this.botOpenId = config.botOpenId;
     this.larkCli = new LarkCli(config.userProfileDir);
+    if (config.client) {
+      this.imageProcessor = new LarkImageProcessor(config.client, {
+        cacheDir: config.imageCacheDir,
+      });
+    }
     this.channel = createLarkChannel({
       appId: config.appId,
       appSecret: config.appSecret,
@@ -52,8 +64,26 @@ export class LarkTransport implements FeishuTransport {
           const profile = await this.larkCli.getUserProfile(message.senderId);
           const displayName = profile.englishName ?? profile.openId;
           console.info(`[${displayName} (${profile.openId})] 收到飞书消息`);
+
+          // 处理图片附件
+          let images;
+          if (this.imageProcessor && message.resources && message.resources.length > 0) {
+            const imageKeys = message.resources
+              .filter((r) => r.type === "image")
+              .map((r) => r.fileKey);
+
+            if (imageKeys.length > 0) {
+              console.info(`[${displayName}] 处理 ${imageKeys.length} 张图片`);
+              images = await this.imageProcessor.processImages(imageKeys);
+              if (images.length > 0) {
+                console.info(`[${displayName}] 成功处理 ${images.length} 张图片`);
+              }
+            }
+          }
+
           await this.handler?.({
             messageId: message.messageId,
+            chatId,
             context: {
               userOpenId: profile.openId,
               userName: displayName,
@@ -63,6 +93,7 @@ export class LarkTransport implements FeishuTransport {
               conversationId,
             },
             text: message.content,
+            images,
           });
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
