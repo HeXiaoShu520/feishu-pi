@@ -11,8 +11,45 @@ feishu-pi 是一个基于 [Pi](https://github.com/earendil-works/pi) 的飞书 A
 - ✅ **会话隔离** - 按 `chatId` 和 `threadId` 独立会话上下文
 - ✅ **消息去重** - 防止重复处理同一消息
 - ✅ **自动重连** - WebSocket 断线自动恢复
-- ✅ **用户身份** - 自动获取用户 Open ID、英文名和部门信息
+- ✅ **飞书用户上下文** - 自动查询并缓存用户信息（中文名、英文名、部门 ID），供所有技能和 Function Calling 直接使用
 - ✅ **内置工具** - 支持 `read`、`write`、`edit`、`bash` 工具
+
+## 飞书深度定制：用户上下文机制
+
+这是 feishu-pi 区别于通用 Agent 平台的核心基础设施。每条飞书消息到达时，系统会自动：
+
+1. **查询用户信息** - 通过飞书 SDK API 获取用户的中文名、英文名、部门 ID
+2. **智能降级** - 如果用户不在应用可见范围（如外部群成员），自动从群成员列表获取
+3. **本地缓存** - 缓存 3 天，减少 API 调用，加快响应速度
+4. **注入上下文** - 将用户信息注入到每个请求的 `context` 中
+
+**数据结构：**
+
+```typescript
+interface FeishuContext {
+  userOpenId: string;       // 用户 Open ID
+  userName: string;          // 中文名 > 英文名 > Open ID
+  departmentIds: string[];   // 部门 ID 列表
+  chatId: string;            // 会话 ID
+  threadId?: string;         // 话题 ID
+  conversationId: string;    // 完整会话标识
+}
+```
+
+**为什么这很重要：**
+
+- **技能开发零成本** - 所有技能和 Function Calling 直接读取 `context.userName`、`context.departmentIds`，无需自己调用飞书 API
+- **权限控制** - 根据部门 ID 或用户身份动态控制技能可用性和工具权限
+- **个性化响应** - Agent 可以根据用户部门提供定制化的回答和建议
+- **审计追踪** - 每次操作都有明确的用户身份，便于日志记录和问题排查
+
+**存储位置：** `memory/users/{appId}_users.json`
+
+**查询策略：**
+
+1. **优先使用机器人 API** - 获取完整信息（中文名、英文名、部门 ID）
+2. **降级到群成员列表** - 支持分页查询，适用于外部成员
+3. **兜底方案** - 返回最小信息（Open ID），确保服务不中断
 
 ## 我们最终要实现什么
 
@@ -58,15 +95,34 @@ Pi 已经提供 Agent 运行时中最难长期维护的部分：模型流式调�
 
 ## 开始使用
 
+### 1. 配置飞书应用权限
+
+在 [飞书开放平台](https://open.feishu.cn/) 开发者后台配置以下权限：
+
+**必需权限：**
+- `im:message` - 获取与发送单聊、群组消息
+- `im:message.group_at_msg` - 接收群聊中 @机器人 消息事件
+- `im:message.p2p_msg` - 接收用户单聊消息事件
+- `contact:user.base:readonly` - 获取用户基本信息（中文名、英文名、部门 ID）
+- `im:chat.member:readonly` - 读取群成员列表（用于外部成员降级查询）
+
+**可选权限（用于图片功能）：**
+- `im:resource` - 获取消息中的资源文件（图片附件）
+
+**事件订阅：**
+- 订阅方式：选择「使用长连接接收事件/回调」
+- 订阊事件：`im.message.receive_v1` - 接收消息
+
+**应用可用范围：**
+- 设置可使用该应用的部门或成员范围
+- 范围越大，能查询到的用户信息越完整
+
+### 2. 启动服务
+
 ```bash
 npm install
-npx lark-cli config init
-npx lark-cli auth login --recommend
-npx lark-cli auth status
 npm start
 ```
-
-`@larksuite/cli` 是项目依赖，使用工程本地的 `lark-cli`，不要求全局安装。CLI 缺失、未登录或身份不可用时，服务会在飞书会话中反馈原因。用户的 Open ID、英文名和部门 ID 会在首次聊天时查询并保存到 `memory/users/`；授权凭据由 CLI 自己管理，不写入 `.env`。
 
 启动前至少配置：
 
@@ -74,6 +130,8 @@ npm start
 FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
 ```
+
+用户信息会在首次聊天时自动查询并缓存到 `memory/users/{appId}_users.json`，3 天后自动刷新。缓存文件包含 `appId` 前缀，避免多机器人混用。
 
 ## 开发验证
 

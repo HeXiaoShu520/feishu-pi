@@ -31,7 +31,7 @@ export class LarkTransport implements FeishuTransport {
 
   constructor(config: LarkTransportConfig) {
     this.botOpenId = config.botOpenId;
-    this.larkCli = new LarkCli(config.userProfileDir);
+    this.larkCli = new LarkCli(config.client!, config.appId, config.userProfileDir);
     if (config.client) {
       this.imageProcessor = new LarkImageProcessor(config.client, {
         cacheDir: config.imageCacheDir,
@@ -62,8 +62,8 @@ export class LarkTransport implements FeishuTransport {
         const threadId = message.threadId;
         const conversationId = threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`;
         try {
-          const profile = await this.larkCli.getUserProfile(message.senderId);
-          const displayName = profile.englishName ?? profile.openId;
+          const profile = await this.larkCli.getUserProfile(message.senderId, chatId);
+          const displayName = profile.name || profile.englishName || profile.openId;
 
           // 处理图片附件
           let images;
