@@ -109,7 +109,11 @@ export class FeishuAgentBridge {
       }, 150); // 150ms 更新一帧
 
       await this.conversations.prompt(
-        { conversationId, prompt: { text: message.text, images: message.images, context: message.context } },
+        {
+          conversationId,
+          prompt: { text: message.text, images: message.images, context: message.context },
+          context: message.context  // 传递完整的上下文
+        },
         async (event) => {
           await this.onEvent?.(event, message);
           if (event.type === "assistant_text") {

@@ -119,16 +119,9 @@ export async function main(): Promise<void> {
     logger.info(`[Main] 未配置管理员`);
   }
 
-  // 解析团队成员 Open IDs（优先从缓存查找）
-  const teamMemberIds: string[] = [];
-  for (const member of config.feishuTeamMembers) {
-    const memberId = await resolveAdminOpenId(client, member, config.feishuAppId);
-    if (memberId) {
-      teamMemberIds.push(memberId);
-    }
-  }
-  if (teamMemberIds.length > 0) {
-    logger.info(`[Main] 团队成员: ${teamMemberIds.length} 人`);
+  // 团队成员配置（不需要预先解析，运行时动态匹配）
+  if (config.feishuTeamMembers.length > 0) {
+    logger.info(`[Main] 团队成员配置: ${config.feishuTeamMembers.length} 人`);
   }
 
   // 创建 runtime 配置
@@ -140,7 +133,7 @@ export async function main(): Promise<void> {
     modelBaseUrl: config.modelBaseUrl,
     systemPrompt: config.systemPrompt,
     adminId: adminOpenId || "",
-    teamMemberIds,
+    teamMemberIdentifiers: config.feishuTeamMembers,  // 传原始配置
   });
 
   // 启动时打印可用的 Skills 和 Tools（管理员视角）

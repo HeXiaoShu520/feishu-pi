@@ -122,6 +122,7 @@ export class ModelCommand implements CommandHandler {
             tag: "plain_text",
             content: model.name,
           },
+          type: "default",
           behaviors: [
             {
               type: "callback",

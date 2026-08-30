@@ -24,7 +24,7 @@ export interface FeishuPiConfig {
   builtinTools?: string[];
   systemPrompt?: string;
   adminId: string;
-  teamMemberIds: string[];
+  teamMemberIdentifiers: string[];  // 团队成员标识（Open ID / 姓名 / 邮箱）
 }
 
 export interface FeishuPiSession {

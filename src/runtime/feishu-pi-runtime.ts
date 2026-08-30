@@ -1,6 +1,7 @@
 import { createAgentSession, SessionManager, type AgentSession, DefaultResourceLoader, type ResourceLoader } from "@earendil-works/pi-coding-agent";
 import { getModel, type ImageContent } from "@earendil-works/pi-ai/compat";
 import type { FeishuPiConfig, FeishuPiEvent, FeishuPiPrompt, FeishuPiSession, FeishuPiTool, UserRole } from "./types.ts";
+import type { FeishuContext } from "../context/types.ts";
 import { createToolRegistryAsync, DEFAULT_BUILTIN_TOOLS } from "../tools/registry.ts";
 import { logger, colors } from "../utils/logger.ts";
 import { createRestrictedReadTool } from "../tools/restricted-read.ts";
@@ -171,7 +172,7 @@ export class FeishuPiRuntime {
     logger.info(`[Runtime] 内置工具: ${colors.gray}${DEFAULT_BUILTIN_TOOLS.join(", ")}${colors.reset}`);
   }
 
-  async createSession(sessionFile: string | undefined, userId: string): Promise<FeishuPiSession> {
+  async createSession(sessionFile: string | undefined, userId: string, context?: FeishuContext): Promise<FeishuPiSession> {
     // 设置 API key 到对应厂商的环境变量
     const apiKey = process.env.FEISHU_PI_MODEL_API_KEY;
     if (!apiKey) {
@@ -184,7 +185,7 @@ export class FeishuPiRuntime {
     }
 
     // 判断用户角色
-    const userRole = this.getUserRole(userId);
+    const userRole = this.getUserRole(userId, context);
     logger.info(`[Runtime] 用户角色: ${colors.cyan}${userId}${colors.reset} -> ${colors.yellow}${userRole}${colors.reset}`);
 
     const sessionManager = sessionFile
@@ -245,9 +246,25 @@ export class FeishuPiRuntime {
     return new SessionWrapper(session);
   }
 
-  private getUserRole(userId: string): UserRole {
+  private getUserRole(userId: string, context?: FeishuContext): UserRole {
+    // 管理员判断
     if (userId === this.config.adminId) return "admin";
-    if (this.config.teamMemberIds.includes(userId)) return "team";
+
+    // 团队成员判断（支持 Open ID / 姓名 / 邮箱）
+    if (this.config.teamMemberIdentifiers.length > 0) {
+      // 直接匹配 Open ID
+      if (this.config.teamMemberIdentifiers.includes(userId)) {
+        return "team";
+      }
+
+      // 匹配姓名
+      if (context?.userName && this.config.teamMemberIdentifiers.includes(context.userName)) {
+        return "team";
+      }
+
+      // TODO: 如果需要支持邮箱匹配，需要在 context 中添加 email 字段
+    }
+
     return "default";
   }
 }
