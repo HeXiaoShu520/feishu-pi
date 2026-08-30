@@ -33,6 +33,7 @@ export interface FeishuPiSession {
   prompt(input: FeishuPiPrompt): Promise<void>;
   waitForIdle(): Promise<void>;
   abort(): void;
+  getStats(): any;
 }
 
 export type FeishuPiTool = AgentTool;

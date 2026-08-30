@@ -13,10 +13,51 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "./utils/logger.ts";
+import { writeFileSync, readFileSync, unlinkSync, existsSync } from "node:fs";
+import { execSync } from "node:child_process";
 
 /** 启动轻量飞书 Agent 服务。 */
 export async function main(): Promise<void> {
   const config = loadConfig();
+  const pidFile = join(config.sessionDir, ".pid");
+
+  // 启动时：检查并清理旧进程
+  if (existsSync(pidFile)) {
+    try {
+      const oldPid = readFileSync(pidFile, "utf-8").trim();
+      logger.warn(`[Main] 发现旧 PID 文件: ${oldPid}，尝试清理...`);
+
+      if (process.platform === "win32") {
+        // Windows: 先检查进程是否存在
+        try {
+          execSync(`tasklist /FI "PID eq ${oldPid}" | find "${oldPid}"`, { stdio: "ignore" });
+          // 进程存在，杀掉
+          execSync(`taskkill /F /PID ${oldPid}`, { stdio: "ignore" });
+          logger.info(`[Main] 已清理旧进程 ${oldPid}`);
+        } catch {
+          // 进程不存在或已退出
+          logger.info(`[Main] 旧进程 ${oldPid} 已不存在`);
+        }
+      } else {
+        // Unix: 发送 SIGTERM，失败则忽略
+        try {
+          process.kill(parseInt(oldPid), "SIGTERM");
+          logger.info(`[Main] 已清理旧进程 ${oldPid}`);
+        } catch {
+          logger.info(`[Main] 旧进程 ${oldPid} 已不存在`);
+        }
+      }
+
+      unlinkSync(pidFile);
+    } catch (err) {
+      logger.error(`[Main] 清理旧 PID 文件失败:`, err);
+    }
+  }
+
+  // 写入当前 PID
+  writeFileSync(pidFile, process.pid.toString(), "utf-8");
+  logger.info(`[Main] 当前进程 PID: ${process.pid}`);
+
   const messages = new MessageStore(join(config.sessionDir, "messages.json"));
 
   // 启动时清理过期数据和卡住的消息
@@ -70,18 +111,18 @@ export async function main(): Promise<void> {
     logger.warn("[Main] 获取 Bot Open ID 失败:", err);
   }
 
-  // 解析管理员 Open ID（可选）
-  const adminOpenId = await resolveAdminOpenId(client, config.feishuAdmin);
+  // 解析管理员 Open ID（可选，优先从缓存查找）
+  const adminOpenId = await resolveAdminOpenId(client, config.feishuAdmin, config.feishuAppId);
   if (adminOpenId) {
     logger.info(`[Main] 管理员 Open ID: ${adminOpenId}`);
   } else {
     logger.info(`[Main] 未配置管理员`);
   }
 
-  // 解析团队成员 Open IDs
+  // 解析团队成员 Open IDs（优先从缓存查找）
   const teamMemberIds: string[] = [];
   for (const member of config.feishuTeamMembers) {
-    const memberId = await resolveAdminOpenId(client, member);
+    const memberId = await resolveAdminOpenId(client, member, config.feishuAppId);
     if (memberId) {
       teamMemberIds.push(memberId);
     }
@@ -143,10 +184,25 @@ export async function main(): Promise<void> {
     clearInterval(cleanupTimer);
 
     try {
-      await transport.disconnect();
+      // 设置 3 秒超时，防止 WebSocket 断开卡住
+      const disconnectPromise = transport.disconnect();
+      const timeout = new Promise((_, reject) =>
+        setTimeout(() => reject(new Error("disconnect timeout")), 3000)
+      );
+      await Promise.race([disconnectPromise, timeout]);
       logger.info("[Main] 飞书连接已关闭");
     } catch (err) {
-      logger.error("[Main] 关闭飞书连接失败:", err);
+      logger.warn("[Main] 关闭飞书连接超时或失败:", err instanceof Error ? err.message : err);
+    }
+
+    // 删除 PID 文件
+    try {
+      if (existsSync(pidFile)) {
+        unlinkSync(pidFile);
+        logger.info("[Main] PID 文件已删除");
+      }
+    } catch (err) {
+      logger.error("[Main] 删除 PID 文件失败:", err);
     }
 
     // 强制退出，确保所有子进程和定时器被清理
@@ -156,6 +212,11 @@ export async function main(): Promise<void> {
 
   process.on("SIGINT", () => gracefulShutdown("SIGINT"));
   process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
+
+  // Windows 特有：监听 Ctrl+Break
+  if (process.platform === "win32") {
+    process.on("SIGBREAK" as any, () => gracefulShutdown("SIGBREAK"));
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

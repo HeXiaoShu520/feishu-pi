@@ -4,14 +4,23 @@
  */
 import { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "../utils/logger.ts";
+import { readFile } from "node:fs/promises";
+import { join } from "node:path";
 
 /**
  * 解析管理员标识为 Open ID
  * @param client 飞书 Client
  * @param identifier 管理员标识（Open ID / 姓名 / 邮箱）
+ * @param appId 飞书应用 ID（用于定位缓存文件）
+ * @param dataDir 数据目录（默认 data/users）
  * @returns Open ID，解析失败返回 undefined
  */
-export async function resolveAdminOpenId(client: Client, identifier: string | undefined): Promise<string | undefined> {
+export async function resolveAdminOpenId(
+  client: Client,
+  identifier: string | undefined,
+  appId?: string,
+  dataDir = join(process.cwd(), "data", "users")
+): Promise<string | undefined> {
   // 如果没有配置管理员，返回 undefined
   if (!identifier) {
     return undefined;
@@ -20,6 +29,26 @@ export async function resolveAdminOpenId(client: Client, identifier: string | un
   // 如果已经是 Open ID 格式（ou_开头），直接返回
   if (identifier.startsWith("ou_")) {
     return identifier;
+  }
+
+  // 尝试从缓存中查找（按姓名或英文名）
+  if (appId) {
+    try {
+      const cacheFilePath = join(dataDir, `${appId}_users.json`);
+      const content = await readFile(cacheFilePath, "utf8");
+      const cache = JSON.parse(content);
+
+      // 遍历缓存，匹配姓名或英文名
+      for (const [openId, profile] of Object.entries(cache)) {
+        const { name, englishName } = profile as any;
+        if (name === identifier || englishName === identifier) {
+          logger.info(`[AdminResolver] 从缓存解析 ${identifier} -> ${openId}`);
+          return openId;
+        }
+      }
+    } catch {
+      // 缓存文件不存在或解析失败，继续使用 API 查询
+    }
   }
 
   // 尝试通过邮箱查找

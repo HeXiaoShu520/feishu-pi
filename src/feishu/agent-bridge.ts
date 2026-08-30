@@ -96,6 +96,7 @@ export class FeishuAgentBridge {
 
       let animationIndex = 0;
       let hasRealContent = false;
+      let session: any;
 
       // 启动动画定时器（真实内容到来前显示动画）
       const animationTimer = setInterval(() => {
@@ -133,12 +134,38 @@ export class FeishuAgentBridge {
           if (event.type === "tool_updated") await reply.update(`工具执行中：${event.toolName}`);
           if (event.type === "tool_finished" && event.isError) await reply.update(`工具执行失败：${event.toolName}`);
         },
-      );
+      ).then(s => session = s);
 
       // 确保停止动画
       clearInterval(animationTimer);
+
+      // 获取统计信息并追加到回复底部
+      let finalText = latestText;
+      if (session) {
+        const stats = session.getStats();
+        if (stats) {
+          const inputTokens = stats.tokens?.input || 0;
+          const outputTokens = stats.tokens?.output || 0;
+          const cacheRead = stats.tokens?.cacheRead || 0;
+          const cacheWrite = stats.tokens?.cacheWrite || 0;
+          const totalTokens = stats.tokens?.total || 0;
+          const cost = stats.cost || 0;
+
+          // 从 sessionFile 提取模型名称和会话ID
+          const modelName = this.conversations["runtime"]?.config?.modelName || "unknown";
+          const sessionId = stats.sessionId || "unknown";
+
+          // 格式化耗时（从创建到现在的时间差，近似值）
+          const duration = "未知";
+
+          // 构建统计行
+          const statsLine = `\n\n---\n${modelName} · 输入 ${(inputTokens / 1000).toFixed(1)}K / 输出 ${(outputTokens / 1000).toFixed(1)}K · 缓存 ${(cacheRead / 1000).toFixed(1)}K/${(cacheWrite / 1000).toFixed(1)}K · ${duration} · ${sessionId.slice(0, 8)}`;
+          finalText = latestText + statsLine;
+        }
+      }
+
       // logger.log(`[Debug] finalize with latestText="${latestText}"`);
-      await reply.close(latestText);
+      await reply.close(finalText);
 
       // 记录最终响应
       const replyPreview = formatLogText(latestText);

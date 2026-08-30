@@ -67,10 +67,13 @@ export class LarkTransport implements FeishuTransport {
         if (this.botOpenId && message.senderId === this.botOpenId) return;
         const chatId = message.chatId;
         const threadId = message.threadId;
-        const conversationId = threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`;
         try {
           const profile = await this.larkCli.getUserProfile(message.senderId, chatId);
           const displayName = profile.name || profile.englishName || profile.openId;
+
+          // 构造 conversationId: userId-conversationId
+          const baseConversationId = threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`;
+          const conversationId = `${profile.openId}-${baseConversationId}`;
 
           // 处理图片附件
           let images;

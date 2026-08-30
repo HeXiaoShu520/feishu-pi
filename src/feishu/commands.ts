@@ -42,6 +42,7 @@ export class ModelCommand implements CommandHandler {
       }
 
       let models: Array<{ model_id: string; name: string }> = [];
+      let successBaseURL = "";  // 提到外层
       const apiKey = process.env.FEISHU_PI_MODEL_API_KEY || "";
 
       try {
@@ -52,7 +53,6 @@ export class ModelCommand implements CommandHandler {
 
         // 按顺序尝试每个候选 URL
         let lastError: string | undefined;
-        let successBaseURL = "";
         for (const modelsUrl of candidates) {
           try {
             logger.info(`[ModelCommand] 尝试: ${modelsUrl}`);

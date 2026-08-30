@@ -34,7 +34,8 @@ export class ConversationManager {
 
   /** 从持久化映射恢复 Pi Session，失败时创建新 Session。 */
   private async initializeState(conversationId: string): Promise<ConversationState> {
-    // 从 conversationId 提取 userId (格式: userId-chatId 或 userId)
+    // 从 conversationId 提取 userId
+    // 格式: userId-chat:chatId 或 userId-chatId:thread:threadId
     const userId = conversationId.split("-")[0];
 
     const sessionFile = await this.store?.get(conversationId);
@@ -45,7 +46,7 @@ export class ConversationManager {
   }
 
   /** 排队执行一次消息，并将 Session 事件交给调用方。 */
-  async prompt(message: ConversationMessage, onEvent: Parameters<FeishuPiSession["subscribe"]>[0]): Promise<void> {
+  async prompt(message: ConversationMessage, onEvent: Parameters<FeishuPiSession["subscribe"]>[0]): Promise<FeishuPiSession> {
     const state = await this.getState(message.conversationId);
     const task = state.queue.then(async () => {
       const unsubscribe = state.session.subscribe(onEvent);
@@ -58,6 +59,7 @@ export class ConversationManager {
     });
     state.queue = task.catch(() => undefined);
     await task;
+    return state.session;
   }
 
   /** 清空指定会话的历史记录 */
