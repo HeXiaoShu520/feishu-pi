@@ -7,15 +7,21 @@ import { loadConfig } from "./config.ts";
 import { ConversationStore } from "./runtime/conversation-store.ts";
 import { MessageStore } from "./feishu/message-store.ts";
 import { DataCleaner } from "./runtime/data-cleaner.ts";
+import { resolveAdminOpenId } from "./feishu/admin-resolver.ts";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { writeFileSync, unlinkSync, readFileSync } from "node:fs";
 import { Client } from "@larksuiteoapi/node-sdk";
+import { logger } from "./utils/logger.ts";
 
 /** 启动轻量飞书 Agent 服务。 */
 export async function main(): Promise<void> {
+  // 启动时写入 PID 文件
+  const pidFile = join(process.cwd(), ".pid");
+  writeFileSync(pidFile, String(process.pid));
+  logger.info(`[Main] PID ${process.pid} 已写入 ${pidFile}`);
+
   const config = loadConfig();
-  const runtime = new FeishuPiRuntime(config);
-  const conversations = new ConversationManager(runtime, new ConversationStore(join(config.sessionDir, "conversations.json")));
   const messages = new MessageStore(join(config.sessionDir, "messages.json"));
 
   // 启动时清理过期数据和卡住的消息
@@ -25,26 +31,26 @@ export async function main(): Promise<void> {
     dryRun: false,
   });
 
-  console.info("[DataCleaner] 清理卡住的消息...");
+  logger.info("[DataCleaner] 清理卡住的消息...");
   const stuckCount = await cleaner.cleanupStuckMessages();
   if (stuckCount > 0) {
-    console.info(`[DataCleaner] 已清理 ${stuckCount} 条卡住的消息`);
+    logger.info(`[DataCleaner] 已清理 ${stuckCount} 条卡住的消息`);
   }
 
-  console.info("[DataCleaner] 清理过期数据（保留 7 天）...");
+  logger.info("[DataCleaner] 清理过期数据（保留 7 天）...");
   const stats = await cleaner.cleanup();
-  console.info(`[DataCleaner] 会话: ${stats.sessionsDeleted}/${stats.sessionsChecked} 已删除`);
-  console.info(`[DataCleaner] 图片: ${stats.imagesDeleted}/${stats.imagesChecked} 已删除`);
-  console.info(`[DataCleaner] 消息: ${stats.messagesCleaned}/${stats.messagesChecked} 已清理`);
+  logger.info(`[DataCleaner] 会话: ${stats.sessionsDeleted}/${stats.sessionsChecked} 已删除`);
+  logger.info(`[DataCleaner] 图片: ${stats.imagesDeleted}/${stats.imagesChecked} 已删除`);
+  logger.info(`[DataCleaner] 消息: ${stats.messagesCleaned}/${stats.messagesChecked} 已清理`);
 
   // 定期清理（每天一次）
-  setInterval(async () => {
-    console.info("[DataCleaner] 执行定期清理...");
+  const cleanupTimer = setInterval(async () => {
+    logger.info("[DataCleaner] 执行定期清理...");
     const dailyStats = await cleaner.cleanup();
     if (dailyStats.sessionsDeleted > 0 || dailyStats.imagesDeleted > 0 || dailyStats.messagesCleaned > 0) {
-      console.info(`[DataCleaner] 会话: ${dailyStats.sessionsDeleted}/${dailyStats.sessionsChecked} 已删除`);
-      console.info(`[DataCleaner] 图片: ${dailyStats.imagesDeleted}/${dailyStats.imagesChecked} 已删除`);
-      console.info(`[DataCleaner] 消息: ${dailyStats.messagesCleaned}/${dailyStats.messagesChecked} 已清理`);
+      logger.info(`[DataCleaner] 会话: ${dailyStats.sessionsDeleted}/${dailyStats.sessionsChecked} 已删除`);
+      logger.info(`[DataCleaner] 图片: ${dailyStats.imagesDeleted}/${dailyStats.imagesChecked} 已删除`);
+      logger.info(`[DataCleaner] 消息: ${dailyStats.messagesCleaned}/${dailyStats.messagesChecked} 已清理`);
     }
   }, 24 * 60 * 60 * 1000); // 24 小时
 
@@ -54,12 +60,61 @@ export async function main(): Promise<void> {
     appSecret: config.feishuAppSecret,
   });
 
+  // 自动获取 Bot Open ID
+  let botOpenId: string | undefined;
+  try {
+    const res = await client.request({
+      method: "GET",
+      url: "/open-apis/bot/v3/info",
+    });
+    if (res.code === 0 && res.data?.bot?.open_id) {
+      botOpenId = res.data.bot.open_id;
+      logger.info(`[Main] Bot Open ID: ${botOpenId}`);
+    }
+  } catch (err) {
+    logger.warn("[Main] 获取 Bot Open ID 失败:", err);
+  }
+
+  // 解析管理员 Open ID（可选）
+  const adminOpenId = await resolveAdminOpenId(client, config.feishuAdmin);
+  if (adminOpenId) {
+    logger.info(`[Main] 管理员 Open ID: ${adminOpenId}`);
+  } else {
+    logger.info(`[Main] 未配置管理员`);
+  }
+
+  // 解析团队成员 Open IDs
+  const teamMemberIds: string[] = [];
+  for (const member of config.feishuTeamMembers) {
+    const memberId = await resolveAdminOpenId(client, member);
+    if (memberId) {
+      teamMemberIds.push(memberId);
+    }
+  }
+  if (teamMemberIds.length > 0) {
+    logger.info(`[Main] 团队成员: ${teamMemberIds.length} 人`);
+  }
+
+  // 创建 runtime 配置
+  const runtime = new FeishuPiRuntime({
+    cwd: config.cwd,
+    sessionDir: config.sessionDir,
+    modelProvider: config.modelProvider,
+    modelName: config.modelName,
+    modelBaseUrl: config.modelBaseUrl,
+    systemPrompt: config.systemPrompt,
+    adminId: adminOpenId || "",
+    teamMemberIds,
+  });
+  const conversations = new ConversationManager(runtime, new ConversationStore(join(config.sessionDir, "conversations.json")));
+
   const transport = new LarkTransport({
     appId: config.feishuAppId,
     appSecret: config.feishuAppSecret,
-    botOpenId: config.feishuBotOpenId,
+    botOpenId,
     client,
     imageCacheDir: join(config.sessionDir, "images"),
+    adminOpenId,
   });
 
   const bridge = new FeishuAgentBridge(
@@ -74,6 +129,42 @@ export async function main(): Promise<void> {
 
   bridge.start();
   await transport.connect();
+
+  // 打印配置页面地址
+  console.log(`\n配置页面: http://localhost:3456\n`);
+
+  // 优雅退出处理：确保所有资源完全释放
+  let exiting = false;
+  const gracefulShutdown = async (signal: string) => {
+    if (exiting) return;
+    exiting = true;
+    logger.info(`[Main] 收到 ${signal} 信号，正在关闭服务...`);
+
+    // 清理定时器
+    clearInterval(cleanupTimer);
+
+    try {
+      await transport.disconnect();
+      logger.info("[Main] 飞书连接已关闭");
+    } catch (err) {
+      logger.error("[Main] 关闭飞书连接失败:", err);
+    }
+
+    // 删除 PID 文件
+    try {
+      unlinkSync(pidFile);
+      logger.info(`[Main] PID 文件已删除`);
+    } catch (err) {
+      logger.error("[Main] 删除 PID 文件失败:", err);
+    }
+
+    // 强制退出，确保所有子进程和定时器被清理
+    logger.info("[Main] 服务已完全退出");
+    process.exit(0);
+  };
+
+  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+  process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

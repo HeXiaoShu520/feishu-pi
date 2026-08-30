@@ -1,7 +1,9 @@
-import { createAgentSession, SessionManager, type AgentSession } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, SessionManager, type AgentSession, DefaultResourceLoader, type ResourceLoader } from "@earendil-works/pi-coding-agent";
 import { getModel, type ImageContent } from "@earendil-works/pi-ai/compat";
-import type { FeishuPiConfig, FeishuPiEvent, FeishuPiPrompt, FeishuPiSession, FeishuPiTool } from "./types.ts";
+import type { FeishuPiConfig, FeishuPiEvent, FeishuPiPrompt, FeishuPiSession, FeishuPiTool, UserRole } from "./types.ts";
 import { createToolRegistry, DEFAULT_BUILTIN_TOOLS } from "../tools/registry.ts";
+import { logger, colors } from "../utils/logger.ts";
+import { createRestrictedReadTool } from "../tools/restricted-read.ts";
 
 class SessionWrapper implements FeishuPiSession {
   readonly sessionFile?: string;
@@ -40,6 +42,77 @@ class SessionWrapper implements FeishuPiSession {
   async waitForIdle(): Promise<void> {
     await this.raw.waitForIdle();
   }
+
+  abort(): void {
+    if (typeof (this.raw as any).abort === "function") {
+      (this.raw as any).abort();
+    }
+  }
+}
+
+/**
+ * 根据权限过滤 Skills 的 ResourceLoader
+ */
+class PermissionFilteredResourceLoader implements ResourceLoader {
+  private base: DefaultResourceLoader;
+  private userRole: UserRole;
+
+  constructor(base: DefaultResourceLoader, userRole: UserRole) {
+    this.base = base;
+    this.userRole = userRole;
+  }
+
+  getExtensions() {
+    return this.base.getExtensions();
+  }
+
+  getSkills() {
+    const { skills, diagnostics } = this.base.getSkills();
+    const filtered = skills.filter((skill) => {
+      const permission = (skill as any).permission || "default";
+      if (permission === "default") return true;
+      if (permission === "team") return this.userRole === "team" || this.userRole === "admin";
+      if (permission === "admin") return this.userRole === "admin";
+      return false;
+    });
+    return { skills: filtered, diagnostics };
+  }
+
+  getPrompts() {
+    return this.base.getPrompts();
+  }
+
+  getThemes() {
+    return this.base.getThemes();
+  }
+
+  getAgentsFiles() {
+    return this.base.getAgentsFiles();
+  }
+
+  getSystemPrompt() {
+    return this.base.getSystemPrompt();
+  }
+
+  getSystemPromptSource() {
+    return this.base.getSystemPromptSource();
+  }
+
+  getAppendSystemPrompt() {
+    return this.base.getAppendSystemPrompt();
+  }
+
+  getAppendSystemPromptSources() {
+    return this.base.getAppendSystemPromptSources();
+  }
+
+  extendResources(paths: any) {
+    return this.base.extendResources(paths);
+  }
+
+  async reload(options?: any) {
+    return this.base.reload(options);
+  }
 }
 
 export class FeishuPiRuntime {
@@ -51,19 +124,98 @@ export class FeishuPiRuntime {
     this.tools = tools;
   }
 
-  async createSession(sessionFile?: string): Promise<FeishuPiSession> {
+  async createSession(sessionFile: string | undefined, userId: string): Promise<FeishuPiSession> {
+    // 设置 API key 到对应厂商的环境变量
+    const apiKey = process.env.FEISHU_PI_MODEL_API_KEY;
+    if (!apiKey) {
+      throw new Error("FEISHU_PI_MODEL_API_KEY is required");
+    }
+    if (this.config.modelProvider === "anthropic") {
+      process.env.ANTHROPIC_API_KEY = apiKey;
+    } else if (this.config.modelProvider === "openai") {
+      process.env.OPENAI_API_KEY = apiKey;
+    }
+
+    // 判断用户角色
+    const userRole = this.getUserRole(userId);
+    logger.info(`[Runtime] 用户角色: ${colors.cyan}${userId}${colors.reset} -> ${colors.yellow}${userRole}${colors.reset}`);
+
     const sessionManager = sessionFile
       ? SessionManager.open(sessionFile, this.config.sessionDir, this.config.cwd)
       : SessionManager.create(this.config.cwd, this.config.sessionDir);
-    const model = getModel(this.config.modelProvider as never, this.config.modelId as never);
-    if (!model) throw new Error(`Model not found: ${this.config.modelProvider}/${this.config.modelId}`);
+    const model = getModel(this.config.modelProvider as never, this.config.modelName as never);
+    if (!model) throw new Error(`Model not found: ${this.config.modelProvider}/${this.config.modelName}`);
+
+    // 创建基础 ResourceLoader
+    const baseResourceLoader = new DefaultResourceLoader({
+      cwd: this.config.cwd,
+      agentDir: `${this.config.cwd}/.agent`,
+      systemPrompt: this.config.systemPrompt,
+    });
+
+    // 包装成权限过滤的 ResourceLoader
+    const resourceLoader = new PermissionFilteredResourceLoader(baseResourceLoader, userRole);
+
+    // 加载并打印 skills
+    const { skills } = resourceLoader.getSkills();
+    if (skills.length > 0) {
+      logger.info(`[Runtime] 已加载 ${colors.bright}${colors.magenta}${skills.length}${colors.reset} 个 Skills (${userRole}):`);
+      skills.forEach((skill) => {
+        const permission = (skill as any).permission || "default";
+        logger.info(`  ${colors.magenta}✦${colors.reset} ${colors.cyan}${skill.name}${colors.reset}: ${skill.description} ${colors.gray}[${permission}]${colors.reset}`);
+      });
+    } else {
+      logger.warn(`[Runtime] 未找到任何 Skills`);
+    }
+
+    // 根据角色过滤 custom tools
+    const allCustomTools = createToolRegistry(this.tools);
+    let customTools = allCustomTools.filter((tool) => {
+      const permission = (tool as any).permission || "default";
+      if (permission === "default") return true;
+      if (permission === "team") return userRole === "team" || userRole === "admin";
+      if (permission === "admin") return userRole === "admin";
+      return false;
+    });
+
+    // 非管理员：添加受限的 read 工具（只能读 skills）
+    const agentDir = `${this.config.cwd}/.agent`;
+    if (userRole !== "admin") {
+      customTools = [createRestrictedReadTool(this.config.cwd, agentDir), ...customTools];
+    }
+
+    if (customTools.length > 0) {
+      logger.info(`[Runtime] 已注册 ${colors.bright}${colors.green}${customTools.length}${colors.reset} 个自定义工具 (${userRole}):`);
+      customTools.forEach((tool) => {
+        const permission = (tool as any).permission || "default";
+        logger.info(`  ${colors.green}⚙${colors.reset} ${colors.cyan}${tool.name}${colors.reset}: ${tool.description} ${colors.gray}[${permission}]${colors.reset}`);
+      });
+    }
+
+    // 根据角色选择内置工具
+    let builtinTools: string[];
+    if (userRole === "admin") {
+      builtinTools = this.config.builtinTools ?? [...DEFAULT_BUILTIN_TOOLS];
+    } else {
+      // 非管理员：无内置工具（read 已通过 customTools 提供）
+      builtinTools = [];
+    }
+    logger.info(`[Runtime] 内置工具 (${userRole}): ${builtinTools.length > 0 ? colors.yellow + builtinTools.join(", ") + colors.reset : colors.gray + "无（read 受限）" + colors.reset}`);
+
     const { session } = await createAgentSession({
       cwd: this.config.cwd,
       sessionManager,
       model: this.config.modelBaseUrl ? { ...model, baseUrl: this.config.modelBaseUrl } : model,
-      tools: this.config.builtinTools ?? [...DEFAULT_BUILTIN_TOOLS],
-      customTools: createToolRegistry(this.tools),
+      tools: builtinTools,
+      customTools,
+      resourceLoader,
     });
     return new SessionWrapper(session);
+  }
+
+  private getUserRole(userId: string): UserRole {
+    if (userId === this.config.adminId) return "admin";
+    if (this.config.teamMemberIds.includes(userId)) return "team";
+    return "default";
   }
 }

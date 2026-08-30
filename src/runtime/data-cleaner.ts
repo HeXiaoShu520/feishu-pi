@@ -7,6 +7,7 @@
 
 import { readdir, stat, unlink, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
+import { logger } from "../utils/logger.ts";
 
 export interface CleanupOptions {
   /** 会话目录 */
@@ -84,11 +85,11 @@ export class DataCleaner {
             stats.sessionsDeleted++;
           }
         } catch (err) {
-          console.warn(`[DataCleaner] 无法处理会话文件 ${file}:`, err);
+          logger.warn(`[DataCleaner] 无法处理会话文件 ${file}:`, err);
         }
       }
     } catch (err) {
-      console.error("[DataCleaner] 清理会话文件失败:", err);
+      logger.error("[DataCleaner] 清理会话文件失败:", err);
     }
   }
 
@@ -112,13 +113,13 @@ export class DataCleaner {
             stats.imagesDeleted++;
           }
         } catch (err) {
-          console.warn(`[DataCleaner] 无法处理图片 ${file}:`, err);
+          logger.warn(`[DataCleaner] 无法处理图片 ${file}:`, err);
         }
       }
     } catch (err) {
       // 图片目录可能不存在，忽略
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        console.error("[DataCleaner] 清理图片缓存失败:", err);
+        logger.error("[DataCleaner] 清理图片缓存失败:", err);
       }
     }
   }
@@ -153,7 +154,7 @@ export class DataCleaner {
       stats.messagesCleaned = cleaned;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        console.error("[DataCleaner] 清理消息状态失败:", err);
+        logger.error("[DataCleaner] 清理消息状态失败:", err);
       }
     }
   }
@@ -176,7 +177,7 @@ export class DataCleaner {
       for (const [messageId, data] of Object.entries(messages)) {
         // 清理卡在 processing 状态超过 timeoutMs 的消息
         if (data.status === "processing" && now - data.updatedAt > timeoutMs) {
-          console.warn(`[DataCleaner] 清理卡住的消息: ${messageId}`);
+          logger.warn(`[DataCleaner] 清理卡住的消息: ${messageId}`);
           cleaned++;
         } else {
           newMessages[messageId] = data;
@@ -190,7 +191,7 @@ export class DataCleaner {
       return cleaned;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        console.error("[DataCleaner] 清理卡住消息失败:", err);
+        logger.error("[DataCleaner] 清理卡住消息失败:", err);
       }
       return 0;
     }

@@ -6,4 +6,5 @@ export interface FeishuContext {
   chatId: string;
   threadId?: string;
   conversationId: string;
+  isAdmin?: boolean; // 是否为管理员
 }

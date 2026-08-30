@@ -34,9 +34,12 @@ export class ConversationManager {
 
   /** 从持久化映射恢复 Pi Session，失败时创建新 Session。 */
   private async initializeState(conversationId: string): Promise<ConversationState> {
+    // 从 conversationId 提取 userId (格式: userId-chatId 或 userId)
+    const userId = conversationId.split("-")[0];
+
     const sessionFile = await this.store?.get(conversationId);
-    let session = sessionFile ? await this.runtime.createSession(sessionFile).catch(() => undefined) : undefined;
-    if (!session) session = await this.runtime.createSession();
+    let session = sessionFile ? await this.runtime.createSession(sessionFile, userId).catch(() => undefined) : undefined;
+    if (!session) session = await this.runtime.createSession(undefined, userId);
     if (session.sessionFile) await this.store?.set(conversationId, session.sessionFile);
     return { session, queue: Promise.resolve() };
   }
@@ -55,5 +58,20 @@ export class ConversationManager {
     });
     state.queue = task.catch(() => undefined);
     await task;
+  }
+
+  /** 清空指定会话的历史记录 */
+  async clear(conversationId: string): Promise<void> {
+    // 删除映射和持久化
+    this.conversations.delete(conversationId);
+    await this.store?.delete(conversationId);
+  }
+
+  /** 中断指定会话的当前响应 */
+  async abort(conversationId: string): Promise<void> {
+    const statePromise = this.conversations.get(conversationId);
+    if (!statePromise) return;
+    const state = await statePromise;
+    state.session.abort();
   }
 }

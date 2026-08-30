@@ -52,7 +52,7 @@ export class CardKitStream {
   constructor(options: CardKitStreamOptions) {
     this.client = options.client;
     this.minInterval = options.minPushIntervalMs ?? 800;
-    this.printFrequencyMs = options.printFrequencyMs ?? 120;
+    this.printFrequencyMs = options.printFrequencyMs ?? 30; // 加快客户端渲染：30ms/步
     this.printStep = options.printStep ?? 3;
     this.onError = options.onError;
   }
@@ -99,28 +99,35 @@ export class CardKitStream {
     await this.pushUpdate(this.accumulator);
   }
 
-  /** 关闭流式模式，发送最终内容 */
+  /** 替换全部内容（用于动画帧，不累加） */
+  async replace(text: string): Promise<void> {
+    if (this.disposed || !this.cardId) return;
+
+    this.accumulator = text;
+    await this.pushUpdate(text);
+  }
+
+  /** 关闭流式模式 */
   async finalize(fullText: string): Promise<void> {
     if (this.disposed || !this.cardId) return;
 
     try {
-      // 1. 关闭流式模式
-      await this.patchSettings(false);
+      // 0. 等待最后一次推送完成，并强制推送 accumulator 里的剩余内容
+      while (this.inFlight) {
+        await new Promise(resolve => setTimeout(resolve, 50));
+      }
 
-      // 2. 发送最终完整内容
-      const cardJson = this.buildCardJson(fullText, false);
-      await this.client.request({
-        method: "PUT",
-        url: `/open-apis/cardkit/v1/cards/${this.cardId}`,
-        data: {
-          card: {
-            type: "card_json",
-            data: cardJson,
-          },
-          sequence: ++this.sequence,
-          uuid: this.uuid(),
-        },
-      });
+      // 如果 accumulator 还有未推送的内容，立即推送
+      if (this.accumulator) {
+        await this.pushUpdate(this.accumulator);
+      }
+
+      // 1. 等待客户端渲染完成（参考 Python 版本：min(3s, 文本长度 * 0.025)）
+      const renderWaitMs = Math.min(3000, fullText.length * 25);
+      await new Promise(resolve => setTimeout(resolve, renderWaitMs));
+
+      // 2. 关闭流式模式（不再发送最终内容，避免覆盖正在渲染的文本）
+      await this.patchSettings(false);
 
       this.disposed = true;
     } catch (err) {

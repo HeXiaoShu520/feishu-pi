@@ -1,6 +1,8 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { FeishuContext } from "../context/types.ts";
 
+export type UserRole = "default" | "team" | "admin";
+
 export type FeishuPiEvent =
   | { type: "assistant_text"; text: string }
   | { type: "tool_started"; toolName: string }
@@ -17,9 +19,12 @@ export interface FeishuPiConfig {
   cwd: string;
   sessionDir: string;
   modelProvider: string;
-  modelId: string;
+  modelName: string;
   modelBaseUrl?: string;
   builtinTools?: string[];
+  systemPrompt?: string;
+  adminId: string;
+  teamMemberIds: string[];
 }
 
 export interface FeishuPiSession {
@@ -27,6 +32,7 @@ export interface FeishuPiSession {
   subscribe(listener: (event: FeishuPiEvent) => void): () => void;
   prompt(input: FeishuPiPrompt): Promise<void>;
   waitForIdle(): Promise<void>;
+  abort(): void;
 }
 
 export type FeishuPiTool = AgentTool;

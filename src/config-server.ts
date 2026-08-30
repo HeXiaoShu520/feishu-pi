@@ -60,19 +60,19 @@ function stringifyEnv(config: Record<string, string>): string {
   lines.push("# 模型配置");
   const provider = config.FEISHU_PI_MODEL_PROVIDER || "anthropic";
   lines.push("FEISHU_PI_MODEL_PROVIDER=" + provider);
-  lines.push("FEISHU_PI_MODEL_ID=" + (config.FEISHU_PI_MODEL_ID || "claude-sonnet-4-6"));
+  lines.push("FEISHU_PI_MODEL_NAME=" + (config.FEISHU_PI_MODEL_NAME || "claude-sonnet-4-6"));
   lines.push("FEISHU_PI_MODEL_BASE_URL=" + (config.FEISHU_PI_MODEL_BASE_URL || ""));
   lines.push("");
 
-  // API Key（根据 provider 写入对应变量）
-  lines.push("# API Keys（根据所选 provider 填写对应的 key）");
-  const apiKey = config.API_KEY || "";
-  if (provider === "anthropic") {
-    lines.push("ANTHROPIC_API_KEY=" + apiKey);
-    lines.push("OPENAI_API_KEY=");
-  } else {
-    lines.push("ANTHROPIC_API_KEY=");
-    lines.push("OPENAI_API_KEY=" + apiKey);
+  // API Key
+  lines.push("# API Key");
+  lines.push("FEISHU_PI_MODEL_API_KEY=" + (config.FEISHU_PI_MODEL_API_KEY || ""));
+  lines.push("");
+
+  // 系统提示词
+  if (config.FEISHU_PI_SYSTEM_PROMPT) {
+    lines.push("# 系统提示词（可选）");
+    lines.push("FEISHU_PI_SYSTEM_PROMPT=" + config.FEISHU_PI_SYSTEM_PROMPT);
   }
 
   return lines.join("\n") + "\n";
@@ -155,8 +155,8 @@ const HTML_PAGE = `
           </select>
         </div>
         <div class="form-group">
-          <label for="FEISHU_PI_MODEL_ID">模型 ID</label>
-          <input type="text" id="FEISHU_PI_MODEL_ID" name="FEISHU_PI_MODEL_ID" placeholder="claude-sonnet-4-6">
+          <label for="FEISHU_PI_MODEL_NAME">模型名称</label>
+          <input type="text" id="FEISHU_PI_MODEL_NAME" name="FEISHU_PI_MODEL_NAME" placeholder="claude-sonnet-4-6">
         </div>
         <div class="form-group">
           <label for="FEISHU_PI_MODEL_BASE_URL">Base URL *</label>
@@ -168,9 +168,22 @@ const HTML_PAGE = `
       <div class="section">
         <div class="section-title">API Key</div>
         <div class="form-group">
-          <label for="API_KEY">API Key *</label>
-          <input type="password" id="API_KEY" name="API_KEY" required>
+          <label for="FEISHU_PI_MODEL_API_KEY">API Key *</label>
+          <div style="position: relative;">
+            <input type="password" id="FEISHU_PI_MODEL_API_KEY" name="FEISHU_PI_MODEL_API_KEY" placeholder="sk-ant-... 或 sk-proj-..." required>
+            <button type="button" onclick="togglePassword('FEISHU_PI_MODEL_API_KEY')" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; font-size: 18px;">👁️</button>
+          </div>
           <div class="hint">根据所选模型提供商填写对应的 API Key</div>
+        </div>
+      </div>
+
+      <!-- 系统提示词 -->
+      <div class="section">
+        <div class="section-title">系统提示词（可选）</div>
+        <div class="form-group">
+          <label for="FEISHU_PI_SYSTEM_PROMPT">系统提示词</label>
+          <textarea id="FEISHU_PI_SYSTEM_PROMPT" name="FEISHU_PI_SYSTEM_PROMPT" rows="4" style="width: 100%; padding: 10px; border: 1px solid #ddd; border-radius: 4px; font-size: 14px; font-family: inherit; resize: vertical;" placeholder="例如：你是一个专业的编程助手，擅长代码分析和问题解决。"></textarea>
+          <div class="hint">自定义 AI 助手的身份和行为特征</div>
         </div>
       </div>
 
@@ -214,23 +227,8 @@ const HTML_PAGE = `
       "SICK": "SICK", "PUKE": "PUKE", "BETRAYED": "BETRAYED", "HEADSET": "HEADSET", "EatingFood": "EatingFood",
       "MeMeMe": "MeMeMe", "Sigh": "Sigh", "Typing": "Typing", "Lemon": "Lemon", "Get": "Get",
       "LGTM": "LGTM", "OnIt": "OnIt", "OneSecond": "OneSecond", "VRHeadset": "VRHeadset", "YouAreTheBest": "YouAreTheBest",
-      "SALUTE": "SALUTE", "SHAKE": "SHAKE", "HIGHFIVE": "HIGHFIVE", "UPPERLEFT": "UPPERLEFT", "ThumbsDown": "ThumbsDown",
-      "SLIGHT": "SLIGHT", "TONGUE": "TONGUE", "EYESCLOSED": "EYESCLOSED", "RoarForYou": "RoarForYou", "CALF": "CALF",
-      "BEAR": "BEAR", "BULL": "BULL", "RAINBOWPUKE": "RAINBOWPUKE", "ROSE": "ROSE", "HEART": "HEART",
-      "PARTY": "PARTY", "LIPS": "LIPS", "BEER": "BEER", "CAKE": "CAKE", "GIFT": "GIFT",
-      "CUCUMBER": "CUCUMBER", "Drumstick": "Drumstick", "Pepper": "Pepper", "CANDIEDHAWS": "CANDIEDHAWS", "BubbleTea": "BubbleTea",
-      "Coffee": "Coffee", "Yes": "Yes", "No": "No", "OKR": "OKR", "CheckMark": "CheckMark",
+      "Yes": "Yes", "No": "No", "OKR": "OKR", "CheckMark": "CheckMark",
       "CrossMark": "CrossMark", "MinusOne": "MinusOne", "Hundred": "Hundred", "AWESOMEN": "AWESOMEN", "Pin": "Pin",
-      "Alarm": "Alarm", "Loudspeaker": "Loudspeaker", "Trophy": "Trophy", "Fire": "Fire", "BOMB": "BOMB",
-      "Music": "Music", "XmasTree": "XmasTree", "Snowman": "Snowman", "XmasHat": "XmasHat", "FIREWORKS": "FIREWORKS",
-      "2022": "2022", "REDPACKET": "REDPACKET", "FORTUNE": "FORTUNE", "LUCK": "LUCK", "FIRECRACKER": "FIRECRACKER",
-      "StickyRiceBalls": "StickyRiceBalls", "HEARTBROKEN": "HEARTBROKEN", "POOP": "POOP", "StatusFlashOfInspiration": "StatusFlashOfInspiration",
-      "18X": "18X", "CLEAVER": "CLEAVER", "Soccer": "Soccer", "Basketball": "Basketball", "GeneralDoNotDisturb": "GeneralDoNotDisturb",
-      "Status_PrivateMessage": "Status_PrivateMessage", "GeneralInMeetingBusy": "GeneralInMeetingBusy", "StatusReading": "StatusReading",
-      "StatusInFlight": "StatusInFlight", "GeneralBusinessTrip": "GeneralBusinessTrip", "GeneralWorkFromHome": "GeneralWorkFromHome",
-      "StatusEnjoyLife": "StatusEnjoyLife", "GeneralTravellingCar": "GeneralTravellingCar", "StatusBus": "StatusBus",
-      "GeneralSun": "GeneralSun", "GeneralMoonRest": "GeneralMoonRest", "MoonRabbit": "MoonRabbit", "Mooncake": "Mooncake",
-      "JubilantRabbit": "JubilantRabbit", "TV": "TV", "Movie": "Movie", "Pumpkin": "Pumpkin",
       "BeamingFace": "BeamingFace", "Delighted": "Delighted", "ColdSweat": "ColdSweat", "FullMoonFace": "FullMoonFace",
       "Partying": "Partying", "GoGoGo": "GoGoGo", "ThanksFace": "ThanksFace", "SaluteFace": "SaluteFace",
       "Shrug": "Shrug", "ClownFace": "ClownFace", "HappyDragon": "HappyDragon"
@@ -263,6 +261,12 @@ const HTML_PAGE = `
       document.getElementById('FEISHU_RANDOM_EMOJIS').value = selected.join(',');
     }
 
+    // 切换密码显示
+    function togglePassword(fieldId) {
+      const input = document.getElementById(fieldId);
+      input.type = input.type === 'password' ? 'text' : 'password';
+    }
+
     // 全选
     function selectAllEmojis() {
       document.querySelectorAll('.emoji-item').forEach(el => el.classList.add('selected'));
@@ -288,13 +292,6 @@ const HTML_PAGE = `
       for (const [key, value] of Object.entries(config)) {
         const input = document.getElementById(key);
         if (input && input.type !== 'hidden') input.value = value || '';
-      }
-
-      // API_KEY 从对应的 provider key 读取
-      const provider = config.FEISHU_PI_MODEL_PROVIDER || 'anthropic';
-      const apiKeyInput = document.getElementById('API_KEY');
-      if (apiKeyInput) {
-        apiKeyInput.value = provider === 'anthropic' ? (config.ANTHROPIC_API_KEY || '') : (config.OPENAI_API_KEY || '');
       }
 
       // 渲染表情并恢复选择状态

@@ -2,6 +2,7 @@ import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { join } from "node:path";
 import type { Client } from "@larksuiteoapi/node-sdk";
+import { logger } from "../utils/logger.ts";
 
 export interface LarkUserProfile {
   openId: string;
@@ -54,7 +55,7 @@ export class LarkCli {
       if (ageInDays < CACHE_EXPIRY_DAYS) {
         return cached;
       }
-      console.info(`[LarkCli] 用户 ${openId} 缓存已过期（${ageInDays.toFixed(1)} 天），重新查询`);
+      logger.info(`[LarkCli] 用户 ${openId} 缓存已过期（${ageInDays.toFixed(1)} 天），重新查询`);
     }
 
     let name: string | undefined;
@@ -73,21 +74,21 @@ export class LarkCli {
         name = user.name || undefined;
         englishName = user.en_name || undefined;
         searchName = englishName || name; // 优先用英文名搜索
-        console.info(`[LarkCli] API 查询成功: 中文名=${name}, 英文名=${englishName}`);
+        logger.info(`[LarkCli] API 查询成功: 中文名=${name}, 英文名=${englishName}`);
       } else {
         throw new Error("API 返回的用户资料为空");
       }
     } catch (apiError) {
       // 第二步：API 查询失败，尝试从群成员列表获取（非应用成员）
-      console.warn(`[LarkCli] API 查询用户 ${openId} 失败：${apiError instanceof Error ? apiError.message : String(apiError)}`);
+      logger.warn(`[LarkCli] API 查询用户 ${openId} 失败：${apiError instanceof Error ? apiError.message : String(apiError)}`);
 
       if (!chatId) {
-        console.warn(`[LarkCli] 无 chatId，无法从群成员列表查询`);
+        logger.warn(`[LarkCli] 无 chatId，无法从群成员列表查询`);
         return this.createFallbackProfile(openId, now);
       }
 
       try {
-        console.info(`[LarkCli] 尝试从群 ${chatId} 成员列表获取用户信息`);
+        logger.info(`[LarkCli] 尝试从群 ${chatId} 成员列表获取用户信息`);
 
         // 分页获取群成员列表
         let pageToken: string | undefined;
@@ -116,9 +117,9 @@ export class LarkCli {
 
         name = member.name;
         searchName = name; // 用中文名搜索
-        console.info(`[LarkCli] 从群成员列表获取到名字: ${name}`);
+        logger.info(`[LarkCli] 从群成员列表获取到名字: ${name}`);
       } catch (chatError) {
-        console.warn(`[LarkCli] 从群成员列表查询失败：${chatError instanceof Error ? chatError.message : String(chatError)}`);
+        logger.warn(`[LarkCli] 从群成员列表查询失败：${chatError instanceof Error ? chatError.message : String(chatError)}`);
         return this.createFallbackProfile(openId, now);
       }
     }
@@ -131,7 +132,7 @@ export class LarkCli {
       // 如果是群成员（没有英文名），从 lark-cli 补充
       if (!englishName && larkResult.englishName) {
         englishName = larkResult.englishName;
-        console.info(`[LarkCli] 群成员补充英文名: ${englishName}`);
+        logger.info(`[LarkCli] 群成员补充英文名: ${englishName}`);
       }
     }
 
@@ -153,7 +154,7 @@ export class LarkCli {
       ? profile.departmentNames.join(", ")
       : "无";
     const englishInfo = profile.englishName ? `, 英文名: ${profile.englishName}` : "";
-    console.info(`[LarkCli] 🆕 新用户入库: ${displayName} (${profile.openId})${englishInfo}, 部门: ${deptInfo}`);
+    logger.info(`[LarkCli] 🆕 新用户入库: ${displayName} (${profile.openId})${englishInfo}, 部门: ${deptInfo}`);
 
     return profile;
   }
@@ -179,7 +180,7 @@ export class LarkCli {
       const user = searchResult.data?.users?.find((u: any) => u.open_id === openId);
 
       if (!user) {
-        console.warn(`[LarkCli] lark-cli 搜索结果中未找到 ${openId}`);
+        logger.warn(`[LarkCli] lark-cli 搜索结果中未找到 ${openId}`);
         return {};
       }
 
@@ -188,23 +189,23 @@ export class LarkCli {
       // 提取部门信息
       const department = user.department;
       if (department && department.trim()) {
-        console.info(`[LarkCli] 通过 lark-cli 获取到部门: ${department}`);
+        logger.info(`[LarkCli] 通过 lark-cli 获取到部门: ${department}`);
         resultData.departmentNames = [department];
       } else {
-        console.info(`[LarkCli] lark-cli 搜索结果中无部门信息`);
+        logger.info(`[LarkCli] lark-cli 搜索结果中无部门信息`);
       }
 
       // 提取英文名（用于群成员补充）
       const email = user.email || user.enterprise_email;
       if (email) {
         const englishName = email.split("@")[0]; // 从邮箱提取英文名
-        console.info(`[LarkCli] 通过 lark-cli 获取到邮箱/英文名: ${englishName}`);
+        logger.info(`[LarkCli] 通过 lark-cli 获取到邮箱/英文名: ${englishName}`);
         resultData.englishName = englishName;
       }
 
       return resultData;
     } catch (error) {
-      console.warn(`[LarkCli] lark-cli 搜索失败：${error instanceof Error ? error.message : String(error)}`);
+      logger.warn(`[LarkCli] lark-cli 搜索失败：${error instanceof Error ? error.message : String(error)}`);
       return {};
     }
   }

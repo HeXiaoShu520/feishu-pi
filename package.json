@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "start": "tsx src/main.ts",
+    "dev": "tsx watch src/main.ts",
+    "config": "tsx src/config-server.ts",
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "vitest --run --config vitest.config.ts",
     "postinstall": "node scripts/patch-pi-ai.js"
@@ -14,7 +16,9 @@
     "@earendil-works/pi-ai": "^0.84.2",
     "@earendil-works/pi-coding-agent": "^0.84.2",
     "@larksuiteoapi/node-sdk": "1.73.0",
-    "dotenv": "^17.4.2"
+    "body-parser": "^2.3.0",
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1"
   },
   "devDependencies": {
     "@types/node": "22.19.19",

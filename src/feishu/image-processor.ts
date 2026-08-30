@@ -6,6 +6,7 @@
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
+import { logger } from "../utils/logger.ts";
 
 export interface ImageAttachment {
   imageKey: string;
@@ -59,7 +60,7 @@ export class LarkImageProcessor implements FeishuImageProcessor {
           const localPath = join(this.cacheDir, `${imageKey}.jpg`);
           writeFileSync(localPath, imageData);
         } catch (err) {
-          console.warn("[LarkImageProcessor] 保存图片缓存失败", err);
+          logger.warn("[LarkImageProcessor] 保存图片缓存失败", err);
         }
       }
 
@@ -69,7 +70,7 @@ export class LarkImageProcessor implements FeishuImageProcessor {
         mimeType: this.detectMimeType(imageData),
       };
     } catch (err) {
-      console.error("[LarkImageProcessor] 处理图片失败", imageKey, err);
+      logger.error("[LarkImageProcessor] 处理图片失败", imageKey, err);
       return undefined;
     }
   }
@@ -122,7 +123,7 @@ export class LarkImageProcessor implements FeishuImageProcessor {
       }
       return undefined;
     } catch (err) {
-      console.error("[LarkImageProcessor] 提取图片数据失败", err);
+      logger.error("[LarkImageProcessor] 提取图片数据失败", err);
       return undefined;
     }
   }

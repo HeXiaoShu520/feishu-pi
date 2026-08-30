@@ -4,6 +4,7 @@ import { LarkCli } from "./lark-cli.ts";
 import { LarkImageProcessor } from "./image-processor.ts";
 import { formatLogText } from "./log-utils.ts";
 import type { Client } from "@larksuiteoapi/node-sdk";
+import { logger } from "../utils/logger.ts";
 
 export interface LarkTransportConfig {
   appId: string;
@@ -17,6 +18,8 @@ export interface LarkTransportConfig {
   client?: Client;
   /** 图片缓存目录（可选） */
   imageCacheDir?: string;
+  /** 管理员 Open ID（可选） */
+  adminOpenId?: string;
 }
 
 /** 基于飞书官方高层 Channel 的最小消息传输实现。 */
@@ -25,12 +28,14 @@ export class LarkTransport implements FeishuTransport {
   private readonly botOpenId?: string;
   private readonly larkCli: LarkCli;
   private readonly imageProcessor?: LarkImageProcessor;
+  private readonly adminOpenId?: string;
   private handler?: (message: FeishuInboundMessage) => Promise<void>;
   private messageHandlerRegistered = false;
   private connecting?: Promise<void>;
 
   constructor(config: LarkTransportConfig) {
     this.botOpenId = config.botOpenId;
+    this.adminOpenId = config.adminOpenId;
     this.larkCli = new LarkCli(config.client!, config.appId, config.userProfileDir);
     if (config.client) {
       this.imageProcessor = new LarkImageProcessor(config.client, {
@@ -46,9 +51,9 @@ export class LarkTransport implements FeishuTransport {
       wsConfig: { pingTimeout: config.pingTimeout ?? 30 },
       safety: { dedup: { maxEntries: 10_000, ttl: 10 * 60 * 1000 } },
     });
-    this.channel.on("reconnecting", () => console.warn("[LarkTransport] 飞书 WebSocket 正在重连"));
-    this.channel.on("reconnected", () => console.info("[LarkTransport] 飞书 WebSocket 已恢复"));
-    this.channel.on("error", (error) => console.error("[LarkTransport] 飞书 WebSocket 错误", error));
+    this.channel.on("reconnecting", () => logger.warn("[LarkTransport] 飞书 WebSocket 正在重连"));
+    this.channel.on("reconnected", () => logger.info("[LarkTransport] 飞书 WebSocket 已恢复"));
+    this.channel.on("error", (error) => logger.error("[LarkTransport] 飞书 WebSocket 错误", error));
   }
 
   /** 建立飞书长连接并开始接收消息。 */
@@ -56,6 +61,8 @@ export class LarkTransport implements FeishuTransport {
     if (this.connecting) return this.connecting;
     if (!this.messageHandlerRegistered) {
       this.messageHandlerRegistered = true;
+
+      // 监听普通消息
       this.channel.on("message", async (message) => {
         if (this.botOpenId && message.senderId === this.botOpenId) return;
         const chatId = message.chatId;
@@ -82,7 +89,20 @@ export class LarkTransport implements FeishuTransport {
           // 记录收到的消息
           const msgPreview = formatLogText(message.content);
           const imageInfo = imageCount > 0 ? `（含 ${imageCount} 张图片）` : "";
-          console.info(`[${displayName}] 收到消息${imageInfo}: ${msgPreview}`);
+          logger.userInput(displayName, `收到消息${imageInfo}: ${msgPreview}`);
+
+          // 过滤消息中的 @ 机器人标记
+          let cleanedText = message.content;
+          if (this.botOpenId) {
+            // 匹配 @bot_xxx 或 <at user_id="bot_xxx"></at> 等格式
+            cleanedText = cleanedText
+              .replace(new RegExp(`<at\\s+user_id="${this.botOpenId}"[^>]*>.*?</at>`, "gi"), "")
+              .replace(new RegExp(`@${this.botOpenId}\\s*`, "gi"), "")
+              .trim();
+          }
+
+          // 判断是否为管理员
+          const isAdmin = this.adminOpenId ? profile.openId === this.adminOpenId : false;
 
           await this.handler?.({
             messageId: message.messageId,
@@ -94,14 +114,64 @@ export class LarkTransport implements FeishuTransport {
               chatId,
               threadId,
               conversationId,
+              isAdmin,
             },
-            text: message.content,
+            text: cleanedText,
             images,
           });
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
-          console.error(`[${message.senderId}] ${detail}`);
+          logger.error(`[${message.senderId}] ${detail}`);
           await this.channel.send(`无法读取用户资料：${detail}`, { text: `无法读取用户资料：${detail}` }, { replyTo: message.messageId, replyInThread: true });
+        }
+      });
+
+      // 监听卡片回调事件
+      this.channel.on("card_action", async (action: any) => {
+        try {
+          logger.info(`[CardAction] 收到卡片回调: ${action.userId}`);
+
+          // 判断是否为管理员
+          const isAdmin = this.adminOpenId ? action.userId === this.adminOpenId : false;
+
+          if (!isAdmin) {
+            logger.warn(`[CardAction] 非管理员点击卡片: ${action.userId}`);
+            // 更新卡片显示权限错误
+            await this.channel.updateCard(action.messageId, {
+              schema: "2.0",
+              body: {
+                elements: [
+                  {
+                    tag: "markdown",
+                    content: "❌ 仅管理员可执行此操作",
+                  },
+                ],
+              },
+            });
+            return;
+          }
+
+          // 解析回调数据
+          const value = JSON.parse(action.value);
+
+          if (value.action === "switch_model") {
+            logger.info(`[CardAction] 管理员切换模型: ${value.model_id}`);
+            // TODO: 实际的模型切换逻辑，需要更新配置文件
+            // 暂时只更新卡片提示
+            await this.channel.updateCard(action.messageId, {
+              schema: "2.0",
+              body: {
+                elements: [
+                  {
+                    tag: "markdown",
+                    content: `✅ 已切换到模型：${value.model_id}\n\n（TODO: 实际切换逻辑待实现）`,
+                  },
+                ],
+              },
+            });
+          }
+        } catch (error) {
+          logger.error("[CardAction] 处理卡片回调失败:", error);
         }
       });
     }
@@ -130,7 +200,7 @@ export class LarkTransport implements FeishuTransport {
     });
     const streamPromise = this.channel.stream(message.context.chatId, {
       card: {
-        initial: this.processingCard("正在处理…"),
+        initial: this.processingCard(""),  // 不显示"正在处理"，用 reaction 表情代替
         producer: async (streamController) => {
           controller = streamController;
           resolveController?.(streamController);
@@ -139,9 +209,9 @@ export class LarkTransport implements FeishuTransport {
           });
         },
       },
-    }, { replyTo: message.messageId, replyInThread: true });
+    }, { replyTo: message.messageId, replyInThread: false });
     controller = await controllerReady;
-    streamPromise.catch((error) => console.error("[LarkTransport] CardKit 流式回复失败", error));
+    streamPromise.catch((error) => logger.error("[LarkTransport] CardKit 流式回复失败", error));
     return {
       update: (text) => controller!.update(this.processingCard(text)),
       close: async (text) => {

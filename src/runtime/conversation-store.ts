@@ -32,6 +32,14 @@ export class ConversationStore {
     await this.writeQueue;
   }
 
+  /** 删除会话映射。 */
+  async delete(conversationId: string): Promise<void> {
+    await this.load();
+    this.records.delete(conversationId);
+    this.writeQueue = this.writeQueue.then(() => this.writeAtomically());
+    await this.writeQueue;
+  }
+
   private async load(): Promise<void> {
     if (this.loaded) return;
     this.loaded = true;

@@ -16,6 +16,8 @@ export interface FeishuReply {
 }
 
 export interface FeishuTransport {
+  connect(): Promise<void>;
+  disconnect(): Promise<void>;
   onMessage(handler: (message: FeishuInboundMessage) => Promise<void>): void;
   startReply(message: FeishuInboundMessage): Promise<FeishuReply>;
 }
