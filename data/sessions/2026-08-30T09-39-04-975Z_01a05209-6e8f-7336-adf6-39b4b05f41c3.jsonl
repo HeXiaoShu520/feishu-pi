@@ -1,0 +1,5 @@
+{"type":"session","version":3,"id":"01a05209-6e8f-7336-adf6-39b4b05f41c3","timestamp":"2026-08-30T09:39:04.975Z","cwd":"e:\\源丶工程\\mini-claw"}
+{"type":"model_change","id":"cdf5ca7f","parentId":null,"timestamp":"2026-08-30T09:39:05.067Z","provider":"anthropic","modelId":"claude-sonnet-4-6"}
+{"type":"thinking_level_change","id":"e1d95f28","parentId":"cdf5ca7f","timestamp":"2026-08-30T09:39:05.067Z","thinkingLevel":"medium"}
+{"type":"message","id":"efe39358","parentId":"e1d95f28","timestamp":"2026-08-30T09:39:05.078Z","message":{"role":"user","content":[{"type":"text","text":"嘿嘿"}],"timestamp":1788082745075}}
+{"type":"message","id":"608adbf0","parentId":"efe39358","timestamp":"2026-08-30T09:39:05.978Z","message":{"role":"assistant","content":[],"api":"anthropic-messages","provider":"anthropic","model":"claude-sonnet-4-6","usage":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"totalTokens":0,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0,"total":0}},"stopReason":"error","timestamp":1788082745220,"errorMessage":"403 {\"error\":{\"type\":\"forbidden\",\"message\":\"Request not allowed\"}}"}}

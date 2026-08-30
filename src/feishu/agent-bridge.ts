@@ -3,6 +3,7 @@ import type { FeishuInboundMessage, FeishuEventHandler, FeishuTransport } from "
 import { ThrottledReply } from "./throttled-reply.ts";
 import { CardKitReply } from "./cardkit-reply.ts";
 import { MessageStore } from "./message-store.ts";
+import { formatLogText } from "./log-utils.ts";
 import type { Client } from "@larksuiteoapi/node-sdk";
 
 /** 将飞书消息转换为 Pi 会话，并把增量文本交给飞书传输层。 */
@@ -41,6 +42,7 @@ export class FeishuAgentBridge {
   async handle(message: FeishuInboundMessage): Promise<void> {
     if (this.messages && !(await this.messages.claim(message.messageId))) return;
     const conversationId = message.context.conversationId;
+    const userName = message.context.userName;
     let latestText = "";
 
     // 创建回复：优先使用 CardKit，失败时自动降级
@@ -70,6 +72,11 @@ export class FeishuAgentBridge {
         },
       );
       await reply.close(latestText);
+
+      // 记录最终响应
+      const replyPreview = formatLogText(latestText);
+      console.info(`[${userName}] 响应完成: ${replyPreview}`);
+
       await this.messages?.complete(message.messageId);
     } catch (error) {
       await this.messages?.fail(message.messageId);

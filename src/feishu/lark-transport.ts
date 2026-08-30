@@ -2,6 +2,7 @@ import { createLarkChannel, type LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { FeishuInboundMessage, FeishuReply, FeishuTransport } from "./types.ts";
 import { LarkCli } from "./lark-cli.ts";
 import { LarkImageProcessor } from "./image-processor.ts";
+import { formatLogText } from "./log-utils.ts";
 import type { Client } from "@larksuiteoapi/node-sdk";
 
 export interface LarkTransportConfig {
@@ -63,7 +64,10 @@ export class LarkTransport implements FeishuTransport {
         try {
           const profile = await this.larkCli.getUserProfile(message.senderId);
           const displayName = profile.englishName ?? profile.openId;
-          console.info(`[${displayName} (${profile.openId})] 收到飞书消息`);
+
+          // 记录收到的消息
+          const msgPreview = formatLogText(message.content);
+          console.info(`[${displayName}] 收到消息: ${msgPreview}`);
 
           // 处理图片附件
           let images;
@@ -125,7 +129,7 @@ export class LarkTransport implements FeishuTransport {
     const controllerReady = new Promise<CardController>((resolve) => {
       resolveController = resolve;
     });
-    const streamPromise = this.channel.stream("", {
+    const streamPromise = this.channel.stream(message.context.chatId, {
       card: {
         initial: this.processingCard("正在处理…"),
         producer: async (streamController) => {
