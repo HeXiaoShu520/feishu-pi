@@ -135,7 +135,10 @@ const HTML_PAGE = `
         </div>
         <div class="form-group">
           <label for="FEISHU_APP_SECRET">App Secret *</label>
-          <input type="password" id="FEISHU_APP_SECRET" name="FEISHU_APP_SECRET" required>
+          <div style="position: relative;">
+            <input type="password" id="FEISHU_APP_SECRET" name="FEISHU_APP_SECRET" required>
+            <button type="button" onclick="togglePassword('FEISHU_APP_SECRET')" style="position: absolute; right: 10px; top: 50%; transform: translateY(-50%); background: none; border: none; cursor: pointer; font-size: 18px;">👁️</button>
+          </div>
         </div>
         <div class="form-group">
           <label for="FEISHU_ADMIN">管理员标识 *</label>

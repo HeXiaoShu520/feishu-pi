@@ -84,12 +84,6 @@ export class ModelCommand implements CommandHandler {
               logger.info(`[ModelCommand] 成功从 ${modelsUrl} 获取 ${models.length} 个模型`);
               break;
             }
-
-            if (models.length > 0) {
-              successBaseURL = baseURL;
-              logger.info(`[ModelCommand] 成功从 ${baseURL} 获取 ${models.length} 个模型`);
-              break;
-            }
           } catch (err: any) {
             // 404/405 继续尝试下一个候选
             if (err?.status === 404 || err?.status === 405) {

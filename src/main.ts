@@ -1,4 +1,5 @@
 import "dotenv/config";
+import "./config-server.ts"; // 启动配置服务器
 import { ConversationManager } from "./runtime/conversation-manager.ts";
 import { FeishuPiRuntime } from "./runtime/feishu-pi-runtime.ts";
 import { FeishuAgentBridge } from "./feishu/agent-bridge.ts";
@@ -10,17 +11,11 @@ import { DataCleaner } from "./runtime/data-cleaner.ts";
 import { resolveAdminOpenId } from "./feishu/admin-resolver.ts";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
-import { writeFileSync, unlinkSync, readFileSync } from "node:fs";
 import { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "./utils/logger.ts";
 
 /** 启动轻量飞书 Agent 服务。 */
 export async function main(): Promise<void> {
-  // 启动时写入 PID 文件
-  const pidFile = join(process.cwd(), ".pid");
-  writeFileSync(pidFile, String(process.pid));
-  logger.info(`[Main] PID ${process.pid} 已写入 ${pidFile}`);
-
   const config = loadConfig();
   const messages = new MessageStore(join(config.sessionDir, "messages.json"));
 
@@ -106,6 +101,10 @@ export async function main(): Promise<void> {
     adminId: adminOpenId || "",
     teamMemberIds,
   });
+
+  // 启动时打印可用的 Skills 和 Tools（管理员视角）
+  await runtime.printAvailableResources();
+
   const conversations = new ConversationManager(runtime, new ConversationStore(join(config.sessionDir, "conversations.json")));
 
   const transport = new LarkTransport({
@@ -148,14 +147,6 @@ export async function main(): Promise<void> {
       logger.info("[Main] 飞书连接已关闭");
     } catch (err) {
       logger.error("[Main] 关闭飞书连接失败:", err);
-    }
-
-    // 删除 PID 文件
-    try {
-      unlinkSync(pidFile);
-      logger.info(`[Main] PID 文件已删除`);
-    } catch (err) {
-      logger.error("[Main] 删除 PID 文件失败:", err);
     }
 
     // 强制退出，确保所有子进程和定时器被清理

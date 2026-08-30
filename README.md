@@ -203,6 +203,194 @@ FEISHU_ADMIN=管理员标识
 
 用户信息会在首次聊天时自动查询并缓存到 `data/users/{appId}_users.json`，3 天后自动刷新。缓存文件包含 `appId` 前缀，避免多机器人混用。
 
+## Skills 与 Tools：定位与协作
+
+### 什么是 Skill？什么是 Tool？
+
+**Skill（技能）** 和 **Tool（工具）** 是 feishu-pi 中两个核心概念，它们本质不同但协同工作：
+
+#### Skill - 给 AI 的"思考指南"
+
+Skill 是 **Markdown 格式的指导文档**，告诉 AI **如何思考和执行复杂流程**。
+
+```markdown
+---
+name: code-review
+description: 代码审查技能
+permission: team
+---
+
+# Code Review 流程
+
+1. 检查代码规范（命名、格式、注释）
+2. 分析逻辑正确性
+3. 评估性能和安全风险
+4. 提出改进建议
+```
+
+**特点：**
+- 📝 纯文本指导，不执行代码
+- 🧠 描述"怎么思考"而非"怎么执行"
+- 🔄 适合**探索期流程**：步骤还在变化、需要 AI 灵活判断
+- 💰 Token 消耗：每次使用都要读取完整内容
+
+**适用场景：**
+- 代码审查（需要灵活分析）
+- 调试分析（问题千奇百怪）
+- 需求讨论（需要多轮对话）
+
+#### Tool - 给 AI 的"执行能力"
+
+Tool 是 **TypeScript 代码**，提供 AI 可以调用的**可执行函数**。
+
+```typescript
+export const deployTool: ToolDefinition = {
+  name: "deploy_app",
+  description: "一键部署应用（测试→构建→推送→部署→健康检查）",
+  permission: "admin",
+  input_schema: {
+    type: "object",
+    properties: {
+      env: { type: "string", enum: ["staging", "prod"] }
+    }
+  },
+  execute: async (toolCallId, params) => {
+    await runTests();
+    await buildImage();
+    await pushToRegistry();
+    await updateK8s();
+    return await checkHealth();
+  }
+};
+```
+
+**特点：**
+- ⚡ 可执行代码，直接产生结果
+- 🎯 AI 只需"决策调用"，不需要"思考步骤"
+- ✅ 适合**成熟固化流程**：步骤明确、重复频率高
+- 💰 Token 消耗：只需读取 description（几十 Token）
+
+**适用场景：**
+- 获取数据（天气、时间、数据库查询）
+- 执行操作（部署、发送消息、创建工单）
+- 固定流程（测试→构建→部署）
+
+### 它们如何协作？
+
+**Skill 和 Tool 是平级关系**，不是从属关系：
+
+```
+用户请求
+    ↓
+   AI
+  ╱  ╲
+Skill  Tool
+```
+
+#### 场景 1：只用 Tool（简单任务）
+```
+用户: "北京天气怎么样？"
+AI: [直接调用 get_weather tool] → "北京 25°C，晴"
+```
+
+#### 场景 2：只用 Skill（纯思考任务）
+```
+用户: "帮我做代码审查"
+AI: [读取 code-review skill]
+    按指导检查命名→检查逻辑→检查安全→生成报告
+```
+
+#### 场景 3：Skill + Tool 协作（复杂任务）
+```
+用户: "部署应用到生产环境"
+
+AI 读取 deploy-app Skill:
+---
+部署流程：
+1. 用 run_tests 工具确认测试通过
+2. 用 git_status 检查没有未提交代码
+3. 用 deploy 工具执行部署
+4. 用 check_health 确认服务正常
+---
+
+AI 执行:
+call run_tests() → ✅ 测试通过
+call git_status() → ✅ 工作区干净
+call deploy(env="prod") → ✅ 部署成功
+call check_health() → ✅ 服务健康
+```
+
+**类比：**
+- **Skill = 装修手册**：告诉你第 3 步该挂画框了
+- **Tool = 锤子**：实际完成"敲钉子"的动作
+- 手册不需要教你怎么用锤子，AI 会自己选择合适的工具
+
+### 从 Skill 到 Tool 的演进
+
+当一个流程从**探索期**进入**成熟期**，应该考虑把它转成 Tool：
+
+```
+模糊探索 → 流程固化 → 工具封装
+   Skill  →   Skill   →   Tool
+```
+
+**判断标准：**
+
+| 维度 | 保持 Skill | 转成 Tool |
+|------|-----------|----------|
+| 流程稳定性 | 步骤还在变化 | ✅ 流程已固化 |
+| 重复频率 | 偶尔使用 | ✅ 高频重复 |
+| 准确性要求 | AI 灵活判断即可 | ✅ 不能出错 |
+| Token 消耗 | 可接受 | ✅ 需要优化 |
+| 外部依赖 | 无 | ✅ 需要 API/计算 |
+
+**示例：**
+- `code-review` → 保持 Skill（需要灵活分析）
+- `get-weather` → 必须是 Tool（调用外部 API）
+- `deploy-app`（初期）→ Skill（流程探索中）
+- `deploy-app`（成熟后）→ Tool（流程固化，提升效率）
+
+### 实际收益对比
+
+**同样的"部署应用"任务：**
+
+| 维度 | 使用 Skill | 使用 Tool |
+|------|-----------|----------|
+| AI 需要思考 | 5-8 轮（读 Skill + 每步决策） | 1 轮（决定调用） |
+| Token 消耗 | ~2000 Token（读完整 Skill + 多轮对话） | ~50 Token（读 description） |
+| 可靠性 | ⚠️ 可能跳步骤 | ✅ 代码保证完整 |
+| 执行速度 | 慢（多轮 API 调用） | 快（一次调用） |
+| 适用阶段 | 探索期 | 成熟期 |
+
+### 目录结构
+
+```
+.agent/
+├── skills/           # Skill 定义（Markdown）
+│   ├── hello.md         - 通用技能
+│   ├── code-review.md   - 团队技能
+│   └── admin-only.md    - 管理员技能
+└── tools/            # 自定义 Tool（TypeScript）
+    ├── get-time.ts      - 获取时间工具
+    ├── deploy.ts        - 部署工具
+    └── query-db.ts      - 数据库查询工具
+```
+
+**设计原则：**
+- `.agent/` 目录存放**用户定义**的 Skills 和 Tools
+- Skills 和 Tools 都支持 `permission` 字段进行权限控制
+- Tool 的 `description` 就是它的说明书，无需额外文档
+- Skill 可以引导 AI 使用 Tools，但不需要解释 Tool 本身
+
+### 核心理念
+
+1. **独立并列** - Skill 和 Tool 是平级资源，不是从属关系
+2. **各司其职** - Skill 负责思考，Tool 负责执行
+3. **自然演进** - 流程成熟后从 Skill 转向 Tool
+4. **无需重复** - Tool 的 description 足够清晰，不需要 Skill 来做"说明书"
+
+---
+
 ## 权限系统
 
 feishu-pi 提供三级权限控制，不同角色的用户拥有不同的 Skills 和工具访问权限。

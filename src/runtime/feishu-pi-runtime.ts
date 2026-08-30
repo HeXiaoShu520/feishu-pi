@@ -124,6 +124,49 @@ export class FeishuPiRuntime {
     this.tools = tools;
   }
 
+  /**
+   * 打印系统启动时可用的资源（管理员视角）
+   * 用于启动日志，让用户知道加载了哪些 Skills 和 Tools
+   */
+  async printAvailableResources(): Promise<void> {
+    // 加载 Skills（管理员视角，显示所有）
+    const baseResourceLoader = new DefaultResourceLoader({
+      cwd: this.config.cwd,
+      agentDir: `${this.config.cwd}/.agent`,
+      systemPrompt: this.config.systemPrompt,
+    });
+
+    // 必须先 reload 才能加载 skills
+    await baseResourceLoader.reload();
+
+    const { skills } = baseResourceLoader.getSkills();
+
+    if (skills.length > 0) {
+      logger.info(`[Runtime] 已加载 ${colors.bright}${colors.magenta}${skills.length}${colors.reset} 个 Skills:`);
+      skills.forEach((skill) => {
+        const permission = (skill as any).permission || "default";
+        logger.info(`  ${colors.magenta}✦${colors.reset} ${colors.cyan}${skill.name}${colors.reset}: ${skill.description} ${colors.gray}[${permission}]${colors.reset}`);
+      });
+    } else {
+      logger.warn(`[Runtime] 未找到任何 Skills`);
+    }
+
+    // 加载自定义 Tools（从 .agent/tools/）
+    const customTools = await createToolRegistryAsync(this.config.cwd, this.tools);
+    if (customTools.length > 0) {
+      logger.info(`[Runtime] 已加载 ${colors.bright}${colors.green}${customTools.length}${colors.reset} 个自定义 Tools:`);
+      customTools.forEach((tool) => {
+        const permission = (tool as any).permission || "default";
+        logger.info(`  ${colors.green}⚙${colors.reset} ${colors.cyan}${tool.name}${colors.reset}: ${tool.description} ${colors.gray}[${permission}]${colors.reset}`);
+      });
+    } else {
+      logger.info(`[Runtime] 未找到自定义 Tools`);
+    }
+
+    // 打印内置工具列表
+    logger.info(`[Runtime] 内置工具: ${colors.gray}${DEFAULT_BUILTIN_TOOLS.join(", ")}${colors.reset}`);
+  }
+
   async createSession(sessionFile: string | undefined, userId: string): Promise<FeishuPiSession> {
     // 设置 API key 到对应厂商的环境变量
     const apiKey = process.env.FEISHU_PI_MODEL_API_KEY;
@@ -152,6 +195,9 @@ export class FeishuPiRuntime {
       agentDir: `${this.config.cwd}/.agent`,
       systemPrompt: this.config.systemPrompt,
     });
+
+    // 必须先 reload 才能加载 skills
+    await baseResourceLoader.reload();
 
     // 包装成权限过滤的 ResourceLoader
     const resourceLoader = new PermissionFilteredResourceLoader(baseResourceLoader, userRole);
