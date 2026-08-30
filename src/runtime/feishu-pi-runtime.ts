@@ -202,17 +202,8 @@ export class FeishuPiRuntime {
     // 包装成权限过滤的 ResourceLoader
     const resourceLoader = new PermissionFilteredResourceLoader(baseResourceLoader, userRole);
 
-    // 加载并打印 skills
+    // 获取用户可用的 skills（不打印，只用于加载）
     const { skills } = resourceLoader.getSkills();
-    if (skills.length > 0) {
-      logger.info(`[Runtime] 已加载 ${colors.bright}${colors.magenta}${skills.length}${colors.reset} 个 Skills (${userRole}):`);
-      skills.forEach((skill) => {
-        const permission = (skill as any).permission || "default";
-        logger.info(`  ${colors.magenta}✦${colors.reset} ${colors.cyan}${skill.name}${colors.reset}: ${skill.description} ${colors.gray}[${permission}]${colors.reset}`);
-      });
-    } else {
-      logger.warn(`[Runtime] 未找到任何 Skills`);
-    }
 
     // 从 .agent/tools/ 加载用户自定义工具
     const allCustomTools = await createToolRegistryAsync(this.config.cwd, this.tools);
@@ -230,14 +221,6 @@ export class FeishuPiRuntime {
       customTools = [createRestrictedReadTool(this.config.cwd, agentDir), ...customTools];
     }
 
-    if (customTools.length > 0) {
-      logger.info(`[Runtime] 已注册 ${colors.bright}${colors.green}${customTools.length}${colors.reset} 个自定义工具 (${userRole}):`);
-      customTools.forEach((tool) => {
-        const permission = (tool as any).permission || "default";
-        logger.info(`  ${colors.green}⚙${colors.reset} ${colors.cyan}${tool.name}${colors.reset}: ${tool.description} ${colors.gray}[${permission}]${colors.reset}`);
-      });
-    }
-
     // 根据角色选择内置工具
     let builtinTools: string[];
     if (userRole === "admin") {
@@ -246,7 +229,6 @@ export class FeishuPiRuntime {
       // 非管理员：无内置工具（read 已通过 customTools 提供）
       builtinTools = [];
     }
-    logger.info(`[Runtime] 内置工具 (${userRole}): ${builtinTools.length > 0 ? colors.yellow + builtinTools.join(", ") + colors.reset : colors.gray + "无（read 受限）" + colors.reset}`);
 
     const { session } = await createAgentSession({
       cwd: this.config.cwd,
