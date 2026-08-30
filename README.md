@@ -43,7 +43,7 @@ interface FeishuContext {
 - **个性化响应** - Agent 可以根据用户部门提供定制化的回答和建议
 - **审计追踪** - 每次操作都有明确的用户身份，便于日志记录和问题排查
 
-**存储位置：** `memory/users/{appId}_users.json`
+**存储位置：** `data/users/{appId}_users.json`
 
 **查询策略：**
 
@@ -117,7 +117,23 @@ Pi 已经提供 Agent 运行时中最难长期维护的部分：模型流式调�
 - 设置可使用该应用的部门或成员范围
 - 范围越大，能查询到的用户信息越完整
 
-### 2. 启动服务
+### 2. 配置 lark-cli（用于外部成员查询）
+
+当用户不在应用可见范围时（如外部群成员），系统会降级使用 `lark-cli` 搜索用户信息：
+
+```bash
+npm install -g @larksuite/cli
+lark-cli auth login --recommend
+lark-cli auth status
+```
+
+**lark-cli 需要的用户权限：**
+- 以**用户身份**登录（`--as user`）
+- 需要搜索用户的权限（通常个人账号默认有）
+
+如果不配置 `lark-cli`，外部成员只能显示名字，无法获取英文名和部门信息。
+
+### 3. 启动服务
 
 ```bash
 npm install
@@ -131,7 +147,7 @@ FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
 ```
 
-用户信息会在首次聊天时自动查询并缓存到 `memory/users/{appId}_users.json`，3 天后自动刷新。缓存文件包含 `appId` 前缀，避免多机器人混用。
+用户信息会在首次聊天时自动查询并缓存到 `data/users/{appId}_users.json`，3 天后自动刷新。缓存文件包含 `appId` 前缀，避免多机器人混用。
 
 ## 开发验证
 

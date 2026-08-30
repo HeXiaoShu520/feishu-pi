@@ -7,8 +7,7 @@ export interface LarkUserProfile {
   openId: string;
   name?: string;           // 中文名
   englishName?: string;    // 英文名
-  departmentIds: string[]; // 部门 ID 列表（如 "0" 表示根部门）
-  departmentNames?: string[]; // 部门中文名列表（后续可查询填充）
+  departmentNames?: string[]; // 部门中文名列表（通过 lark-cli 搜索获取）
   /** 信息查询或更新时间（ISO 8601） */
   updatedAt: string;
 }
@@ -29,17 +28,18 @@ export class LarkCli {
   private cacheLoaded = false;
   private readonly client: Client;
 
-  constructor(client: Client, appId: string, dataDir = join(process.cwd(), "memory", "users")) {
+  constructor(client: Client, appId: string, dataDir = join(process.cwd(), "data", "users")) {
     this.client = client;
     this.cacheFilePath = join(dataDir, `${appId}_users.json`);
   }
 
   /**
    * 查询用户资料，带缓存和过期机制。
-   * - 使用飞书 SDK 调用 API（使用工程机器人凭证）
-   * - 使用 openId 作为缓存键
-   * - 缓存有效期 3 天
-   * - 如果 API 查询失败（非应用成员），尝试从群成员列表获取
+   *
+   * 查询策略：
+   * 1. 应用成员：API 获取中文名、英文名、邮箱
+   * 2. 群聊成员：群成员列表获取中文名
+   * 3. 统一使用 lark-cli 搜索获取部门中文名
    */
   async getUserProfile(openId: string, chatId?: string): Promise<LarkUserProfile> {
     await this.loadCache();
@@ -57,45 +57,28 @@ export class LarkCli {
       console.info(`[LarkCli] 用户 ${openId} 缓存已过期（${ageInDays.toFixed(1)} 天），重新查询`);
     }
 
-    // 第一步：尝试使用机器人 API 查询完整信息
+    let name: string | undefined;
+    let englishName: string | undefined;
+    let searchName: string | undefined; // 用于 lark-cli 搜索的名字
+
+    // 第一步：尝试使用机器人 API 查询（应用成员）
     try {
       const res = await this.client.contact.user.get({
         path: { user_id: openId },
         params: { user_id_type: "open_id" },
       });
 
-      if (!res.data?.user) {
+      if (res.data?.user) {
+        const user = res.data.user;
+        name = user.name || undefined;
+        englishName = user.en_name || undefined;
+        searchName = englishName || name; // 优先用英文名搜索
+        console.info(`[LarkCli] API 查询成功: 中文名=${name}, 英文名=${englishName}`);
+      } else {
         throw new Error("API 返回的用户资料为空");
       }
-
-      const user = res.data.user;
-      if (!user.open_id) throw new Error("用户资料缺少 open_id");
-
-      const profile = {
-        openId: user.open_id,
-        name: user.name || undefined,
-        englishName: user.en_name || undefined,
-        departmentIds: user.department_ids ?? [],
-        departmentNames: undefined, // 后续可查询填充
-        updatedAt: now.toISOString(),
-      };
-
-      // 更新缓存并保存
-      this.cache[openId] = profile;
-      await this.saveCache();
-
-      // 打印新用户或更新信息
-      const isNew = !cached;
-      const displayName = profile.name || profile.englishName || profile.openId;
-      if (isNew) {
-        console.info(`[LarkCli] 新用户入库: ${displayName} (${profile.openId}), 部门ID: ${profile.departmentIds.length > 0 ? profile.departmentIds.join(", ") : "无"}`);
-      } else {
-        console.info(`[LarkCli] 更新用户: ${displayName} (${profile.openId})`);
-      }
-
-      return profile;
     } catch (apiError) {
-      // 第二步：API 查询失败，尝试从群成员列表获取（非应用成员场景）
+      // 第二步：API 查询失败，尝试从群成员列表获取（非应用成员）
       console.warn(`[LarkCli] API 查询用户 ${openId} 失败：${apiError instanceof Error ? apiError.message : String(apiError)}`);
 
       if (!chatId) {
@@ -122,7 +105,7 @@ export class LarkCli {
 
           member = chatMemberRes.data?.items?.find((m) => m.member_id === openId);
 
-          if (member) break; // 找到了就退出循环
+          if (member) break;
 
           pageToken = chatMemberRes.data?.page_token;
         } while (pageToken);
@@ -131,24 +114,56 @@ export class LarkCli {
           throw new Error("群成员列表中未找到该用户或无名字");
         }
 
-        console.info(`[LarkCli] 从群成员列表获取到名字: ${member.name}`);
-
-        // 第三步：使用 lark-cli 通过名字搜索用户，获取部门信息
-        const profile = await this.searchUserByName(openId, member.name, now);
-        return profile;
+        name = member.name;
+        searchName = name; // 用中文名搜索
+        console.info(`[LarkCli] 从群成员列表获取到名字: ${name}`);
       } catch (chatError) {
         console.warn(`[LarkCli] 从群成员列表查询失败：${chatError instanceof Error ? chatError.message : String(chatError)}`);
         return this.createFallbackProfile(openId, now);
       }
     }
+
+    // 第三步：使用 lark-cli 搜索用户，获取部门中文名（群成员还需补充英文名）
+    let departmentNames: string[] | undefined;
+    if (searchName) {
+      const larkResult = await this.getDepartmentNames(openId, searchName);
+      departmentNames = larkResult.departmentNames;
+      // 如果是群成员（没有英文名），从 lark-cli 补充
+      if (!englishName && larkResult.englishName) {
+        englishName = larkResult.englishName;
+        console.info(`[LarkCli] 群成员补充英文名: ${englishName}`);
+      }
+    }
+
+    const profile: LarkUserProfile = {
+      openId,
+      name,
+      englishName,
+      departmentNames,
+      updatedAt: now.toISOString(),
+    };
+
+    // 更新缓存并保存
+    this.cache[openId] = profile;
+    await this.saveCache();
+
+    // 【重要】每次新用户入库都打印
+    const displayName = profile.name || profile.englishName || profile.openId;
+    const deptInfo = profile.departmentNames && profile.departmentNames.length > 0
+      ? profile.departmentNames.join(", ")
+      : "无";
+    const englishInfo = profile.englishName ? `, 英文名: ${profile.englishName}` : "";
+    console.info(`[LarkCli] 🆕 新用户入库: ${displayName} (${profile.openId})${englishInfo}, 部门: ${deptInfo}`);
+
+    return profile;
   }
 
-  /** 通过英文名搜索用户（使用 lark-cli） */
-  private async searchUserByName(openId: string, englishName: string, now: Date): Promise<LarkUserProfile> {
+  /** 通过 lark-cli 搜索用户，获取部门中文名和英文名 */
+  private async getDepartmentNames(openId: string, searchName: string): Promise<{ departmentNames?: string[]; englishName?: string }> {
     try {
       const { spawn } = await import("node:child_process");
       const result = await new Promise<string>((resolve, reject) => {
-        const child = spawn("lark-cli", ["contact", "+search-user", "--query", englishName, "--as", "user"], { shell: true, windowsHide: true });
+        const child = spawn("lark-cli", ["contact", "+search-user", "--query", searchName, "--as", "user"], { shell: true, windowsHide: true });
         let stdout = "";
         let stderr = "";
         child.stdout.on("data", (data) => { stdout += data; });
@@ -164,37 +179,34 @@ export class LarkCli {
       const user = searchResult.data?.users?.find((u: any) => u.open_id === openId);
 
       if (!user) {
-        throw new Error("搜索结果中未找到匹配的用户");
+        console.warn(`[LarkCli] lark-cli 搜索结果中未找到 ${openId}`);
+        return {};
       }
 
-      // 从搜索结果中无法获取 department_ids，使用降级信息
-      const profile: LarkUserProfile = {
-        openId,
-        name: user.localized_name || undefined,
-        englishName,
-        departmentIds: [], // 搜索结果中没有部门信息
-        departmentNames: undefined,
-        updatedAt: now.toISOString(),
-      };
+      const resultData: { departmentNames?: string[]; englishName?: string } = {};
 
-      console.info(`[LarkCli] 通过英文名搜索到用户: ${englishName} (${openId})`);
-      return profile;
+      // 提取部门信息
+      const department = user.department;
+      if (department && department.trim()) {
+        console.info(`[LarkCli] 通过 lark-cli 获取到部门: ${department}`);
+        resultData.departmentNames = [department];
+      } else {
+        console.info(`[LarkCli] lark-cli 搜索结果中无部门信息`);
+      }
+
+      // 提取英文名（用于群成员补充）
+      const email = user.email || user.enterprise_email;
+      if (email) {
+        const englishName = email.split("@")[0]; // 从邮箱提取英文名
+        console.info(`[LarkCli] 通过 lark-cli 获取到邮箱/英文名: ${englishName}`);
+        resultData.englishName = englishName;
+      }
+
+      return resultData;
     } catch (error) {
       console.warn(`[LarkCli] lark-cli 搜索失败：${error instanceof Error ? error.message : String(error)}`);
-      return this.createFallbackProfile(openId, now);
+      return {};
     }
-  }
-
-  /** 创建降级的用户资料（最小信息） */
-  private createFallbackProfile(openId: string, now: Date): LarkUserProfile {
-    return {
-      openId,
-      name: undefined,
-      englishName: undefined,
-      departmentIds: [],
-      departmentNames: undefined,
-      updatedAt: now.toISOString(),
-    };
   }
 
   /** 检查 CLI 是否存在以及是否有可用身份（废弃，保留兼容性） */
@@ -225,5 +237,16 @@ export class LarkCli {
   /** 返回面向用户的 CLI 状态提示（废弃，保留兼容性） */
   statusMessage(status: LarkCliStatus): string {
     return "飞书 SDK 已就绪。";
+  }
+
+  /** 创建降级的用户资料（最小信息） */
+  private createFallbackProfile(openId: string, now: Date): LarkUserProfile {
+    return {
+      openId,
+      name: undefined,
+      englishName: undefined,
+      departmentNames: undefined,
+      updatedAt: now.toISOString(),
+    };
   }
 }

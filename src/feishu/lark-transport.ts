@@ -90,7 +90,7 @@ export class LarkTransport implements FeishuTransport {
             context: {
               userOpenId: profile.openId,
               userName: displayName,
-              departmentIds: profile.departmentIds,
+              departmentNames: profile.departmentNames,
               chatId,
               threadId,
               conversationId,

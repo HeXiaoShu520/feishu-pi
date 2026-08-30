@@ -2,7 +2,7 @@
 export interface FeishuContext {
   userOpenId: string;
   userName?: string;
-  departmentIds?: string[];
+  departmentNames?: string[]; // 部门中文名列表
   chatId: string;
   threadId?: string;
   conversationId: string;
