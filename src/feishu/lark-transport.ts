@@ -29,6 +29,7 @@ export class LarkTransport implements FeishuTransport {
   private readonly larkCli: LarkCli;
   private readonly imageProcessor?: LarkImageProcessor;
   private readonly adminOpenId?: string;
+  private readonly client?: Client;
   private handler?: (message: FeishuInboundMessage) => Promise<void>;
   private messageHandlerRegistered = false;
   private connecting?: Promise<void>;
@@ -36,6 +37,7 @@ export class LarkTransport implements FeishuTransport {
   constructor(config: LarkTransportConfig) {
     this.botOpenId = config.botOpenId;
     this.adminOpenId = config.adminOpenId;
+    this.client = config.client;
     this.larkCli = new LarkCli(config.client!, config.appId, config.userProfileDir);
     if (config.client) {
       this.imageProcessor = new LarkImageProcessor(config.client, {
@@ -50,6 +52,7 @@ export class LarkTransport implements FeishuTransport {
       handshakeTimeoutMs: config.handshakeTimeoutMs ?? 15_000,
       wsConfig: { pingTimeout: config.pingTimeout ?? 30 },
       safety: { dedup: { maxEntries: 10_000, ttl: 10 * 60 * 1000 } },
+      includeRawEvent: true,
     });
     this.channel.on("reconnecting", () => logger.warn("[LarkTransport] 飞书 WebSocket 正在重连"));
     this.channel.on("reconnected", () => logger.info("[LarkTransport] 飞书 WebSocket 已恢复"));
@@ -141,7 +144,7 @@ export class LarkTransport implements FeishuTransport {
           if (!isAdmin) {
             logger.warn(`[CardAction] 非管理员点击卡片: ${operatorOpenId}`);
             // 更新卡片显示权限错误
-            await this.channel.updateCard(action.messageId, {
+            await this.updateCard(action, {
               schema: "2.0",
               header: {
                 title: {
@@ -176,7 +179,7 @@ export class LarkTransport implements FeishuTransport {
             // TODO: 实际的模型切换逻辑，需要更新配置文件
             // 暂时只更新卡片提示
             try {
-              await this.channel.updateCard(action.messageId, {
+              await this.updateCard(action, {
                 schema: "2.0",
                 header: {
                   title: {
@@ -210,6 +213,21 @@ export class LarkTransport implements FeishuTransport {
       this.connecting = undefined;
     });
     return this.connecting;
+  }
+
+  /** 使用卡片回调 token 更新本次点击对应的卡片。 */
+  private async updateCard(action: { messageId: string; raw?: unknown }, card: object): Promise<void> {
+    const raw = action.raw as { token?: string } | undefined;
+    if (raw?.token && this.client) {
+      await this.client.request({
+        method: "POST",
+        url: "/open-apis/interactive/v1/card/update",
+        data: { token: raw.token, card },
+      });
+      return;
+    }
+
+    await this.channel.updateCard(action.messageId, card);
   }
 
   /** 关闭飞书长连接，并阻止主动关闭期间的重连竞争。 */
