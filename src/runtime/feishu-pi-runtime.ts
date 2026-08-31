@@ -19,6 +19,10 @@ class SessionWrapper implements FeishuPiSession {
     return (this.raw as any).getSessionStats?.();
   }
 
+  getModelName(): string {
+    return this.raw.model?.id || "unknown";
+  }
+
   subscribe(listener: (event: FeishuPiEvent) => void): () => void {
     return this.raw.subscribe((event) => {
       if (event.type === "message_update" && event.message.role === "assistant") {

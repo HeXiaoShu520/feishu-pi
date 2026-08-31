@@ -9,6 +9,7 @@ import { Spinner } from "./spinner.ts";
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "../utils/logger.ts";
 import { createDefaultRegistry, type CommandRegistry, type CommandHandler } from "./commands.ts";
+import { randomUUID } from "node:crypto";
 
 /** 将飞书消息转换为 Pi 会话，并把增量文本交给飞书传输层。 */
 export class FeishuAgentBridge {
@@ -55,6 +56,7 @@ export class FeishuAgentBridge {
     const conversationId = message.context.conversationId;
     const userName = message.context.userName;
     let latestText = "";
+    const requestStartedAt = Date.now();
 
     // 检测是否为指令
     const commandHandler = this.commandRegistry.find(message.text);
@@ -140,18 +142,18 @@ export class FeishuAgentBridge {
           const outputTokens = stats.tokens?.output || 0;
           const cacheRead = stats.tokens?.cacheRead || 0;
           const cacheWrite = stats.tokens?.cacheWrite || 0;
-          const totalTokens = stats.tokens?.total || 0;
-          const cost = stats.cost || 0;
+          const newTokens = inputTokens + outputTokens + cacheRead + cacheWrite;
+          const totalTokens = stats.tokens?.total || newTokens;
+          const cost = Number(stats.cost?.total ?? stats.cost ?? 0);
 
-          // 从 sessionFile 提取模型名称和会话ID
-          const modelName = this.conversations["runtime"]?.config?.modelName || "unknown";
-          const sessionId = stats.sessionId || "unknown";
+          // 从运行时配置和统计信息中提取模型名称和会话 ID。
+          const modelName = session.getModelName?.() || stats.model || "unknown";
+          const sessionId = String(stats.sessionId || "unknown");
+          const duration = `${((Date.now() - requestStartedAt) / 1000).toFixed(1)}s`;
+          const formatTokens = (tokens: number) => `${(tokens / 1000).toFixed(1)}K`;
 
-          // 格式化耗时（从创建到现在的时间差，近似值）
-          const duration = "未知";
-
-          // 构建统计行
-          const statsLine = `\n\n---\n${modelName} · 输入 ${(inputTokens / 1000).toFixed(1)}K / 输出 ${(outputTokens / 1000).toFixed(1)}K · 缓存 ${(cacheRead / 1000).toFixed(1)}K/${(cacheWrite / 1000).toFixed(1)}K · ${duration} · ${sessionId.slice(0, 8)}`;
+          // 构建与客户端一致的单行统计信息。
+          const statsLine = `\n\n---\n${modelName} · ${formatTokens(totalTokens)}（新增 ${formatTokens(newTokens)}） · $${cost.toFixed(4)} · ${duration} · ${sessionId}`;
           finalText = latestText + statsLine;
         }
       }
@@ -160,8 +162,8 @@ export class FeishuAgentBridge {
       await reply.close(finalText);
 
       // 记录最终响应
-      const replyPreview = formatLogText(latestText);
-      logger.aiResponse(userName, `响应完成: ${replyPreview}`);
+      const replyPreview: string = formatLogText(latestText) || "";
+      logger.aiResponse(userName || "未知用户", `响应完成: ${replyPreview}`);
 
       await this.messages?.complete(message.messageId);
     } catch (error) {
@@ -201,7 +203,7 @@ export class FeishuAgentBridge {
       if (!result) return;
 
       // 发送卡片回复
-      await this.client.request({
+      const response = await this.client.request({
         method: "POST",
         url: "/open-apis/im/v1/messages",
         params: { receive_id_type: "chat_id" },
@@ -209,8 +211,15 @@ export class FeishuAgentBridge {
           receive_id: message.chatId,
           msg_type: "interactive",
           content: JSON.stringify(result.card),
+          uuid: randomUUID(), // 飞书要求 uuid 最长 50 个字符
         },
+      }).catch((err) => {
+        const errorDetail = err.response?.data?.error?.field_violations || err.response?.data || err.message;
+        logger.error(`[Command] 发送卡片失败:`, JSON.stringify(errorDetail, null, 2));
+        throw err;
       });
+
+      logger.info(`[Command] 卡片已发送`);
 
       await this.messages?.complete(message.messageId);
     } catch (error) {

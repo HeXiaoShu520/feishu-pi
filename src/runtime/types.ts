@@ -34,6 +34,7 @@ export interface FeishuPiSession {
   waitForIdle(): Promise<void>;
   abort(): void;
   getStats(): any;
+  getModelName?(): string;
 }
 
 export type FeishuPiTool = AgentTool;
