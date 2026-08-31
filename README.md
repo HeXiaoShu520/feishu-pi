@@ -7,6 +7,7 @@ feishu-pi 是一个基于 [Pi](https://github.com/earendil-works/pi) 的飞书 A
 ## 核心特性
 
 - ✅ **CardKit 流式卡片** - 实时显示 Agent 输出（打字机效果 + Markdown 渲染）
+- ✅ **随机动画表情** - 思考时随机选择 7 种 spinner 动画（braille、halfcircle、quarter、cross、triangle、square、braille2）+ 随机前缀，每帧 200ms 循环
 - ✅ **图片附件支持** - 发送图片让 Agent 识别和分析（支持视觉模型）
 - ✅ **会话隔离** - 按 `chatId` 和 `threadId` 独立会话上下文
 - ✅ **消息去重** - 防止重复处理同一消息

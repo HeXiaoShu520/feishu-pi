@@ -5,6 +5,7 @@ import { CardKitReply } from "./cardkit-reply.ts";
 import { MessageStore } from "./message-store.ts";
 import { formatLogText } from "./log-utils.ts";
 import { ReactionController } from "./reaction-controller.ts";
+import { Spinner } from "./spinner.ts";
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "../utils/logger.ts";
 import { createDefaultRegistry, type CommandRegistry, type CommandHandler } from "./commands.ts";
@@ -79,34 +80,21 @@ export class FeishuAgentBridge {
     });
 
     try {
-      // 多种思考动画，随机选择
-      const animations = [
-        { frames: "⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏", text: "思考中" },
-        { frames: "◐◓◑◒", text: "正在思考" },
-        { frames: "⣾⣽⣻⢿⡿⣟⣯⣷", text: "思考中" },
-        { frames: "⠁⠂⠄⡀⢀⠠⠐⠈", text: "努力思考" },
-        { frames: "▁▂▃▄▅▆▇█▇▆▅▄▃▂", text: "思考中" },
-        { frames: "◴◷◶◵", text: "等一下" },
-        { frames: "◰◳◲◱", text: "思考中" },
-        { frames: "▖▘▝▗", text: "正在思考" },
-        { frames: "←↖↑↗→↘↓↙", text: "思考中" },
-        { frames: "▌▀▐▄", text: "思考中" },
-      ];
-      const selectedAnimation = animations[Math.floor(Math.random() * animations.length)];
-
-      let animationIndex = 0;
+      // 创建随机 spinner 实例
+      const spinner = new Spinner();
       let hasRealContent = false;
       let session: any;
+
+      // 立即显示首帧（0ms 延迟）
+      (reply as any).replace(spinner.next());
 
       // 启动动画定时器（真实内容到来前显示动画）
       const animationTimer = setInterval(() => {
         if (!hasRealContent) {
-          animationIndex++;
-          const frame = selectedAnimation.frames[animationIndex % selectedAnimation.frames.length];
           // 用 replace 替换内容，不累加
-          (reply as any).replace(`${selectedAnimation.text} ${frame}`);
+          (reply as any).replace(spinner.next());
         }
-      }, 150); // 150ms 更新一帧
+      }, 200); // 200ms 更新一帧
 
       await this.conversations.prompt(
         {
