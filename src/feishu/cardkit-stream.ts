@@ -10,6 +10,7 @@
  */
 
 import type { Client } from "@larksuiteoapi/node-sdk";
+import { randomUUID } from "node:crypto";
 
 const CARD_SCHEMA = "2.0";
 const STREAM_ELEMENT_ID = "stream_md";
@@ -214,6 +215,6 @@ export class CardKitStream {
   }
 
   private uuid(): string {
-    return `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    return randomUUID();
   }
 }

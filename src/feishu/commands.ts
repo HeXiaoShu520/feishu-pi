@@ -73,8 +73,8 @@ export class ModelCommand implements CommandHandler {
               throw new Error(`HTTP ${response.status}: ${await response.text()}`);
             }
 
-            const data = await response.json();
-            models = (data.data || []).map((m: any) => ({
+            const data = await response.json() as { data?: Array<{ id: string }> };
+            models = (data.data || []).map((m) => ({
               model_id: m.id,
               name: m.id
             }));
@@ -126,7 +126,7 @@ export class ModelCommand implements CommandHandler {
           behaviors: [
             {
               type: "callback",
-              value: JSON.stringify({ action: "switch_model", model_id: model.model_id }),
+              value: { action: "switch_model", model_id: model.model_id },
             },
           ],
         })),
@@ -135,6 +135,15 @@ export class ModelCommand implements CommandHandler {
       return {
         card: {
           schema: "2.0",
+          header: {
+            title: {
+              tag: "plain_text",
+              content: "可用模型列表",
+            },
+          },
+          config: {
+            update_multi: true,  // 允许多人看到相同的更新
+          },
           body: { elements },
         },
         needsCallback: true,

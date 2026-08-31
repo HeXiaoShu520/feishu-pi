@@ -130,15 +130,16 @@ export class LarkTransport implements FeishuTransport {
       });
 
       // 监听卡片回调事件
-      this.channel.on("card_action", async (action: any) => {
+      this.channel.on("cardAction", async (action) => {
         try {
-          logger.info(`[CardAction] 收到卡片回调: ${action.userId}`);
+          logger.info(`[CardAction] 收到卡片回调: ${action.operator.openId}`);
 
           // 判断是否为管理员
-          const isAdmin = this.adminOpenId ? action.userId === this.adminOpenId : false;
+          const operatorOpenId = action.operator.openId;
+          const isAdmin = this.adminOpenId ? operatorOpenId === this.adminOpenId : false;
 
           if (!isAdmin) {
-            logger.warn(`[CardAction] 非管理员点击卡片: ${action.userId}`);
+            logger.warn(`[CardAction] 非管理员点击卡片: ${operatorOpenId}`);
             // 更新卡片显示权限错误
             await this.channel.updateCard(action.messageId, {
               schema: "2.0",
@@ -154,24 +155,36 @@ export class LarkTransport implements FeishuTransport {
             return;
           }
 
-          // 解析回调数据
-          const value = JSON.parse(action.value);
+          // 解析回调数据（value 可能是对象或 JSON 字符串）
+          let value: { action?: string; model_id?: string } | string = action.action.value as any;
+          if (typeof value === "string") {
+            try {
+              value = JSON.parse(value);
+            } catch {
+              logger.warn(`[CardAction] value 不是有效的 JSON: ${value}`);
+            }
+          }
 
-          if (value.action === "switch_model") {
+          if (typeof value === "object" && value?.action === "switch_model") {
             logger.info(`[CardAction] 管理员切换模型: ${value.model_id}`);
             // TODO: 实际的模型切换逻辑，需要更新配置文件
             // 暂时只更新卡片提示
-            await this.channel.updateCard(action.messageId, {
-              schema: "2.0",
-              body: {
-                elements: [
-                  {
-                    tag: "markdown",
-                    content: `✅ 已切换到模型：${value.model_id}\n\n（TODO: 实际切换逻辑待实现）`,
-                  },
-                ],
-              },
-            });
+            try {
+              await this.channel.updateCard(action.messageId, {
+                schema: "2.0",
+                body: {
+                  elements: [
+                    {
+                      tag: "markdown",
+                      content: `✅ 已切换到模型：${value.model_id}\n\n（TODO: 实际切换逻辑待实现）`,
+                    },
+                  ],
+                },
+              });
+              logger.info(`[CardAction] 卡片更新成功`);
+            } catch (err) {
+              logger.error(`[CardAction] 更新卡片失败:`, err);
+            }
           }
         } catch (error) {
           logger.error("[CardAction] 处理卡片回调失败:", error);

@@ -1,4 +1,5 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
+import type { AgentToolResult } from "@earendil-works/pi-agent-core";
 import { normalize, relative } from "node:path";
 import { readFile } from "node:fs/promises";
 
@@ -8,8 +9,9 @@ import { readFile } from "node:fs/promises";
 export function createRestrictedReadTool(cwd: string, agentDir: string): ToolDefinition {
   return {
     name: "read",
+    label: "读取技能文件",
     description: "读取技能文件内容",
-    input_schema: {
+    parameters: {
       type: "object",
       properties: {
         file_path: {
@@ -19,7 +21,7 @@ export function createRestrictedReadTool(cwd: string, agentDir: string): ToolDef
       },
       required: ["file_path"],
     },
-    execute: async (toolCallId: string, params: unknown, signal: AbortSignal | undefined, onUpdate: any, ctx: any) => {
+    execute: async (toolCallId: string, params: unknown, signal: AbortSignal | undefined, onUpdate: any, ctx: any): Promise<AgentToolResult<unknown>> => {
       const { file_path } = params as { file_path: string };
 
       try {
@@ -44,13 +46,13 @@ export function createRestrictedReadTool(cwd: string, agentDir: string): ToolDef
         const isAllowedAgentPath = relToAgent.startsWith("skills/") || relToAgent.startsWith("skills\\");
 
         if (!isAllowedProjectPath && !isAllowedAgentPath) {
-          return "⛔ 权限不足：只能读取技能文件";
+          return { content: [{ type: "text", text: "⛔ 权限不足：只能读取技能文件" }], details: {} };
         }
 
         const content = await readFile(normalized, "utf-8");
-        return content;
+        return { content: [{ type: "text", text: content }], details: {} };
       } catch (error) {
-        return `读取失败：${error instanceof Error ? error.message : String(error)}`;
+        return { content: [{ type: "text", text: `读取失败：${error instanceof Error ? error.message : String(error)}` }], details: {} };
       }
     },
   };

@@ -11,6 +11,8 @@ class FakeSession implements FeishuPiSession {
   readonly sessionFile = "data/sessions/session.jsonl";
   async prompt(_input: FeishuPiPrompt): Promise<void> {}
   async waitForIdle(): Promise<void> {}
+  abort(): void {}
+  getStats(): any { return {}; }
   subscribe(_listener: (event: FeishuPiEvent) => void): () => void { return () => undefined; }
 }
 
