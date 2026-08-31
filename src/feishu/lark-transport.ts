@@ -143,6 +143,12 @@ export class LarkTransport implements FeishuTransport {
             // 更新卡片显示权限错误
             await this.channel.updateCard(action.messageId, {
               schema: "2.0",
+              header: {
+                title: {
+                  tag: "plain_text",
+                  content: "模型切换",
+                },
+              },
               body: {
                 elements: [
                   {
@@ -172,11 +178,20 @@ export class LarkTransport implements FeishuTransport {
             try {
               await this.channel.updateCard(action.messageId, {
                 schema: "2.0",
+                header: {
+                  title: {
+                    tag: "plain_text",
+                    content: "模型切换结果",
+                  },
+                },
+                config: {
+                  update_multi: true,
+                },
                 body: {
                   elements: [
                     {
                       tag: "markdown",
-                      content: `✅ 已切换到模型：${value.model_id}\n\n（TODO: 实际切换逻辑待实现）`,
+                      content: `✅ 已切换到模型：${value.model_id}\n\n当前卡片已更新。`,
                     },
                   ],
                 },
