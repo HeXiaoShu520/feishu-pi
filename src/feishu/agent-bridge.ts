@@ -88,17 +88,21 @@ export class FeishuAgentBridge {
       let session: any;
 
       // 立即显示首帧（0ms 延迟）
-      (reply as any).replace(spinner.next());
+      await (reply as any).replace(spinner.next());
 
       // 启动动画定时器（真实内容到来前显示动画）
+      let animationUpdating = false;
       const animationTimer = setInterval(() => {
-        if (!hasRealContent) {
+        if (!hasRealContent && !animationUpdating) {
+          animationUpdating = true;
           // 用 replace 替换内容，不累加
-          (reply as any).replace(spinner.next());
+          (reply as any).replace(spinner.next()).finally(() => {
+            animationUpdating = false;
+          });
         }
       }, 200); // 200ms 更新一帧
 
-      await this.conversations.prompt(
+      session = await this.conversations.prompt(
         {
           conversationId,
           prompt: { text: message.text, images: message.images, context: message.context },
@@ -113,7 +117,6 @@ export class FeishuAgentBridge {
               clearInterval(animationTimer);
               // logger.info(`[Animation] 收到真实内容，停止动画`);
               // 清空累积器，从头开始推送真实内容
-              (reply as any).stream.accumulator = "";
               latestText = "";
             }
 
@@ -124,42 +127,23 @@ export class FeishuAgentBridge {
             // logger.log(`[Debug] prevText.length=${prevText.length}, latestText.length=${latestText.length}, delta="${delta}"`);
             if (delta) await reply.update(delta);
           }
-          if (event.type === "tool_started") await reply.update(`正在调用工具：${event.toolName}`);
-          if (event.type === "tool_updated") await reply.update(`工具执行中：${event.toolName}`);
-          if (event.type === "tool_finished" && event.isError) await reply.update(`工具执行失败：${event.toolName}`);
+          // 工具事件只保留 spinner，不写入正文，避免状态文本被流式累加。
         },
-      ).then(s => session = s);
+      );
 
       // 确保停止动画
       clearInterval(animationTimer);
 
-      // 获取统计信息并追加到回复底部
-      let finalText = latestText;
-      if (session) {
-        const stats = session.getStats();
-        if (stats) {
-          const inputTokens = stats.tokens?.input || 0;
-          const outputTokens = stats.tokens?.output || 0;
-          const cacheRead = stats.tokens?.cacheRead || 0;
-          const cacheWrite = stats.tokens?.cacheWrite || 0;
-          const newTokens = inputTokens + outputTokens + cacheRead + cacheWrite;
-          const totalTokens = stats.tokens?.total || newTokens;
-          const cost = Number(stats.cost?.total ?? stats.cost ?? 0);
-
-          // 从运行时配置和统计信息中提取模型名称和会话 ID。
-          const modelName = session.getModelName?.() || stats.model || "unknown";
-          const sessionId = String(stats.sessionId || "unknown");
-          const duration = `${((Date.now() - requestStartedAt) / 1000).toFixed(1)}s`;
-          const formatTokens = (tokens: number) => `${(tokens / 1000).toFixed(1)}K`;
-
-          // 构建与客户端一致的单行统计信息。
-          const statsLine = `\n\n---\n${modelName} · ${formatTokens(totalTokens)}（新增 ${formatTokens(newTokens)}） · $${cost.toFixed(4)} · ${duration} · ${sessionId}`;
-          finalText = latestText + statsLine;
-        }
+      const stats = session?.getStats?.();
+      if (stats) {
+        const tokens = stats.tokens ?? {};
+        const formatTokens = (value: number) => `${(value / 1000).toFixed(1)}K`;
+        const statsLine = `${session.getModelName?.() || "模型未知"} · 上下文 ${formatTokens(tokens.total || 0)} · 输入 ${formatTokens(tokens.input || 0)} / 输出 ${formatTokens(tokens.output || 0)} · ${(Date.now() - requestStartedAt) / 1000}s · 会话 ${stats.sessionId || "未知"}`;
+        await (reply as any).updateStats(statsLine);
       }
 
       // logger.log(`[Debug] finalize with latestText="${latestText}"`);
-      await reply.close(finalText);
+      await reply.close(latestText);
 
       // 记录最终响应
       const replyPreview: string = formatLogText(latestText) || "";

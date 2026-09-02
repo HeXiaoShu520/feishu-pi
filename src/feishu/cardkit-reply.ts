@@ -30,6 +30,7 @@ export class CardKitReply implements FeishuReply {
   private stream?: CardKitStream;
   private cardId?: string;
   private closed = false;
+  private initialization?: Promise<void>;
 
   constructor(options: CardKitReplyOptions) {
     this.client = options.client;
@@ -74,6 +75,11 @@ export class CardKitReply implements FeishuReply {
     }
   }
 
+  async updateStats(text: string): Promise<void> {
+    if (this.closed || !this.stream) return;
+    await this.stream.updateStats(text);
+  }
+
   async close(text: string): Promise<void> {
     if (this.closed) return;
     this.closed = true;
@@ -93,49 +99,46 @@ export class CardKitReply implements FeishuReply {
 
   /** 初始化 CardKit 流式卡片 */
   private async initializeCardKit(initialText: string): Promise<void> {
-    // 创建流式卡片
-    this.stream = new CardKitStream({
-      client: this.client,
-      onError: this.onError,
-    });
+    if (this.initialization) return this.initialization;
 
-    this.cardId = await this.stream.create(initialText);
+    this.initialization = (async () => {
+      // 创建流式卡片
+      this.stream = new CardKitStream({
+        client: this.client,
+        onError: this.onError,
+      });
 
-    // 发送引用该卡片的消息
-    if (this.messageId) {
-      // 使用 reply 方法回复消息
-      await this.client.im.message.reply({
-        path: {
-          message_id: this.messageId,
-        },
-        data: {
-          msg_type: "interactive",
-          content: JSON.stringify({
-            type: "card",
-            data: {
-              card_id: this.cardId,
-            },
-          }),
-          reply_in_thread: !!this.threadId,
-        },
-      });
-    } else {
-      // 没有 messageId 时使用 create 发送普通消息
-      await this.client.im.message.create({
-        params: {
-          receive_id_type: "chat_id",
-        },
-        data: {
-          receive_id: this.chatId,
-          msg_type: "interactive",
-          content: JSON.stringify({
-            type: "card",
-            data: {
-              card_id: this.cardId,
-            },
-          }),
-        },
-      });
+      this.cardId = await this.stream.create(initialText);
+
+      // 发送引用该卡片的消息
+      if (this.messageId) {
+        // 使用 reply 方法回复消息
+        await this.client.im.message.reply({
+          path: { message_id: this.messageId },
+          data: {
+            msg_type: "interactive",
+            content: JSON.stringify({ type: "card", data: { card_id: this.cardId } }),
+            reply_in_thread: !!this.threadId,
+          },
+        });
+      } else {
+        // 没有 messageId 时使用 create 发送普通消息
+        await this.client.im.message.create({
+          params: { receive_id_type: "chat_id" },
+          data: {
+            receive_id: this.chatId,
+            msg_type: "interactive",
+            content: JSON.stringify({ type: "card", data: { card_id: this.cardId } }),
+          },
+        });
+      }
+    })();
+
+    try {
+      await this.initialization;
+    } catch (error) {
+      this.initialization = undefined;
+      throw error;
     }
   }
 }

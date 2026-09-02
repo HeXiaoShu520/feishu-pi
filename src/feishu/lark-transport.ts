@@ -5,6 +5,8 @@ import { LarkImageProcessor } from "./image-processor.ts";
 import { formatLogText } from "./log-utils.ts";
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "../utils/logger.ts";
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 
 export interface LarkTransportConfig {
   appId: string;
@@ -176,9 +178,10 @@ export class LarkTransport implements FeishuTransport {
 
           if (typeof value === "object" && value?.action === "switch_model") {
             logger.info(`[CardAction] 管理员切换模型: ${value.model_id}`);
-            // TODO: 实际的模型切换逻辑，需要更新配置文件
-            // 暂时只更新卡片提示
             try {
+              const modelName = value.model_id?.trim();
+              if (!modelName) throw new Error("模型 ID 不能为空");
+              this.persistModelName(modelName);
               await this.updateCard(action, {
                 schema: "2.0",
                 header: {
@@ -213,6 +216,15 @@ export class LarkTransport implements FeishuTransport {
       this.connecting = undefined;
     });
     return this.connecting;
+  }
+
+  /** 持久化模型配置，供服务重启后使用。 */
+  private persistModelName(modelName: string): void {
+    const envFile = join(process.cwd(), ".env");
+    const content = readFileSync(envFile, "utf-8");
+    const line = `FEISHU_PI_MODEL_NAME=${modelName}`;
+    const pattern = /^FEISHU_PI_MODEL_NAME=.*$/m;
+    writeFileSync(envFile, pattern.test(content) ? content.replace(pattern, line) : `${content.trimEnd()}\n${line}\n`, "utf-8");
   }
 
   /** 使用卡片回调 token 更新本次点击对应的卡片。 */

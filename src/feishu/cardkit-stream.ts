@@ -14,6 +14,7 @@ import { randomUUID } from "node:crypto";
 
 const CARD_SCHEMA = "2.0";
 const STREAM_ELEMENT_ID = "stream_md";
+const STATS_ELEMENT_ID = "stats_md";
 
 interface CardKitStreamOptions {
   client: Client;
@@ -43,6 +44,7 @@ export class CardKitStream {
   private accumulator = "";
   private disposed = false;
   private inFlight = false;
+  private writeChain: Promise<void> = Promise.resolve();
 
   private readonly client: Client;
   private readonly minInterval: number;
@@ -74,7 +76,9 @@ export class CardKitStream {
       });
 
       const cardId = (res as any)?.data?.card_id;
-      if (!cardId) throw new Error("Failed to get card_id from response");
+      if (!cardId) {
+        throw new Error(`Failed to get card_id from response: ${JSON.stringify(res)}`);
+      }
 
       this.cardId = cardId;
       this.sequence = 1;
@@ -97,7 +101,7 @@ export class CardKitStream {
       return;
     }
 
-    await this.pushUpdate(this.accumulator);
+    await this.enqueueWrite(() => this.pushUpdate(this.accumulator));
   }
 
   /** 替换全部内容（用于动画帧，不累加） */
@@ -105,7 +109,7 @@ export class CardKitStream {
     if (this.disposed || !this.cardId) return;
 
     this.accumulator = text;
-    await this.pushUpdate(text);
+    await this.enqueueWrite(() => this.pushUpdate(text));
   }
 
   /** 关闭流式模式 */
@@ -113,22 +117,16 @@ export class CardKitStream {
     if (this.disposed || !this.cardId) return;
 
     try {
-      // 0. 等待最后一次推送完成，并强制推送 accumulator 里的剩余内容
-      while (this.inFlight) {
-        await new Promise(resolve => setTimeout(resolve, 50));
-      }
-
-      // 如果 accumulator 还有未推送的内容，立即推送
-      if (this.accumulator) {
-        await this.pushUpdate(this.accumulator);
-      }
+      // 0. 最终内容必须覆盖所有尚未完成的流式更新。
+      this.accumulator = fullText;
+      await this.enqueueWrite(() => this.pushUpdate(fullText));
 
       // 1. 等待客户端渲染完成（参考 Python 版本：min(3s, 文本长度 * 0.025)）
       const renderWaitMs = Math.min(3000, fullText.length * 25);
       await new Promise(resolve => setTimeout(resolve, renderWaitMs));
 
       // 2. 关闭流式模式（不再发送最终内容，避免覆盖正在渲染的文本）
-      await this.patchSettings(false);
+      await this.enqueueWrite(() => this.patchSettings(false));
 
       this.disposed = true;
     } catch (err) {
@@ -138,6 +136,14 @@ export class CardKitStream {
   }
 
   /** 流式更新元素内容（全量文本） */
+  private enqueueWrite(task: () => Promise<void>): Promise<void> {
+    const next = this.writeChain.then(task);
+    this.writeChain = next.catch((err) => {
+      this.onError?.(err);
+    });
+    return next;
+  }
+
   private async pushUpdate(fullText: string): Promise<void> {
     if (!this.cardId || this.disposed) return;
 
@@ -158,6 +164,20 @@ export class CardKitStream {
       // 不抛出，继续累积
     } finally {
       this.inFlight = false;
+    }
+  }
+
+  /** 更新独立的统计小字元素。 */
+  async updateStats(text: string): Promise<void> {
+    if (this.disposed || !this.cardId) return;
+    try {
+      await this.enqueueWrite(() => this.client.request({
+        method: "PUT",
+        url: `/open-apis/cardkit/v1/cards/${this.cardId}/elements/${STATS_ELEMENT_ID}/content`,
+        data: { content: text, sequence: ++this.sequence, uuid: this.uuid() },
+      }).then(() => undefined));
+    } catch (err) {
+      this.onError?.(err);
     }
   }
 
@@ -208,6 +228,12 @@ export class CardKitStream {
             tag: "markdown",
             content: text || " ",
             element_id: STREAM_ELEMENT_ID,
+          },
+          {
+            tag: "markdown",
+            content: " ",
+            text_size: "notation",
+            element_id: STATS_ELEMENT_ID,
           },
         ],
       },
