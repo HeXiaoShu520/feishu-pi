@@ -17,9 +17,11 @@ export interface SafetyJudgeOptions {
   timeoutMs: number;
   /** 可写目录（相对 cwd），来自白名单配置的 writable_dirs；未配置时用内置基线 */
   writableDirs?: string[];
+  /** 只读工具名单，来自白名单配置的 readonly_tools；未配置时用内置基线 */
+  readonlyTools?: string[];
 }
 
-/** 无需大模型即可放行的只读工具（内置安全基线，不随配置变化）。 */
+/** 内置只读工具基线；白名单配置 readonly_tools 时整体覆盖此项。 */
 const READ_ONLY_TOOLS = new Set(["read", "grep", "glob", "ls", "find", "restricted_read", "todo_read"]);
 
 /** 内置可写目录基线；白名单配置 writable_dirs 时整体覆盖此项。 */
@@ -47,7 +49,8 @@ export class SafetyJudge {
   /** 对一次工具调用给出裁决：allow 直接放行，ask 需要管理员授权。 */
   async judge(toolName: string, args: unknown): Promise<JudgeVerdict> {
     // 规则层 1：只读工具直接放行，不消耗大模型调用
-    if (READ_ONLY_TOOLS.has(toolName)) {
+    const readonlyTools = this.options.readonlyTools ?? READ_ONLY_TOOLS;
+    if (readonlyTools.includes(toolName)) {
       return { decision: "allow", reason: "只读工具" };
     }
 

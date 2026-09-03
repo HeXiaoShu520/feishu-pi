@@ -558,7 +558,7 @@ function getUserRole(userId: string): "default" | "team" | "admin" {
 **安全设计：**
 
 - **白名单**：`.agent/whitelist.json` 为正则字符串数组（或含 `patterns` / `writable_dirs` 的对象），匹配「工具名 + 参数」；文件不存在时回退 `FEISHU_CMD_WHITELIST` 环境变量（正则，分号分隔）。
-- **内置安全基线**：只读工具（read/grep/glob 等）始终放行，不随白名单变化；write/edit 写入可写目录（默认 `.agent/`、`data/`，可用 `writable_dirs` 覆盖）放行，写其他路径弹卡。
+- **内置安全基线**：只读工具（默认 read/grep/glob 等，可用 `readonly_tools` 覆盖）直接放行；write/edit 写入可写目录（默认 `.agent/`、`data/`，可用 `writable_dirs` 覆盖）放行，写其他路径弹卡。
 - **Guard 默认拒绝**：Guard 模型未配置、超时、接口异常、返回无法解析时，一律按 ask 处理。
 - **授权卡服务端校验**：每次授权有唯一 `approval_id` + 一次性 `token`；回调时在服务端校验 token 一致、卡片来源（原卡或转发卡）、点击者必须是管理员、decision 合法、未处理过。非管理员点击、伪造 token、卡片被转发到其他会话再点击均无效。授权是单次的，不缓存。
 - **参数脱敏**：授权卡中 `token`、`password`、`api_key`、`secret`、`cookie` 等字段脱敏为 `***`，命令最多展示 1200 字符。
@@ -575,11 +575,12 @@ function getUserRole(userId: string): "default" | "team" | "admin" {
 ]
 ```
 
-完整格式（可额外覆盖可写目录，整体替换内置的 `.agent/`、`data/`）：
+完整格式（可覆盖只读工具与可写目录，均整体替换内置基线）：
 
 ```json
 {
   "patterns": ["^read\\s", "^git (status|diff|log)\\b"],
+  "readonly_tools": ["read", "grep", "glob", "ls", "find"],
   "writable_dirs": [".agent", "data", "output"]
 }
 ```
