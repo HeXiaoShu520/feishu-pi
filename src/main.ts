@@ -10,6 +10,7 @@ import { MessageStore } from "./feishu/message-store.ts";
 import { DataCleaner } from "./runtime/data-cleaner.ts";
 import { resolveAdminOpenId } from "./feishu/admin-resolver.ts";
 import { join } from "node:path";
+import { existsSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "./utils/logger.ts";
@@ -98,11 +99,15 @@ export async function main(): Promise<void> {
   });
 
   // 工具调用 Guard：白名单正则 + 大模型审核 + 管理员授权卡
-  // 白名单优先从 .agent/whitelist.json 读取，文件不存在时回退环境变量
-  const whitelistFile = join(config.cwd, ".agent", "whitelist.json");
-  const whitelistConfig = loadWhitelistConfig(whitelistFile);
+  // 白名单优先从 .agent/settings.json 读取（Claude Code settings.json 风格），旧 whitelist.json 兼容读取，均不存在时回退环境变量
+  const settingsFile = join(config.cwd, ".agent", "settings.json");
+  const legacyWhitelistFile = join(config.cwd, ".agent", "whitelist.json");
+  const whitelistConfig = loadWhitelistConfig(settingsFile).patterns.length > 0
+    ? loadWhitelistConfig(settingsFile)
+    : loadWhitelistConfig(legacyWhitelistFile);
+  const loadedFrom = existsSync(settingsFile) ? settingsFile : legacyWhitelistFile;
   if (whitelistConfig.patterns.length > 0) {
-    logger.info(`[Main] 已加载白名单 ${whitelistConfig.patterns.length} 条（${whitelistFile}）`);
+    logger.info(`[Main] 已加载白名单 ${whitelistConfig.patterns.length} 条（${loadedFrom}）`);
   } else if (config.cmdWhitelist.length > 0) {
     logger.info(`[Main] 白名单文件不存在，使用 FEISHU_CMD_WHITELIST 环境变量（${config.cmdWhitelist.length} 条）`);
   }
