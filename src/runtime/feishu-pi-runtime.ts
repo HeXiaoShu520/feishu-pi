@@ -247,6 +247,24 @@ export class FeishuPiRuntime {
       customTools,
       resourceLoader,
     });
+
+    // 注入工具调用 Guard：每次工具执行前经过白名单 / 大模型审核 / 管理员授权卡
+    const toolGuard = this.config.toolGuard;
+    if (toolGuard) {
+      const userRoleAtCreation = userRole;
+      const chatId = context?.chatId;
+      session.agent.beforeToolCall = async (ctx) => {
+        try {
+          return await toolGuard({ toolName: ctx.toolCall.name, args: ctx.args, userRole: userRoleAtCreation, chatId });
+        } catch (error) {
+          // Guard 自身异常按默认拒绝处理
+          const detail = error instanceof Error ? error.message : String(error);
+          logger.warn(`[Runtime] ToolGuard 异常，按拒绝处理: ${detail}`);
+          return { block: true, reason: `工具 ${ctx.toolCall.name} 审核异常：${detail}` };
+        }
+      };
+    }
+
     return new SessionWrapper(session);
   }
 

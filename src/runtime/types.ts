@@ -25,6 +25,8 @@ export interface FeishuPiConfig {
   systemPrompt?: string;
   adminId: string;
   teamMemberIdentifiers: string[];  // 团队成员标识（Open ID / 姓名 / 邮箱）
+  /** 工具调用 Guard（beforeToolCall 钩子），可选 */
+  toolGuard?: (params: { toolName: string; args: unknown; userRole: UserRole; chatId?: string }) => Promise<{ block: true; reason: string } | undefined>;
 }
 
 export interface FeishuPiSession {

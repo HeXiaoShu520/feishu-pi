@@ -242,7 +242,8 @@ export class HelpCommand implements CommandHandler {
 \`/model\` - 查看并切换 AI 模型（仅管理员）
 \`/help\` - 显示此帮助信息
 \`/new\` - 开始新对话（清空历史）
-\`/stop\` - 停止当前 AI 响应`,
+\`/stop\` - 停止当前 AI 响应
+\`/detail\` - 切换详细/精简模式（工具调用是否保留在正文）`,
             },
           ],
         },
@@ -295,6 +296,41 @@ export class StopCommand implements CommandHandler {
             {
               tag: "markdown",
               content: "⏸️ 已停止当前响应。",
+            },
+          ],
+        },
+      },
+    };
+  }
+}
+
+/**
+ * /detail - 切换详细/精简模式
+ * 切换逻辑通过回调交给调用方（FeishuAgentBridge 持有模式状态），返回是否已开启详细模式
+ */
+export class DetailCommand implements CommandHandler {
+  private readonly toggle: (chatId: string) => boolean;
+
+  constructor(toggle: (chatId: string) => boolean) {
+    this.toggle = toggle;
+  }
+
+  match(text: string): boolean {
+    return text.trim() === "/detail";
+  }
+
+  async execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
+    const enabled = this.toggle(message.context.chatId);
+    return {
+      card: {
+        schema: "2.0",
+        body: {
+          elements: [
+            {
+              tag: "markdown",
+              content: enabled
+                ? "✅ 已开启**详细模式**：工具调用过程将保留在正文中。\n\n再次发送 `/detail` 切换回精简模式。"
+                : "✅ 已开启**精简模式**：工具调用仅在执行时临时显示，完成后只保留正文。\n\n再次发送 `/detail` 切换回详细模式。",
             },
           ],
         },

@@ -112,8 +112,20 @@ export class CardKitStream {
     await this.enqueueWrite(() => this.pushUpdate(text));
   }
 
-  /** 关闭流式模式 */
-  async finalize(fullText: string): Promise<void> {
+  /** 在正文后附加临时文本（不进入累加器，清除后正文恢复） */
+  async showTransient(text: string): Promise<void> {
+    if (this.disposed || !this.cardId) return;
+    await this.enqueueWrite(() => this.pushUpdate(this.accumulator + text));
+  }
+
+  /** 清除临时文本，正文恢复为累加器内容 */
+  async clearTransient(): Promise<void> {
+    if (this.disposed || !this.cardId) return;
+    await this.enqueueWrite(() => this.pushUpdate(this.accumulator));
+  }
+
+  /** 关闭流式模式；statsText 在正文渲染完成后写入小字，避免小字先于正文出现 */
+  async finalize(fullText: string, statsText?: string): Promise<void> {
     if (this.disposed || !this.cardId) return;
 
     try {
@@ -127,6 +139,9 @@ export class CardKitStream {
 
       // 2. 关闭流式模式（不再发送最终内容，避免覆盖正在渲染的文本）
       await this.enqueueWrite(() => this.patchSettings(false));
+
+      // 3. 正文渲染完成后才写入统计小字
+      if (statsText) await this.enqueueWrite(() => this.putStats(statsText));
 
       this.disposed = true;
     } catch (err) {
@@ -171,14 +186,19 @@ export class CardKitStream {
   async updateStats(text: string): Promise<void> {
     if (this.disposed || !this.cardId) return;
     try {
-      await this.enqueueWrite(() => this.client.request({
-        method: "PUT",
-        url: `/open-apis/cardkit/v1/cards/${this.cardId}/elements/${STATS_ELEMENT_ID}/content`,
-        data: { content: text, sequence: ++this.sequence, uuid: this.uuid() },
-      }).then(() => undefined));
+      await this.enqueueWrite(() => this.putStats(text));
     } catch (err) {
       this.onError?.(err);
     }
+  }
+
+  /** 实际推送小字元素内容（内部复用）。 */
+  private async putStats(text: string): Promise<void> {
+    await this.client.request({
+      method: "PUT",
+      url: `/open-apis/cardkit/v1/cards/${this.cardId}/elements/${STATS_ELEMENT_ID}/content`,
+      data: { content: text, sequence: ++this.sequence, uuid: this.uuid() },
+    });
   }
 
   /** 关闭或开启流式模式 */

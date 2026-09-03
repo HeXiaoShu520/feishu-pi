@@ -8,8 +8,9 @@ import { ReactionController } from "./reaction-controller.ts";
 import { Spinner } from "./spinner.ts";
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "../utils/logger.ts";
-import { createDefaultRegistry, type CommandRegistry, type CommandHandler } from "./commands.ts";
+import { createDefaultRegistry, DetailCommand, type CommandRegistry, type CommandHandler } from "./commands.ts";
 import { randomUUID } from "node:crypto";
+import { sessionAlias } from "./session-alias.ts";
 
 /** 将飞书消息转换为 Pi 会话，并把增量文本交给飞书传输层。 */
 export class FeishuAgentBridge {
@@ -21,6 +22,13 @@ export class FeishuAgentBridge {
   private readonly enableCardKit: boolean;
   private readonly reactionController?: ReactionController;
   private readonly commandRegistry: CommandRegistry;
+  /** 详细模式开关：key 为 chatId，true 表示工具调用保留在正文中 */
+  private readonly detailMode = new Map<string, boolean>();
+
+  /** 查询某会话是否开启详细模式（供授权卡撤回等外部逻辑判断）。 */
+  isDetailMode(chatId: string): boolean {
+    return this.detailMode.get(chatId) === true;
+  }
 
   constructor(
     conversations: ConversationManager,
@@ -43,6 +51,12 @@ export class FeishuAgentBridge {
       ? new ReactionController(options.client)
       : undefined;
     this.commandRegistry = createDefaultRegistry();
+    // /detail 切换详细/精简模式，状态由 bridge 持有（按 chatId 记忆）
+    this.commandRegistry.register(new DetailCommand((chatId: string) => {
+      const enabled = !this.detailMode.get(chatId);
+      this.detailMode.set(chatId, enabled);
+      return enabled;
+    }));
   }
 
   /** 注册飞书消息处理器。 */
@@ -86,6 +100,8 @@ export class FeishuAgentBridge {
       const spinner = new Spinner();
       let hasRealContent = false;
       let session: any;
+      // 详细模式下追加到正文尾部的工具调用记录
+      let toolLog = "";
 
       // 立即显示首帧（0ms 延迟）
       await (reply as any).replace(spinner.next());
@@ -101,6 +117,24 @@ export class FeishuAgentBridge {
           });
         }
       }, 200); // 200ms 更新一帧
+
+      // 工具调用动画：在小字位置显示"符号 + 工具名"的旋转帧
+      const TOOL_FRAMES = ["⚙", "⚙", "⚒", "⚒", "🛠", "⚒", "⚙"];
+      let toolFrameIndex = 0;
+      let activeToolName = "";
+      let toolAnimationUpdating = false;
+      const toolTimer = setInterval(() => {
+        if (hasRealContent && activeToolName && !toolAnimationUpdating) {
+          toolAnimationUpdating = true;
+          const frame = TOOL_FRAMES[toolFrameIndex++ % TOOL_FRAMES.length];
+          reply.updateStats(`${frame} ${activeToolName} …`).finally(() => {
+            toolAnimationUpdating = false;
+          });
+        }
+      }, 300);
+
+      // 记录 prompt 前的基线统计，用于计算本次新增 token
+      const statsBefore = await this.conversations.getStats(conversationId, message.context);
 
       session = await this.conversations.prompt(
         {
@@ -127,23 +161,51 @@ export class FeishuAgentBridge {
             // logger.log(`[Debug] prevText.length=${prevText.length}, latestText.length=${latestText.length}, delta="${delta}"`);
             if (delta) await reply.update(delta);
           }
-          // 工具事件只保留 spinner，不写入正文，避免状态文本被流式累加。
+          // 工具事件：正文写入（详细模式保留 / 精简模式临时显示），小字位置同步显示动画。
+          if (event.type === "tool_started") {
+            activeToolName = event.toolName;
+            const toolLine = `\n\n> ⚙ 正在调用 **${event.toolName}** …`;
+            if (this.detailMode.get(message.chatId)) {
+              // 详细模式：工具调用永久保留在正文
+              toolLog += toolLine;
+              await reply.update(toolLine);
+            } else {
+              // 精简模式：临时显示，结束后清除
+              await reply.showTransient(toolLine);
+            }
+          }
+          if (event.type === "tool_finished") {
+            activeToolName = "";
+            if (!this.detailMode.get(message.chatId)) {
+              // 精简模式：去掉工具调用文字，只保留正文
+              await reply.clearTransient();
+            }
+            // 清空小字，等待下一次工具调用或最终统计
+            await reply.updateStats(" ");
+          }
         },
       );
 
       // 确保停止动画
       clearInterval(animationTimer);
+      clearInterval(toolTimer);
 
       const stats = session?.getStats?.();
+      // 小字在 close 内部（正文渲染完成后）才写入
+      let statsLine: string | undefined;
       if (stats) {
         const tokens = stats.tokens ?? {};
         const formatTokens = (value: number) => `${(value / 1000).toFixed(1)}K`;
-        const statsLine = `${session.getModelName?.() || "模型未知"} · 上下文 ${formatTokens(tokens.total || 0)} · 输入 ${formatTokens(tokens.input || 0)} / 输出 ${formatTokens(tokens.output || 0)} · ${(Date.now() - requestStartedAt) / 1000}s · 会话 ${stats.sessionId || "未知"}`;
-        await (reply as any).updateStats(statsLine);
+        // 本次新增 token = 当前上下文 - prompt 前基线
+        const deltaTokens = Math.max(0, (tokens.total || 0) - ((statsBefore as any)?.tokens?.total || 0));
+        const cost = typeof stats.cost === "number" ? `$${stats.cost.toFixed(4)}` : "";
+        const elapsed = `${((Date.now() - requestStartedAt) / 1000).toFixed(1)}s`;
+        statsLine = [session.getModelName?.() || "模型未知", `${formatTokens(tokens.total || 0)}（新增 ${formatTokens(deltaTokens)}）`, cost, elapsed, sessionAlias(stats.sessionId)].filter(Boolean).join(" · ");
       }
 
       // logger.log(`[Debug] finalize with latestText="${latestText}"`);
-      await reply.close(latestText);
+      // 详细模式：最终内容需要包含工具调用记录
+      await reply.close(this.detailMode.get(message.chatId) ? latestText + toolLog : latestText, statsLine);
 
       // 记录最终响应
       const replyPreview: string = formatLogText(latestText) || "";

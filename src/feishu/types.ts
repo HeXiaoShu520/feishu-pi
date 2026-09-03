@@ -12,7 +12,7 @@ export interface FeishuInboundMessage {
 
 export interface FeishuReply {
   update(text: string): Promise<void>;
-  close(text: string): Promise<void>;
+  close(text: string, statsText?: string): Promise<void>;
 }
 
 export interface FeishuTransport {

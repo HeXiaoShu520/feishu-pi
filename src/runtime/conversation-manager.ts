@@ -64,6 +64,12 @@ export class ConversationManager {
     return state.session;
   }
 
+  /** 获取指定会话当前的真实 Session 统计（不存在会创建会话）。 */
+  async getStats(conversationId: string, context?: FeishuContext): Promise<any> {
+    const state = await this.getState(conversationId, context);
+    return state.session.getStats?.();
+  }
+
   /** 清空指定会话的历史记录 */
   async clear(conversationId: string): Promise<void> {
     // 删除映射和持久化

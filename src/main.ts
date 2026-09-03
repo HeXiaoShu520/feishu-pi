@@ -13,6 +13,10 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "./utils/logger.ts";
+import { CommandWhitelist, loadWhitelistPatterns } from "./guard/whitelist.ts";
+import { SafetyJudge } from "./guard/judge.ts";
+import { PermissionBroker } from "./guard/broker.ts";
+import { ToolGuard } from "./guard/tool-guard.ts";
 
 /** 启动轻量飞书 Agent 服务。 */
 export async function main(): Promise<void> {
@@ -83,6 +87,76 @@ export async function main(): Promise<void> {
     logger.info(`[Main] 团队成员配置: ${config.feishuTeamMembers.length} 人`);
   }
 
+  const transport = new LarkTransport({
+    appId: config.feishuAppId,
+    appSecret: config.feishuAppSecret,
+    botOpenId,
+    client,
+    imageCacheDir: join(config.sessionDir, "images"),
+    adminOpenId,
+  });
+
+  // 工具调用 Guard：白名单正则 + 大模型审核 + 管理员授权卡
+  // 白名单优先从 .agent/whitelist.json 读取（字符串数组），文件不存在时回退环境变量
+  const whitelistFile = join(config.cwd, ".agent", "whitelist.json");
+  const whitelistPatterns = loadWhitelistPatterns(whitelistFile);
+  if (whitelistPatterns.length > 0) {
+    logger.info(`[Main] 已加载白名单 ${whitelistPatterns.length} 条（${whitelistFile}）`);
+  } else if (config.cmdWhitelist.length > 0) {
+    logger.info(`[Main] 白名单文件不存在，使用 FEISHU_CMD_WHITELIST 环境变量（${config.cmdWhitelist.length} 条）`);
+  }
+  const whitelist = new CommandWhitelist(whitelistPatterns.length > 0 ? whitelistPatterns : config.cmdWhitelist);
+  const judge = new SafetyJudge({
+    cwd: config.cwd,
+    baseUrl: config.guardBaseUrl,
+    model: config.guardModel,
+    apiKey: config.guardApiKey,
+    timeoutMs: config.guardTimeoutMs,
+  });
+  // bridge 在下方创建，先用闭包引用（授权卡撤回需查询该会话的详细模式开关）
+  let bridgeRef: FeishuAgentBridge | undefined;
+  const broker = new PermissionBroker({
+    adminOpenIds: adminOpenId ? [adminOpenId] : [],
+    timeoutMs: config.approvalTimeoutMs,
+    sendCard: (chatId, card) => transport.sendCardToChat(chatId, card),
+    updateCard: (messageId, card) => transport.updateCardById(messageId, card),
+    // 精简模式下授权确认后撤回卡片，减少会话占用
+    recallCard: (messageId) => transport.recallMessageById(messageId),
+    shouldRecall: (chatId) => bridgeRef?.isDetailMode(chatId) === false,
+  });
+  const toolGuard = new ToolGuard(whitelist, judge, broker);
+
+  // 授权卡回调 → PermissionBroker 服务端校验（token / 卡片来源 / 管理员身份）
+  transport.onApproval(async ({ value, action }) => {
+    const approvalId = typeof value.approval_id === "string" ? value.approval_id : undefined;
+    const token = typeof value.token === "string" ? value.token : undefined;
+
+    // 「申请转发给管理员」：把授权卡转发到管理员私聊
+    if (value.action === "forward_approval") {
+      const result = await broker.forwardToAdmin({ approvalId, token, messageId: action.messageId, chatId: action.chatId });
+      if (result.accepted) {
+        logger.info(`[Main] 授权请求已转发给管理员私聊（点击者 ${action.operatorOpenId}）`);
+      } else {
+        logger.warn(`[Main] 转发请求被拒绝: ${result.detail}（点击者 ${action.operatorOpenId}）`);
+      }
+      return;
+    }
+
+    const result = await broker.handleCallback({
+      approvalId,
+      token,
+      decision: typeof value.decision === "string" ? value.decision : undefined,
+      messageId: action.messageId,
+      chatId: action.chatId,
+      operatorOpenId: action.operatorOpenId,
+    });
+    if (result.accepted) {
+      logger.info(`[Main] 授权回调已处理: ${result.detail}（点击者 ${action.operatorOpenId}）`);
+    } else {
+      logger.warn(`[Main] 授权回调被拒绝: ${result.detail}（点击者 ${action.operatorOpenId}）`);
+    }
+  });
+
   // 创建 runtime 配置
   const runtime = new FeishuPiRuntime({
     cwd: config.cwd,
@@ -93,21 +167,13 @@ export async function main(): Promise<void> {
     systemPrompt: config.systemPrompt,
     adminId: adminOpenId || "",
     teamMemberIdentifiers: config.feishuTeamMembers,  // 传原始配置
+    toolGuard: (params) => toolGuard.check(params),
   });
 
   // 启动时打印可用的 Skills 和 Tools（管理员视角）
   await runtime.printAvailableResources();
 
   const conversations = new ConversationManager(runtime, new ConversationStore(join(config.sessionDir, "conversations.json")));
-
-  const transport = new LarkTransport({
-    appId: config.feishuAppId,
-    appSecret: config.feishuAppSecret,
-    botOpenId,
-    client,
-    imageCacheDir: join(config.sessionDir, "images"),
-    adminOpenId,
-  });
 
   const bridge = new FeishuAgentBridge(
     conversations,
@@ -118,6 +184,7 @@ export async function main(): Promise<void> {
       enableCardKit: true,
     },
   );
+  bridgeRef = bridge;
 
   bridge.start();
   await transport.connect();

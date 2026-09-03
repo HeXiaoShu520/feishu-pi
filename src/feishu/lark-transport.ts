@@ -33,6 +33,7 @@ export class LarkTransport implements FeishuTransport {
   private readonly adminOpenId?: string;
   private readonly client?: Client;
   private handler?: (message: FeishuInboundMessage) => Promise<void>;
+  private approvalHandler?: (params: { value: Record<string, unknown>; action: { messageId: string; chatId: string; operatorOpenId: string } }) => Promise<void>;
   private messageHandlerRegistered = false;
   private connecting?: Promise<void>;
 
@@ -139,6 +140,25 @@ export class LarkTransport implements FeishuTransport {
         try {
           logger.info(`[CardAction] 收到卡片回调: ${action.operator.openId}`);
 
+          // 解析回调数据（value 可能是对象或 JSON 字符串）
+          let value: Record<string, unknown> | string = action.action.value as any;
+          if (typeof value === "string") {
+            try {
+              value = JSON.parse(value);
+            } catch {
+              logger.warn(`[CardAction] value 不是有效的 JSON: ${value}`);
+            }
+          }
+
+          // 授权卡回调（授权/拒绝/申请转发）：交给 PermissionBroker 在服务端校验（含管理员身份），不走通用管理员拦截
+          if (typeof value === "object" && (value?.action === "tool_approval" || value?.action === "forward_approval")) {
+            await this.approvalHandler?.({
+              value,
+              action: { messageId: action.messageId, chatId: action.chatId, operatorOpenId: action.operator.openId },
+            });
+            return;
+          }
+
           // 判断是否为管理员
           const operatorOpenId = action.operator.openId;
           const isAdmin = this.adminOpenId ? operatorOpenId === this.adminOpenId : false;
@@ -166,20 +186,10 @@ export class LarkTransport implements FeishuTransport {
             return;
           }
 
-          // 解析回调数据（value 可能是对象或 JSON 字符串）
-          let value: { action?: string; model_id?: string } | string = action.action.value as any;
-          if (typeof value === "string") {
-            try {
-              value = JSON.parse(value);
-            } catch {
-              logger.warn(`[CardAction] value 不是有效的 JSON: ${value}`);
-            }
-          }
-
           if (typeof value === "object" && value?.action === "switch_model") {
             logger.info(`[CardAction] 管理员切换模型: ${value.model_id}`);
             try {
-              const modelName = value.model_id?.trim();
+              const modelName = typeof value.model_id === "string" ? value.model_id.trim() : "";
               if (!modelName) throw new Error("模型 ID 不能为空");
               this.persistModelName(modelName);
               await this.updateCard(action, {
@@ -249,6 +259,30 @@ export class LarkTransport implements FeishuTransport {
 
   onMessage(handler: (message: FeishuInboundMessage) => Promise<void>): void {
     this.handler = handler;
+  }
+
+  /** 注册授权卡片回调处理器（PermissionBroker 在服务端校验管理员身份）。 */
+  onApproval(handler: (params: { value: Record<string, unknown>; action: { messageId: string; chatId: string; operatorOpenId: string } }) => Promise<void>): void {
+    this.approvalHandler = handler;
+  }
+
+  /** 向指定会话发送一张卡片，返回 messageId。 */
+  async sendCardToChat(chatId: string, card: object): Promise<string> {
+    const result = await this.channel.send(chatId, { card });
+    return result.messageId;
+  }
+
+  /** 按 messageId 更新已发送的卡片。 */
+  async updateCardById(messageId: string, card: object): Promise<void> {
+    await this.channel.updateCard(messageId, card);
+  }
+
+  /** 按 messageId 撤回消息。 */
+  async recallMessageById(messageId: string): Promise<void> {
+    await this.client!.request({
+      method: "DELETE",
+      url: `/open-apis/im/v1/messages/${messageId}`,
+    });
   }
 
   async startReply(message: FeishuInboundMessage): Promise<FeishuReply> {

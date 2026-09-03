@@ -80,7 +80,20 @@ export class CardKitReply implements FeishuReply {
     await this.stream.updateStats(text);
   }
 
-  async close(text: string): Promise<void> {
+  /** 在正文后附加临时文本（精简模式下展示工具调用，结束后清除） */
+  async showTransient(text: string): Promise<void> {
+    if (this.closed || !this.stream) return;
+    await this.stream.showTransient(text);
+  }
+
+  /** 清除临时文本 */
+  async clearTransient(): Promise<void> {
+    if (this.closed || !this.stream) return;
+    await this.stream.clearTransient();
+  }
+
+  /** 关闭回复；statsText 可选，正文渲染完成后写入小字 */
+  async close(text: string, statsText?: string): Promise<void> {
     if (this.closed) return;
     this.closed = true;
 
@@ -90,7 +103,7 @@ export class CardKitReply implements FeishuReply {
     }
 
     try {
-      await this.stream!.finalize(text);
+      await this.stream!.finalize(text, statsText);
     } catch (err) {
       this.onError?.(err);
       throw err;

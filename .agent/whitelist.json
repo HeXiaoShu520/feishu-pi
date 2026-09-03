@@ -1,0 +1,4 @@
+[
+  "^read\\s",
+  "^git (status|diff|log)\\b"
+]
