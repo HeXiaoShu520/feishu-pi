@@ -36,6 +36,8 @@ export class LarkTransport implements FeishuTransport {
   private approvalHandler?: (params: { value: Record<string, unknown>; action: { messageId: string; chatId: string; operatorOpenId: string } }) => Promise<void>;
   private messageHandlerRegistered = false;
   private connecting?: Promise<void>;
+  /** 会话模式缓存（p2p/group/topic），话题群与普通群的会话隔离策略不同 */
+  private readonly chatModeCache = new Map<string, "p2p" | "group" | "topic">();
 
   constructor(config: LarkTransportConfig) {
     this.botOpenId = config.botOpenId;
@@ -77,9 +79,14 @@ export class LarkTransport implements FeishuTransport {
           const profile = await this.larkCli.getUserProfile(message.senderId, chatId);
           const displayName = profile.name || profile.englishName || profile.openId;
 
-          // 构造 conversationId: userId-conversationId
-          const baseConversationId = threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`;
-          const conversationId = `${profile.openId}-${baseConversationId}`;
+          // 构造 conversationId：
+          // - 话题群：同一话题内所有用户共享一个会话；首条消息没有 threadId，
+          //   用该消息的 messageId 作为话题键——后续消息的 threadId 恰好就是这条根消息的 ID，自然收敛到同一会话
+          // - 其他会话（私聊/普通群）：按用户隔离
+          const chatMode = await this.getChatModeCached(chatId);
+          const conversationId = chatMode === "topic"
+            ? `topic:${chatId}:${threadId ?? message.messageId}`
+            : `${profile.openId}-${threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`}`;
 
           // 处理图片附件
           let images;
@@ -226,6 +233,20 @@ export class LarkTransport implements FeishuTransport {
       this.connecting = undefined;
     });
     return this.connecting;
+  }
+
+  /** 查询会话模式并缓存（话题群与普通群的会话隔离策略不同，模式极少变化）。 */
+  private async getChatModeCached(chatId: string): Promise<"p2p" | "group" | "topic"> {
+    const cached = this.chatModeCache.get(chatId);
+    if (cached) return cached;
+    try {
+      const mode = await this.channel.getChatMode(chatId);
+      this.chatModeCache.set(chatId, mode);
+      return mode;
+    } catch (error) {
+      logger.warn(`[LarkTransport] 获取会话模式失败，按普通会话处理: ${error instanceof Error ? error.message : error}`);
+      return "group";
+    }
   }
 
   /** 持久化模型配置，供服务重启后使用。 */

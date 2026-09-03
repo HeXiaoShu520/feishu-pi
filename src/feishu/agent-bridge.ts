@@ -232,8 +232,17 @@ export class FeishuAgentBridge {
     try {
       logger.info(`[${message.context.userName}] 执行指令: ${message.text}`);
 
-      // 特殊处理 /new 指令：清空会话
+      // 特殊处理 /new 指令：清空会话；话题内共享会话，禁止清空
       if (message.text.trim() === "/new") {
+        if (message.context.conversationId.startsWith("topic:")) {
+          logger.info(`[Command] 话题内禁止 /new: ${message.context.conversationId}`);
+          await this.sendCommandCard(message, {
+            schema: "2.0",
+            body: { elements: [{ tag: "markdown", content: "❌ 话题内禁止使用 /new（话题会话为所有人共享），请在群聊或私聊中使用。" }] },
+          });
+          await this.messages?.complete(message.messageId);
+          return;
+        }
         await this.conversations.clear(message.context.conversationId);
         logger.info(`[Command] 已清空会话: ${message.context.conversationId}`);
       }
@@ -248,21 +257,7 @@ export class FeishuAgentBridge {
       if (!result) return;
 
       // 发送卡片回复
-      const response = await this.client.request({
-        method: "POST",
-        url: "/open-apis/im/v1/messages",
-        params: { receive_id_type: "chat_id" },
-        data: {
-          receive_id: message.chatId,
-          msg_type: "interactive",
-          content: JSON.stringify(result.card),
-          uuid: randomUUID(), // 飞书要求 uuid 最长 50 个字符
-        },
-      }).catch((err) => {
-        const errorDetail = err.response?.data?.error?.field_violations || err.response?.data || err.message;
-        logger.error(`[Command] 发送卡片失败:`, JSON.stringify(errorDetail, null, 2));
-        throw err;
-      });
+      await this.sendCommandCard(message, result.card);
 
       logger.info(`[Command] 卡片已发送`);
 
@@ -271,5 +266,25 @@ export class FeishuAgentBridge {
       await this.messages?.fail(message.messageId);
       logger.error("[Command] 执行失败:", error);
     }
+  }
+
+  /** 发送指令卡片回复。 */
+  private async sendCommandCard(message: FeishuInboundMessage, card: object): Promise<void> {
+    if (!this.client) return;
+    await this.client.request({
+      method: "POST",
+      url: "/open-apis/im/v1/messages",
+      params: { receive_id_type: "chat_id" },
+      data: {
+        receive_id: message.chatId,
+        msg_type: "interactive",
+        content: JSON.stringify(card),
+        uuid: randomUUID(), // 飞书要求 uuid 最长 50 个字符
+      },
+    }).catch((err) => {
+      const errorDetail = err.response?.data?.error?.field_violations || err.response?.data || err.message;
+      logger.error(`[Command] 发送卡片失败:`, JSON.stringify(errorDetail, null, 2));
+      throw err;
+    });
   }
 }
