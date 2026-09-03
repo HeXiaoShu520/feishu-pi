@@ -162,97 +162,109 @@ export class LarkTransport implements FeishuTransport {
         }
       });
 
-      // 监听卡片回调事件
-      this.channel.on("cardAction", async (action) => {
-        try {
-          logger.info(`[CardAction] 收到卡片回调: ${action.operator.openId}`);
-
-          // 解析回调数据（value 可能是对象或 JSON 字符串）
-          let value: Record<string, unknown> | string = action.action.value as any;
-          if (typeof value === "string") {
-            try {
-              value = JSON.parse(value);
-            } catch {
-              logger.warn(`[CardAction] value 不是有效的 JSON: ${value}`);
-            }
-          }
-
-          // 授权卡回调（授权/拒绝/申请转发）：交给 PermissionBroker 在服务端校验（含管理员身份），不走通用管理员拦截
-          if (typeof value === "object" && (value?.action === "tool_approval" || value?.action === "forward_approval")) {
-            await this.approvalHandler?.({
-              value,
-              action: { messageId: action.messageId, chatId: action.chatId, operatorOpenId: action.operator.openId },
-            });
-            return;
-          }
-
-          // 判断是否为管理员
-          const operatorOpenId = action.operator.openId;
-          const isAdmin = this.adminOpenId ? operatorOpenId === this.adminOpenId : false;
-
-          if (!isAdmin) {
-            logger.warn(`[CardAction] 非管理员点击卡片: ${operatorOpenId}`);
-            // 更新卡片显示权限错误
-            await this.updateCard(action, {
-              schema: "2.0",
-              header: {
-                title: {
-                  tag: "plain_text",
-                  content: "模型切换",
-                },
-              },
-              body: {
-                elements: [
-                  {
-                    tag: "markdown",
-                    content: "❌ 仅管理员可执行此操作",
-                  },
-                ],
-              },
-            });
-            return;
-          }
-
-          if (typeof value === "object" && value?.action === "switch_model") {
-            logger.info(`[CardAction] 管理员切换模型: ${value.model_id}`);
-            try {
-              const modelName = typeof value.model_id === "string" ? value.model_id.trim() : "";
-              if (!modelName) throw new Error("模型 ID 不能为空");
-              this.persistModelName(modelName);
-              await this.updateCard(action, {
-                schema: "2.0",
-                header: {
-                  title: {
-                    tag: "plain_text",
-                    content: "模型切换结果",
-                  },
-                },
-                config: {
-                  update_multi: true,
-                },
-                body: {
-                  elements: [
-                    {
-                      tag: "markdown",
-                      content: `✅ 已切换到模型：${value.model_id}\n\n当前卡片已更新。`,
-                    },
-                  ],
-                },
-              });
-              logger.info(`[CardAction] 卡片更新成功`);
-            } catch (err) {
-              logger.error(`[CardAction] 更新卡片失败:`, err);
-            }
-          }
-        } catch (error) {
-          logger.error("[CardAction] 处理卡片回调失败:", error);
-        }
+      // 监听卡片回调事件：SDK 在 handler 执行完毕后才向飞书回 ACK（约 3 秒超时），
+      // 因此 handler 立即返回，实际处理放到后台——否则飞书会弹「目标回调服务超时未响应」
+      this.channel.on("cardAction", (action) => {
+        void this.handleCardAction(action).catch((error) => logger.error("[CardAction] 处理卡片回调失败:", error));
       });
     }
     this.connecting = this.channel.connect().finally(() => {
       this.connecting = undefined;
     });
     return this.connecting;
+  }
+
+  /** 卡片回调的实际处理逻辑（后台执行）。 */
+  private async handleCardAction(action: {
+    messageId: string;
+    chatId: string;
+    operator: { openId: string; userId?: string; name?: string };
+    action: { value: unknown; tag: string; name?: string; option?: string };
+    raw?: unknown;
+  }): Promise<void> {
+    try {
+      logger.info(`[CardAction] 收到卡片回调: ${action.operator.openId}`);
+
+      // 解析回调数据（value 可能是对象或 JSON 字符串）
+      let value: Record<string, unknown> | string = action.action.value as any;
+      if (typeof value === "string") {
+        try {
+          value = JSON.parse(value);
+        } catch {
+          logger.warn(`[CardAction] value 不是有效的 JSON: ${value}`);
+        }
+      }
+
+      // 授权卡回调（授权/拒绝/申请转发）：交给 PermissionBroker 在服务端校验（含管理员身份），不走通用管理员拦截
+      if (typeof value === "object" && (value?.action === "tool_approval" || value?.action === "forward_approval")) {
+        await this.approvalHandler?.({
+          value,
+          action: { messageId: action.messageId, chatId: action.chatId, operatorOpenId: action.operator.openId },
+        });
+        return;
+      }
+
+      // 判断是否为管理员
+      const operatorOpenId = action.operator.openId;
+      const isAdmin = this.adminOpenId ? operatorOpenId === this.adminOpenId : false;
+
+      if (!isAdmin) {
+        logger.warn(`[CardAction] 非管理员点击卡片: ${operatorOpenId}`);
+        // 更新卡片显示权限错误
+        await this.updateCard(action, {
+          schema: "2.0",
+          header: {
+            title: {
+              tag: "plain_text",
+              content: "模型切换",
+            },
+          },
+          body: {
+            elements: [
+              {
+                tag: "markdown",
+                content: "❌ 仅管理员可执行此操作",
+              },
+            ],
+          },
+        });
+        return;
+      }
+
+      if (typeof value === "object" && value?.action === "switch_model") {
+        logger.info(`[CardAction] 管理员切换模型: ${value.model_id}`);
+        try {
+          const modelName = typeof value.model_id === "string" ? value.model_id.trim() : "";
+          if (!modelName) throw new Error("模型 ID 不能为空");
+          this.persistModelName(modelName);
+          await this.updateCard(action, {
+            schema: "2.0",
+            header: {
+              title: {
+                tag: "plain_text",
+                content: "模型切换结果",
+              },
+            },
+            config: {
+              update_multi: true,
+            },
+            body: {
+              elements: [
+                {
+                  tag: "markdown",
+                  content: `✅ 已切换到模型：${value.model_id}\n\n当前卡片已更新。`,
+                },
+              ],
+            },
+          });
+          logger.info(`[CardAction] 卡片更新成功`);
+        } catch (err) {
+          logger.error(`[CardAction] 更新卡片失败:`, err);
+        }
+      }
+    } catch (error) {
+      logger.error("[CardAction] 处理卡片回调失败:", error);
+    }
   }
 
   /** 查询会话模式并缓存（话题群与普通群的会话隔离策略不同，模式极少变化）。 */

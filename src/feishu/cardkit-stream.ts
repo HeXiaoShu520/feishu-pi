@@ -11,6 +11,7 @@
 
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { randomUUID } from "node:crypto";
+import { logger } from "../utils/logger.ts";
 
 const CARD_SCHEMA = "2.0";
 const STREAM_ELEMENT_ID = "stream_md";
@@ -124,8 +125,8 @@ export class CardKitStream {
     await this.enqueueWrite(() => this.pushUpdate(this.accumulator));
   }
 
-  /** 关闭流式模式；statsText 在正文渲染完成后写入小字，避免小字先于正文出现 */
-  async finalize(fullText: string, statsText?: string): Promise<void> {
+  /** 关闭流式模式；statsText 在正文渲染完成后写入小字；renderWaitMsOverride 可覆盖渲染等待（分卡收尾时用短等待） */
+  async finalize(fullText: string, statsText?: string, renderWaitMsOverride?: number): Promise<void> {
     if (this.disposed || !this.cardId) return;
 
     try {
@@ -134,7 +135,7 @@ export class CardKitStream {
       await this.enqueueWrite(() => this.pushUpdate(fullText));
 
       // 1. 等待客户端渲染完成（参考 Python 版本：min(3s, 文本长度 * 0.025)）
-      const renderWaitMs = Math.min(3000, fullText.length * 25);
+      const renderWaitMs = renderWaitMsOverride ?? Math.min(3000, fullText.length * 25);
       await new Promise(resolve => setTimeout(resolve, renderWaitMs));
 
       // 2. 正文渲染完成后写入统计小字（必须在关闭流式前，关闭后元素不能再更新）
@@ -148,6 +149,11 @@ export class CardKitStream {
       this.onError?.(err);
       throw err;
     }
+  }
+
+  /** 当前卡片累积的正文内容（供分卡时切分）。 */
+  getContent(): string {
+    return this.accumulator;
   }
 
   /** 流式更新元素内容（全量文本） */
@@ -164,22 +170,38 @@ export class CardKitStream {
 
     this.inFlight = true;
     try {
-      await this.client.request({
-        method: "PUT",
-        url: `/open-apis/cardkit/v1/cards/${this.cardId}/elements/${STREAM_ELEMENT_ID}/content`,
-        data: {
-          content: fullText,
-          sequence: ++this.sequence,
-          uuid: this.uuid(),
-        },
-      });
+      await this.putContent(fullText);
       this.lastPushAt = Date.now();
     } catch (err) {
+      // 官方约 10 分钟会关闭卡片流式模式，PUT 会失败：报错误并重新开启流式后重试一次
       this.onError?.(err);
-      // 不抛出，继续累积
+      logger.error(`[CardKit] 流式更新失败（卡片流式模式可能已被官方关闭），尝试重新开启: ${err instanceof Error ? err.message : err}`);
+      try {
+        await this.patchSettings(true);
+        await this.putContent(fullText);
+        logger.warn(`[CardKit] 已重新开启流式模式，恢复更新成功`);
+        this.lastPushAt = Date.now();
+      } catch (retryErr) {
+        this.onError?.(retryErr);
+        logger.error(`[CardKit] 重新开启流式后仍更新失败，内容继续累积: ${retryErr instanceof Error ? retryErr.message : retryErr}`);
+        // 不抛出，继续累积
+      }
     } finally {
       this.inFlight = false;
     }
+  }
+
+  /** PUT 正文元素内容。 */
+  private putContent(fullText: string): Promise<void> {
+    return this.client.request({
+      method: "PUT",
+      url: `/open-apis/cardkit/v1/cards/${this.cardId}/elements/${STREAM_ELEMENT_ID}/content`,
+      data: {
+        content: fullText,
+        sequence: ++this.sequence,
+        uuid: this.uuid(),
+      },
+    }).then(() => undefined);
   }
 
   /** 更新独立的统计小字元素。 */

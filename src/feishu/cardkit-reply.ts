@@ -1,11 +1,16 @@
 /**
  * 基于 CardKit 流式卡片的回复实现
  * 失败时自动降级为普通文本消息
+ *
+ * 分卡策略：正文累积超过 maxCardChars 后，在完整块边界（段落空行且不在代码围栏内）
+ * 切开——旧卡流式收尾，剩余内容开一张新卡继续，保证任何一块都不会从中间被隔断。
+ * 精简模式下工具调用是临时显示（会被覆盖），正文增长慢，几乎不会触发分卡。
  */
 
 import type { Client } from "@larksuiteoapi/node-sdk";
 import type { FeishuReply } from "./types.ts";
 import { CardKitStream } from "./cardkit-stream.ts";
+import { logger } from "../utils/logger.ts";
 
 export interface CardKitReplyOptions {
   client: Client;
@@ -13,11 +18,28 @@ export interface CardKitReplyOptions {
   messageId?: string;
   threadId?: string;
   onError?: (err: unknown) => void;
+  /** 单张卡片的正文字符上限，超过后分新卡（默认 10000，保证可读性） */
+  maxCardChars?: number;
+}
+
+/**
+ * 在文本中寻找最后一个安全的块边界（"\n\n"），要求该位置之前代码围栏（```）成对出现，
+ * 即切分点不在代码块/行内代码中间。找不到返回 -1。
+ */
+export function findBlockBoundary(text: string): number {
+  let index = text.lastIndexOf("\n\n");
+  while (index > 0) {
+    const fences = (text.slice(0, index).match(/```/g) || []).length;
+    if (fences % 2 === 0) return index + 2; // 围栏成对，边界在块外
+    index = text.lastIndexOf("\n\n", index - 1);
+  }
+  return -1;
 }
 
 /**
  * CardKit 流式回复包装器
  * - 启用时使用 CardKit 流式卡片
+ * - 正文过长自动分卡（完整块边界切分）
  * - 失败时自动降级为普通文本消息
  */
 export class CardKitReply implements FeishuReply {
@@ -26,11 +48,16 @@ export class CardKitReply implements FeishuReply {
   private readonly messageId?: string;
   private readonly threadId?: string;
   private readonly onError?: (err: unknown) => void;
+  private readonly maxCardChars: number;
 
   private stream?: CardKitStream;
   private cardId?: string;
   private closed = false;
   private initialization?: Promise<void>;
+  /** 当前卡片内容在全文中的起始偏移（分卡时推进） */
+  private offset = 0;
+  /** 分卡串行化，避免并发旋转 */
+  private rotating?: Promise<void>;
 
   constructor(options: CardKitReplyOptions) {
     this.client = options.client;
@@ -38,6 +65,7 @@ export class CardKitReply implements FeishuReply {
     this.messageId = options.messageId;
     this.threadId = options.threadId;
     this.onError = options.onError;
+    this.maxCardChars = options.maxCardChars ?? 10000;
   }
 
   async update(text: string): Promise<void> {
@@ -52,6 +80,7 @@ export class CardKitReply implements FeishuReply {
 
       // 后续更新：推送增量
       await this.stream.patch(text);
+      await this.maybeRotate();
     } catch (err) {
       this.onError?.(err);
       throw err;
@@ -98,12 +127,14 @@ export class CardKitReply implements FeishuReply {
     this.closed = true;
 
     if (!this.stream) {
-      // 没有初始化过，创建并立即关闭
+      // 没有初始化过，创建后立即走关闭流程
       await this.initializeCardKit(text);
     }
 
     try {
-      await this.stream!.finalize(text, statsText);
+      // 最后一张卡只关闭自己承载的那段内容（前面几张已在分卡时收尾）
+      const stream = this.stream!;
+      await stream.finalize(text.slice(this.offset), statsText);
     } catch (err) {
       this.onError?.(err);
       throw err;
@@ -124,27 +155,7 @@ export class CardKitReply implements FeishuReply {
       this.cardId = await this.stream.create(initialText);
 
       // 发送引用该卡片的消息
-      if (this.messageId) {
-        // 使用 reply 方法回复消息
-        await this.client.im.message.reply({
-          path: { message_id: this.messageId },
-          data: {
-            msg_type: "interactive",
-            content: JSON.stringify({ type: "card", data: { card_id: this.cardId } }),
-            reply_in_thread: !!this.threadId,
-          },
-        });
-      } else {
-        // 没有 messageId 时使用 create 发送普通消息
-        await this.client.im.message.create({
-          params: { receive_id_type: "chat_id" },
-          data: {
-            receive_id: this.chatId,
-            msg_type: "interactive",
-            content: JSON.stringify({ type: "card", data: { card_id: this.cardId } }),
-          },
-        });
-      }
+      await this.sendCardReference(this.cardId, this.messageId);
     })();
 
     try {
@@ -152,6 +163,67 @@ export class CardKitReply implements FeishuReply {
     } catch (error) {
       this.initialization = undefined;
       throw error;
+    }
+  }
+
+  /** 发送引用 card_id 的卡片消息（回复原消息或直接发送）。 */
+  private async sendCardReference(cardId: string, replyToMessageId?: string): Promise<void> {
+    if (replyToMessageId) {
+      await this.client.im.message.reply({
+        path: { message_id: replyToMessageId },
+        data: {
+          msg_type: "interactive",
+          content: JSON.stringify({ type: "card", data: { card_id: cardId } }),
+          reply_in_thread: !!this.threadId,
+        },
+      });
+    } else {
+      await this.client.im.message.create({
+        params: { receive_id_type: "chat_id" },
+        data: {
+          receive_id: this.chatId,
+          msg_type: "interactive",
+          content: JSON.stringify({ type: "card", data: { card_id: cardId } }),
+        },
+      });
+    }
+  }
+
+  /** 正文超过单卡上限时，在完整块边界分出新卡。 */
+  private async maybeRotate(): Promise<void> {
+    if (!this.stream || this.rotating) return;
+    const content = this.stream.getContent();
+    if (content.length < this.maxCardChars) return;
+
+    const split = findBlockBoundary(content);
+    if (split <= 0) {
+      // 找不到安全的块边界（如整段巨长文本），继续累积，等下一个边界出现再切
+      logger.warn(`[CardKit] 正文已超 ${this.maxCardChars} 字符但暂无安全块边界，继续等待`);
+      return;
+    }
+
+    this.rotating = (async () => {
+      const head = content.slice(0, split);
+      const tail = content.slice(split);
+      const oldStream = this.stream!;
+
+      // 旧卡流式收尾（短渲染等待，尽快开始新卡）
+      await oldStream.finalize(head, undefined, 500);
+
+      // 新卡承载剩余内容
+      const newStream = new CardKitStream({ client: this.client, onError: this.onError });
+      const newCardId = await newStream.create(tail);
+      this.stream = newStream;
+      this.cardId = newCardId;
+      this.offset += split;
+      await this.sendCardReference(newCardId, this.messageId);
+      logger.info(`[CardKit] 正文超限已分卡：前卡 ${head.length} 字符，新卡从第 ${this.offset} 字符继续`);
+    })();
+
+    try {
+      await this.rotating;
+    } finally {
+      this.rotating = undefined;
     }
   }
 }
