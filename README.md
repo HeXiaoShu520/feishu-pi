@@ -14,6 +14,7 @@ feishu-pi 是一个基于 [Pi](https://github.com/earendil-works/pi) 的飞书 A
 - ✅ **自动重连** - WebSocket 断线自动恢复
 - ✅ **飞书用户上下文** - 自动查询并缓存用户信息（中文名、英文名、部门 ID），供所有技能和 Function Calling 直接使用
 - ✅ **三级权限控制** - 管理员/团队/普通用户三级权限，Skills 和工具按角色动态过滤
+- ✅ **工具调用 Guard** - 指令白名单（正则）+ 大模型审核 + 管理员授权卡（单次确认，支持转发到管理员私聊），高危调用默认弹卡
 - ✅ **Skills 支持** - 基于 Pi-agent 的技能系统，支持权限配置
 - ✅ **Function Calling** - 自定义工具注册，支持权限控制
 - ✅ **受限文件访问** - 非管理员只能读取技能文件，无法访问敏感数据
@@ -534,6 +535,57 @@ function getUserRole(userId: string): "default" | "team" | "admin" {
 2. 过滤可用的 skills 和 custom tools
 3. 选择对应的内置工具（管理员全部，其他受限 read）
 4. 在日志中显示加载的资源
+
+## 工具调用 Guard：白名单 + 大模型审核 + 授权卡
+
+在角色过滤之上，每次工具实际执行前还会经过一层动态审核（`beforeToolCall` 钩子，`src/guard/`）。管理员自己的会话不审核；普通用户的工具调用按以下顺序裁决：
+
+```
+工具调用
+  ↓
+① 指令白名单（.agent/whitelist.json，正则命中即放行）
+  ↓ 未命中
+② 规则层：只读工具放行；write/edit 写入可写目录（.agent/、data/）放行，写其他路径 → 弹卡
+  ↓ 其余
+③ 大模型 Guard（OpenAI 兼容接口）判断 allow / ask
+  ↓ ask
+④ 发授权卡到发起者所在会话，等管理员单次确认
+     ↓
+  允许一次 → 执行；拒绝 / 超时 → 拦截并返回原因
+```
+
+**安全设计：**
+
+- **白名单**：`.agent/whitelist.json` 为正则字符串数组，匹配「工具名 + 参数」；文件不存在时回退 `FEISHU_CMD_WHITELIST` 环境变量（正则，分号分隔）。
+- **Guard 默认拒绝**：Guard 模型未配置、超时、接口异常、返回无法解析时，一律按 ask 处理。
+- **授权卡服务端校验**：每次授权有唯一 `approval_id` + 一次性 `token`；回调时在服务端校验 token 一致、卡片来源（原卡或转发卡）、点击者必须是管理员、decision 合法、未处理过。非管理员点击、伪造 token、卡片被转发到其他会话再点击均无效。授权是单次的，不缓存。
+- **参数脱敏**：授权卡中 `token`、`password`、`api_key`、`secret`、`cookie` 等字段脱敏为 `***`，命令最多展示 1200 字符。
+- **转发到管理员私聊**：授权卡上有「📨 申请转发给管理员」按钮，点击后授权卡私聊发给管理员，管理员可直接在私聊中决策；决策后原卡和转发卡都更新为结果卡（✅ 已授权一次 / ❌ 已拒绝 / ⏱ 授权已超时）。
+
+**配置：**
+
+`.agent/whitelist.json`（白名单正则数组）：
+
+```json
+[
+  "^read\\s",
+  "^git (status|diff|log)\\b"
+]
+```
+
+`.env`（Guard 与授权卡）：
+
+```env
+# Guard 模型（OpenAI 兼容接口；不配置时回退主模型配置）
+FEISHU_GUARD_ENABLED=true
+FEISHU_GUARD_BASE_URL=
+FEISHU_GUARD_MODEL=
+FEISHU_GUARD_API_KEY=
+FEISHU_GUARD_TIMEOUT_MS=15000
+
+# 授权卡等待管理员点击的超时（毫秒，超时视为拒绝）
+FEISHU_APPROVAL_TIMEOUT_MS=300000
+```
 
 
 
