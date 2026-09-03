@@ -13,7 +13,7 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "./utils/logger.ts";
-import { CommandWhitelist, loadWhitelistPatterns } from "./guard/whitelist.ts";
+import { CommandWhitelist, loadWhitelistConfig } from "./guard/whitelist.ts";
 import { SafetyJudge } from "./guard/judge.ts";
 import { PermissionBroker } from "./guard/broker.ts";
 import { ToolGuard } from "./guard/tool-guard.ts";
@@ -97,21 +97,22 @@ export async function main(): Promise<void> {
   });
 
   // 工具调用 Guard：白名单正则 + 大模型审核 + 管理员授权卡
-  // 白名单优先从 .agent/whitelist.json 读取（字符串数组），文件不存在时回退环境变量
+  // 白名单优先从 .agent/whitelist.json 读取，文件不存在时回退环境变量
   const whitelistFile = join(config.cwd, ".agent", "whitelist.json");
-  const whitelistPatterns = loadWhitelistPatterns(whitelistFile);
-  if (whitelistPatterns.length > 0) {
-    logger.info(`[Main] 已加载白名单 ${whitelistPatterns.length} 条（${whitelistFile}）`);
+  const whitelistConfig = loadWhitelistConfig(whitelistFile);
+  if (whitelistConfig.patterns.length > 0) {
+    logger.info(`[Main] 已加载白名单 ${whitelistConfig.patterns.length} 条（${whitelistFile}）`);
   } else if (config.cmdWhitelist.length > 0) {
     logger.info(`[Main] 白名单文件不存在，使用 FEISHU_CMD_WHITELIST 环境变量（${config.cmdWhitelist.length} 条）`);
   }
-  const whitelist = new CommandWhitelist(whitelistPatterns.length > 0 ? whitelistPatterns : config.cmdWhitelist);
+  const whitelist = new CommandWhitelist(whitelistConfig.patterns.length > 0 ? whitelistConfig.patterns : config.cmdWhitelist);
   const judge = new SafetyJudge({
     cwd: config.cwd,
     baseUrl: config.guardBaseUrl,
     model: config.guardModel,
     apiKey: config.guardApiKey,
     timeoutMs: config.guardTimeoutMs,
+    writableDirs: whitelistConfig.writableDirs,
   });
   // bridge 在下方创建，先用闭包引用（授权卡撤回需查询该会话的详细模式开关）
   let bridgeRef: FeishuAgentBridge | undefined;

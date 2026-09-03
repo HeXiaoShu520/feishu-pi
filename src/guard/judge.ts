@@ -15,12 +15,14 @@ export interface SafetyJudgeOptions {
   model?: string;
   apiKey?: string;
   timeoutMs: number;
+  /** 可写目录（相对 cwd），来自白名单配置的 writable_dirs；未配置时用内置基线 */
+  writableDirs?: string[];
 }
 
-/** 无需大模型即可放行的只读工具。 */
+/** 无需大模型即可放行的只读工具（内置安全基线，不随配置变化）。 */
 const READ_ONLY_TOOLS = new Set(["read", "grep", "glob", "ls", "find", "restricted_read", "todo_read"]);
 
-/** 写入这些目录（相对 cwd）视为低风险，直接放行。 */
+/** 内置可写目录基线；白名单配置 writable_dirs 时整体覆盖此项。 */
 const WRITABLE_DIRS = [".agent", "data"];
 
 const SYSTEM_PROMPT = `你是一个工具调用安全审核器。你会收到一次 AI Agent 即将执行的工具调用（工具名和参数）。
@@ -52,7 +54,7 @@ export class SafetyJudge {
     // 规则层 2：写工具写入可写目录时放行，写其他路径一律 ask
     if (toolName === "write" || toolName === "edit") {
       const target = extractPath(args);
-      if (target && isUnderWritableDir(target, this.options.cwd)) {
+      if (target && isUnderWritableDir(target, this.options.cwd, this.options.writableDirs ?? WRITABLE_DIRS)) {
         return { decision: "allow", reason: "写入可写目录" };
       }
       return { decision: "ask", reason: "写入可写目录之外，需管理员确认" };
@@ -119,9 +121,9 @@ function extractPath(args: unknown): string | undefined {
 }
 
 /** 判断目标路径是否落在 cwd 下的可写目录内（拒绝 ../ 逃逸）。 */
-function isUnderWritableDir(target: string, cwd: string): boolean {
+function isUnderWritableDir(target: string, cwd: string, writableDirs: string[]): boolean {
   const abs = resolve(cwd, target);
-  return WRITABLE_DIRS.some((dir) => {
+  return writableDirs.some((dir) => {
     const base = resolve(cwd, dir) + sep;
     return (abs + sep).startsWith(base);
   });

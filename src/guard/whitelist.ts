@@ -1,22 +1,37 @@
 import { readFileSync, existsSync } from "node:fs";
 import { logger } from "../utils/logger.ts";
 
+export interface WhitelistConfig {
+  /** 白名单正则（匹配「工具名 + 参数」，命中即放行） */
+  patterns: string[];
+  /** 额外的可写目录（相对 cwd），写操作落到这些目录时放行；缺省用内置基线 */
+  writableDirs?: string[];
+}
+
 /**
- * 从 JSON 文件加载白名单正则（字符串数组，如 ["^read\\s", "^git (status|diff|log)"]）。
- * 文件不存在或格式非法时返回空数组并记录警告。
+ * 从 JSON 文件加载白名单配置。支持两种格式：
+ *   字符串数组（仅正则）: ["^read\\s", "^git (status|diff|log)"]
+ *   对象: { "patterns": [...], "writable_dirs": [".agent", "data"] }
+ * 文件不存在或格式非法时返回空配置并记录警告。
  */
-export function loadWhitelistPatterns(path: string): string[] {
-  if (!existsSync(path)) return [];
+export function loadWhitelistConfig(path: string): WhitelistConfig {
+  if (!existsSync(path)) return { patterns: [] };
   try {
     const parsed = JSON.parse(readFileSync(path, "utf-8"));
-    if (!Array.isArray(parsed)) {
-      logger.warn(`[Whitelist] ${path} 格式错误（应为字符串数组），已忽略`);
-      return [];
+    if (Array.isArray(parsed)) {
+      return { patterns: parsed.filter((item): item is string => typeof item === "string") };
     }
-    return parsed.filter((item): item is string => typeof item === "string");
+    if (typeof parsed === "object" && parsed !== null) {
+      const record = parsed as Record<string, unknown>;
+      const patterns = Array.isArray(record.patterns) ? record.patterns.filter((item): item is string => typeof item === "string") : [];
+      const writableDirs = Array.isArray(record.writable_dirs) ? record.writable_dirs.filter((item): item is string => typeof item === "string") : undefined;
+      return { patterns, writableDirs };
+    }
+    logger.warn(`[Whitelist] ${path} 格式错误（应为字符串数组或对象），已忽略`);
+    return { patterns: [] };
   } catch (error) {
     logger.warn(`[Whitelist] 读取 ${path} 失败: ${error instanceof Error ? error.message : error}`);
-    return [];
+    return { patterns: [] };
   }
 }
 
