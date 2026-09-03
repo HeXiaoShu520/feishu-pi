@@ -1,10 +1,13 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+/** 消息处理状态：处理中 / 已完成 / 失败 */
 type MessageStatus = "processing" | "completed" | "failed";
 
+/** 一条消息的处理状态记录 */
 interface MessageRecord {
   status: MessageStatus;
+  /** 最近更新时间（epoch 毫秒），用于过期与卡住判断 */
   updatedAt: number;
 }
 

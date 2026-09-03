@@ -102,10 +102,10 @@ export async function main(): Promise<void> {
   // 白名单优先从 .agent/settings.json 读取（Claude Code settings.json 风格），旧 whitelist.json 兼容读取，均不存在时回退环境变量
   const settingsFile = join(config.cwd, ".agent", "settings.json");
   const legacyWhitelistFile = join(config.cwd, ".agent", "whitelist.json");
-  const whitelistConfig = loadWhitelistConfig(settingsFile).patterns.length > 0
-    ? loadWhitelistConfig(settingsFile)
-    : loadWhitelistConfig(legacyWhitelistFile);
-  const loadedFrom = existsSync(settingsFile) ? settingsFile : legacyWhitelistFile;
+  // 优先 .agent/settings.json（Claude Code 风格），无内容时回退旧 whitelist.json
+  const fromSettings = loadWhitelistConfig(settingsFile);
+  const whitelistConfig = fromSettings.patterns.length > 0 ? fromSettings : loadWhitelistConfig(legacyWhitelistFile);
+  const loadedFrom = fromSettings.patterns.length > 0 ? settingsFile : legacyWhitelistFile;
   if (whitelistConfig.patterns.length > 0) {
     logger.info(`[Main] 已加载白名单 ${whitelistConfig.patterns.length} 条（${loadedFrom}）`);
   } else if (config.cmdWhitelist.length > 0) {

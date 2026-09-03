@@ -124,23 +124,25 @@ export class DataCleaner {
     }
   }
 
-  /** 清理过期的消息状态 */
-  private async cleanupMessages(cutoffTime: number, stats: CleanupStats): Promise<void> {
+  /**
+   * 读取 messages.json，按谓词过滤条目并写回（dryRun 时只统计不写）。
+   * cleanupMessages 与 cleanupStuckMessages 共用此框架，仅过滤谓词不同。
+   * 返回被清理的条数。
+   */
+  private async filterMessagesFile(
+    predicate: (data: { status: string; updatedAt: number }) => boolean,
+    label: string,
+  ): Promise<number> {
     const messagesFile = join(this.sessionDir, "messages.json");
 
     try {
       const content = await readFile(messagesFile, "utf-8");
-      const messages = JSON.parse(content) as Record<
-        string,
-        { status: string; updatedAt: number }
-      >;
+      const messages = JSON.parse(content) as Record<string, { status: string; updatedAt: number }>;
 
       const newMessages: typeof messages = {};
       let cleaned = 0;
-
       for (const [messageId, data] of Object.entries(messages)) {
-        stats.messagesChecked++;
-        if (data.updatedAt < cutoffTime) {
+        if (predicate(data)) {
           cleaned++;
         } else {
           newMessages[messageId] = data;
@@ -150,50 +152,32 @@ export class DataCleaner {
       if (cleaned > 0 && !this.dryRun) {
         await writeFile(messagesFile, JSON.stringify(newMessages, null, 2), "utf-8");
       }
-
-      stats.messagesCleaned = cleaned;
-    } catch (err) {
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        logger.error("[DataCleaner] 清理消息状态失败:", err);
-      }
-    }
-  }
-
-  /** 清理卡住的消息（processing 状态超过 1 小时） */
-  async cleanupStuckMessages(timeoutMs = 60 * 60 * 1000): Promise<number> {
-    const messagesFile = join(this.sessionDir, "messages.json");
-    const now = Date.now();
-
-    try {
-      const content = await readFile(messagesFile, "utf-8");
-      const messages = JSON.parse(content) as Record<
-        string,
-        { status: string; updatedAt: number }
-      >;
-
-      const newMessages: typeof messages = {};
-      let cleaned = 0;
-
-      for (const [messageId, data] of Object.entries(messages)) {
-        // 清理卡在 processing 状态超过 timeoutMs 的消息
-        if (data.status === "processing" && now - data.updatedAt > timeoutMs) {
-          logger.warn(`[DataCleaner] 清理卡住的消息: ${messageId}`);
-          cleaned++;
-        } else {
-          newMessages[messageId] = data;
-        }
-      }
-
-      if (cleaned > 0 && !this.dryRun) {
-        await writeFile(messagesFile, JSON.stringify(newMessages, null, 2), "utf-8");
-      }
-
       return cleaned;
     } catch (err) {
       if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        logger.error("[DataCleaner] 清理卡住消息失败:", err);
+        logger.error(`[DataCleaner] ${label}失败:`, err);
       }
       return 0;
     }
+  }
+
+  /** 清理过期的消息状态 */
+  private async cleanupMessages(cutoffTime: number, stats: CleanupStats): Promise<void> {
+    // 谓词：更新时间早于截止时间即过期
+    stats.messagesCleaned = await this.filterMessagesFile((data) => {
+      stats.messagesChecked++;
+      return data.updatedAt < cutoffTime;
+    }, "清理消息状态");
+  }
+
+  /** 清理卡住的消息（processing 状态超过 timeoutMs，默认 1 小时） */
+  async cleanupStuckMessages(timeoutMs = 60 * 60 * 1000): Promise<number> {
+    const now = Date.now();
+    // 谓词：卡在 processing 状态超过 timeoutMs
+    return this.filterMessagesFile((data) => {
+      const stuck = data.status === "processing" && now - data.updatedAt > timeoutMs;
+      if (stuck) logger.warn(`[DataCleaner] 清理卡住的消息`);
+      return stuck;
+    }, "清理卡住消息");
   }
 }

@@ -31,7 +31,3 @@ export function sessionAlias(sessionId?: string): string {
   return alias;
 }
 
-/** 根据短别名反查完整会话 ID（供后续 /resume 等指令使用）。 */
-export function resolveAlias(alias: string): string | undefined {
-  return aliasToSessionId.get(alias);
-}

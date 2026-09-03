@@ -64,13 +64,4 @@ export class Spinner {
     return `${this.prefix} ${frame}`;
   }
 
-  /** 获取样式 key */
-  getKey(): string {
-    return this.style.key;
-  }
-
-  /** 获取前缀 */
-  getPrefix(): string {
-    return this.prefix;
-  }
 }

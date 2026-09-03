@@ -8,12 +8,6 @@ import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../utils/logger.ts";
 
-export interface ImageAttachment {
-  imageKey: string;
-  /** 下载后的本地路径（可选） */
-  localPath?: string;
-}
-
 /** Pi 使用的图片格式 */
 export interface ProcessedImage {
   data: Uint8Array;

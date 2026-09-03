@@ -1,13 +1,11 @@
 import type { CommandWhitelist } from "./whitelist.ts";
 import type { SafetyJudge } from "./judge.ts";
 import type { PermissionBroker } from "./broker.ts";
-import type { UserRole } from "../runtime/types.ts";
 import { logger } from "../utils/logger.ts";
 
 export interface ToolGuardCheckParams {
   toolName: string;
   args: unknown;
-  userRole: UserRole;
   chatId?: string;
 }
 

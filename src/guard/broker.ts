@@ -117,7 +117,7 @@ export class PermissionBroker {
 
     // 服务端强制校验：token 一致，且消息必须是已登记的原卡或转发卡；决策者必须是管理员
     const isOriginal = messageId === pending.messageId && chatId === pending.chatId;
-    const isForwarded = messageId !== undefined && pending.forwarded?.messageId === messageId;
+    const isForwarded = pending.forwarded?.messageId === messageId;
     if (pending.token !== token || (!isOriginal && !isForwarded)) {
       return { accepted: false, detail: "token 或卡片来源不匹配" };
     }

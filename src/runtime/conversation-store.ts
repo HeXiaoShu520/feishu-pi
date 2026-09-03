@@ -1,8 +1,11 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
+/** 一条会话映射记录 */
 interface ConversationRecord {
+  /** 该会话对应的 Pi Session JSONL 文件路径 */
   sessionFile: string;
+  /** 最近一次写入时间（ISO 字符串） */
   updatedAt: string;
 }
 

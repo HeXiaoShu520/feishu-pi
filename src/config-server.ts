@@ -6,7 +6,7 @@ import express from "express";
 import bodyParser from "body-parser";
 import { readFileSync, writeFileSync } from "fs";
 import { join } from "path";
-import { logger } from "./utils/logger.js";
+import { logger } from "./utils/logger.ts";
 
 const app = express();
 const PORT = 3456;
@@ -37,10 +37,18 @@ function parseEnvFile(content: string): Record<string, string> {
   return result;
 }
 
+/** 配置表单管理的 env 键；保存时不在此列表中的现有键会被原样保留 */
+const MANAGED_KEYS = new Set([
+  "FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_ADMIN", "FEISHU_RANDOM_EMOJIS",
+  "FEISHU_PI_MODEL_PROVIDER", "FEISHU_PI_MODEL_NAME", "FEISHU_PI_MODEL_BASE_URL",
+  "FEISHU_PI_MODEL_API_KEY", "FEISHU_PI_SYSTEM_PROMPT",
+]);
+
 /**
- * 将配置对象转换为 .env 格式
+ * 将配置对象转换为 .env 格式。
+ * existing 中不属于 MANAGED_KEYS 的键（如 FEISHU_GUARD_*、FEISHU_TEAM_MEMBERS 等）原样追加，避免保存表单时丢失。
  */
-function stringifyEnv(config: Record<string, string>): string {
+function stringifyEnv(config: Record<string, string>, existing: Record<string, string> = {}): string {
   const lines: string[] = [];
 
   // 飞书配置
@@ -370,20 +378,20 @@ app.get("/api/config", (req, res) => {
   }
 });
 
-// 路由：保存配置
+// 路由：保存配置（保留 .env 中本表单不管理的键）
 app.post("/api/config", (req, res) => {
   try {
     const config = req.body;
-    const envContent = stringifyEnv(config);
-    writeFileSync(ENV_FILE, envContent, "utf-8");
+    const existing = readFileSync(ENV_FILE, "utf-8");
+    writeFileSync(ENV_FILE, stringifyEnv(config, parseEnvFile(existing)), "utf-8");
     res.send("OK");
   } catch (err) {
     res.status(500).send("保存配置失败：" + (err as Error).message);
   }
 });
 
-// 启动服务器
-app.listen(PORT, () => {
+// 启动服务器（仅监听本机回环：接口明文返回 App Secret，不能暴露到局域网）
+app.listen(PORT, "127.0.0.1", () => {
   logger.log(`配置界面已启动: http://localhost:${PORT}`);
   logger.log(`在浏览器中打开上述地址进行配置`);
 });

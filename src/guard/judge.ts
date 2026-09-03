@@ -130,7 +130,7 @@ export class SafetyJudge {
   }
 }
 
-/** 从写工具参数中提取目标路径（兼容 path/file_path/file_path 字段）。 */
+/** 从写工具参数中提取目标路径（兼容 path / file_path / filePath 字段）。 */
 function extractPath(args: unknown): string | undefined {
   if (typeof args !== "object" || args === null) return undefined;
   const record = args as Record<string, unknown>;

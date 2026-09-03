@@ -21,21 +21,12 @@ interface CardKitStreamOptions {
   client: Client;
   /** 最小推送间隔（毫秒），默认 800ms */
   minPushIntervalMs?: number;
-  /** 客户端打字机渲染速度（毫秒），默认 120ms */
+  /** 客户端打字机渲染速度（毫秒），默认 30ms */
   printFrequencyMs?: number;
-  /** 打字机步进（字符数），默认 3 */
+  /** 每步推进的字符数，默认 3 */
   printStep?: number;
+  /** 错误回调（用于降级日志） */
   onError?: (err: unknown) => void;
-}
-
-export interface CardKitHandle {
-  cardId: string;
-  /** 累积文本并推送更新 */
-  patch(delta: string): Promise<void>;
-  /** 关闭流式，发送最终内容 */
-  finalize(fullText: string): Promise<void>;
-  /** 降级为普通文本（CardKit 失败时） */
-  fallbackText?: (text: string) => Promise<void>;
 }
 
 export class CardKitStream {

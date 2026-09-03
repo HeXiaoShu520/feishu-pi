@@ -55,6 +55,7 @@ export async function resolveAdminOpenId(
   if (identifier.includes("@")) {
     try {
       const res = await client.contact.user.batchGetId({
+        params: { user_id_type: "open_id" },
         data: {
           emails: [identifier],
         },

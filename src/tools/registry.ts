@@ -3,6 +3,7 @@ import type { FeishuPiTool } from "../runtime/types.ts";
 import { readdirSync, existsSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { logger } from "../utils/logger.ts";
 
 export const DEFAULT_BUILTIN_TOOLS = ["read", "write", "edit", "bash"] as const;
 
@@ -28,18 +29,11 @@ async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
         tools.push(tool as ToolDefinition);
       }
     } catch (error) {
-      console.warn(`[Registry] 加载工具失败: ${file}`, error);
+      logger.warn(`[Registry] 加载工具失败: ${file} ${error instanceof Error ? error.message : error}`);
     }
   }
 
   return tools;
-}
-
-/**
- * 创建工具注册表（同步版本，用于兼容现有代码）
- */
-export function createToolRegistry(tools: FeishuPiTool[] = []): ToolDefinition[] {
-  return [...(tools as ToolDefinition[])];
 }
 
 /**

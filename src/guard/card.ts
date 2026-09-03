@@ -4,10 +4,15 @@ const SENSITIVE_KEYS = ["token", "password", "api_key", "apikey", "secret", "coo
 /** 命令展示上限（字符）。 */
 const COMMAND_MAX_LENGTH = 1200;
 
+/** 授权卡参数 */
 export interface PermissionCardParams {
+  /** 待审核的工具名 */
   toolName: string;
+  /** 工具调用参数（展示前脱敏） */
   args: unknown;
+  /** 一次授权请求的唯一 ID */
   approvalId: string;
+  /** 一次性随机 token，回调时服务端比对 */
   token: string;
 }
 

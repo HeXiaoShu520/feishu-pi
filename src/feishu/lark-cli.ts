@@ -13,8 +13,6 @@ export interface LarkUserProfile {
   updatedAt: string;
 }
 
-export type LarkCliStatus = "ready" | "missing" | "not_authenticated";
-
 const CACHE_EXPIRY_DAYS = 3;
 
 /** 所有用户资料的缓存结构（以 openId 为键） */
@@ -210,11 +208,6 @@ export class LarkCli {
     }
   }
 
-  /** 检查 CLI 是否存在以及是否有可用身份（废弃，保留兼容性） */
-  async status(): Promise<LarkCliStatus> {
-    return "ready";
-  }
-
   /** 加载缓存文件 */
   private async loadCache(): Promise<void> {
     if (this.cacheLoaded) return;
@@ -233,11 +226,6 @@ export class LarkCli {
   private async saveCache(): Promise<void> {
     await mkdir(join(this.cacheFilePath, ".."), { recursive: true });
     await writeFile(this.cacheFilePath, `${JSON.stringify(this.cache, null, 2)}\n`, "utf8");
-  }
-
-  /** 返回面向用户的 CLI 状态提示（废弃，保留兼容性） */
-  statusMessage(status: LarkCliStatus): string {
-    return "飞书 SDK 已就绪。";
   }
 
   /** 创建降级的用户资料（最小信息） */

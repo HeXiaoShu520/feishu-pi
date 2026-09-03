@@ -1,7 +1,6 @@
 export interface FeishuPiAppConfig {
   feishuAppId: string;
   feishuAppSecret: string;
-  feishuBotOpenId?: string;
   feishuAdmin: string;
   feishuTeamMembers: string[];
   cwd: string;
@@ -33,7 +32,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
   return {
     feishuAppId: required("FEISHU_APP_ID"),
     feishuAppSecret: required("FEISHU_APP_SECRET"),
-    feishuBotOpenId: env.FEISHU_BOT_OPEN_ID,
     feishuAdmin: env.FEISHU_ADMIN || "", // 可选：支持中文名、英文名、open_id、邮箱
     feishuTeamMembers: env.FEISHU_TEAM_MEMBERS ? env.FEISHU_TEAM_MEMBERS.split(",").map((m) => m.trim()) : [],
     cwd: env.FEISHU_PI_CWD ?? process.cwd(),

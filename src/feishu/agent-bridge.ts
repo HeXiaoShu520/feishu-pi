@@ -1,6 +1,6 @@
 import { ConversationManager } from "../runtime/conversation-manager.ts";
+import type { FeishuPiSession } from "../runtime/types.ts";
 import type { FeishuInboundMessage, FeishuEventHandler, FeishuTransport } from "./types.ts";
-import { ThrottledReply } from "./throttled-reply.ts";
 import { CardKitReply } from "./cardkit-reply.ts";
 import { MessageStore } from "./message-store.ts";
 import { formatLogText } from "./log-utils.ts";
@@ -98,20 +98,19 @@ export class FeishuAgentBridge {
       // 创建随机 spinner 实例
       const spinner = new Spinner();
       let hasRealContent = false;
-      let session: any;
+      let session: FeishuPiSession | undefined;
       // 详细模式下追加到正文尾部的工具调用记录
       let toolLog = "";
 
       // 立即显示首帧（0ms 延迟）
-      await (reply as any).replace(spinner.next());
+      await reply.replace(spinner.next());
 
-      // 启动动画定时器（真实内容到来前显示动画）
+      // 启动动画定时器（真实内容到来前用 replace 循环刷新动画帧）
       let animationUpdating = false;
       const animationTimer = setInterval(() => {
         if (!hasRealContent && !animationUpdating) {
           animationUpdating = true;
-          // 用 replace 替换内容，不累加
-          (reply as any).replace(spinner.next()).finally(() => {
+          reply.replace(spinner.next()).catch(() => {}).finally(() => {
             animationUpdating = false;
           });
         }
@@ -126,7 +125,7 @@ export class FeishuAgentBridge {
         if (hasRealContent && activeToolName && !toolAnimationUpdating) {
           toolAnimationUpdating = true;
           const frame = TOOL_FRAMES[toolFrameIndex++ % TOOL_FRAMES.length];
-          reply.updateStats(`${frame} ${activeToolName} …`).finally(() => {
+          reply.updateStats(`${frame} ${activeToolName} …`).catch(() => {}).finally(() => {
             toolAnimationUpdating = false;
           });
         }
@@ -143,12 +142,10 @@ export class FeishuAgentBridge {
         async (event) => {
           await this.onEvent?.(event, message);
           if (event.type === "assistant_text") {
-            // 收到第一个真实内容时：停止动画并清空累积器
+            // 收到第一个真实内容时：停止动画、清空累积器，从头推送真实内容
             if (!hasRealContent) {
               hasRealContent = true;
               clearInterval(animationTimer);
-              // logger.info(`[Animation] 收到真实内容，停止动画`);
-              // 清空累积器，从头开始推送真实内容
               latestText = "";
             }
 
@@ -156,7 +153,6 @@ export class FeishuAgentBridge {
             latestText = event.text;
             // 只传增量给 update
             const delta = event.text.slice(prevText.length);
-            // logger.log(`[Debug] prevText.length=${prevText.length}, latestText.length=${latestText.length}, delta="${delta}"`);
             if (delta) await reply.update(delta);
           }
           // 工具事件：正文写入（详细模式保留 / 精简模式临时显示），小字位置同步显示动画。
@@ -220,7 +216,8 @@ export class FeishuAgentBridge {
     } catch (error) {
       await this.messages?.fail(message.messageId);
       const errorMessage = error instanceof Error ? error.message : String(error);
-      await reply.close(`处理失败：${errorMessage}`);
+      // 关闭失败不能掩盖原始错误，记日志后仍上抛
+      await reply.close(`处理失败：${errorMessage}`).catch((closeErr) => logger.error("[Bridge] 关闭回复卡失败:", closeErr));
       throw error;
     } finally {
       // 移除 reaction
@@ -285,7 +282,7 @@ export class FeishuAgentBridge {
         receive_id: message.chatId,
         msg_type: "interactive",
         content: JSON.stringify(card),
-        uuid: randomUUID(), // 飞书要求 uuid 最长 50 个字符
+        uuid: randomUUID(), // 幂等 ID（36 字符，满足飞书 ≤50 要求，防重试时重复发送）
       },
     }).catch((err) => {
       const errorDetail = err.response?.data?.error?.field_violations || err.response?.data || err.message;
@@ -303,7 +300,8 @@ const TOOL_CALL_MAX_CHARS = 300;
  * bash 显示命令本身，read/write/edit/grep 显示目标路径，skill 读取显示技能文件，
  * 其余显示脱敏后的参数 JSON（单行、截断）。
  */
-export function formatToolCall(toolName: string, args: unknown): string {
+/** 格式化一次工具调用的展示文本；细节见函数内分支。 */
+function formatToolCall(toolName: string, args: unknown): string {
   const record = (typeof args === "object" && args !== null ? args : {}) as Record<string, unknown>;
   const firstString = (...keys: string[]): string | undefined => {
     for (const key of keys) {

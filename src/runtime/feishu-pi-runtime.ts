@@ -6,6 +6,18 @@ import { createToolRegistryAsync, DEFAULT_BUILTIN_TOOLS } from "../tools/registr
 import { logger, colors } from "../utils/logger.ts";
 import { createRestrictedReadTool } from "../tools/restricted-read.ts";
 
+/**
+ * 判断某个 skill/tool 的 permission 标记是否对指定角色可见。
+ * 约定：default 所有人可见、team 需团队成员或管理员、admin 仅管理员。
+ */
+function hasPermission(permission: string | undefined, userRole: UserRole): boolean {
+  const level = permission || "default";
+  if (level === "default") return true;
+  if (level === "team") return userRole === "team" || userRole === "admin";
+  if (level === "admin") return userRole === "admin";
+  return false;
+}
+
 class SessionWrapper implements FeishuPiSession {
   private readonly raw: AgentSession;
 
@@ -80,14 +92,7 @@ class PermissionFilteredResourceLoader implements ResourceLoader {
 
   getSkills() {
     const { skills, diagnostics } = this.base.getSkills();
-    const filtered = skills.filter((skill) => {
-      const permission = (skill as any).permission || "default";
-      if (permission === "default") return true;
-      if (permission === "team") return this.userRole === "team" || this.userRole === "admin";
-      if (permission === "admin") return this.userRole === "admin";
-      return false;
-    });
-    return { skills: filtered, diagnostics };
+    return { skills: skills.filter((skill) => hasPermission((skill as any).permission, this.userRole)), diagnostics };
   }
 
   getPrompts() {
@@ -140,17 +145,23 @@ export class FeishuPiRuntime {
    * 打印系统启动时可用的资源（管理员视角）
    * 用于启动日志，让用户知道加载了哪些 Skills 和 Tools
    */
-  async printAvailableResources(): Promise<void> {
-    // 加载 Skills（管理员视角，显示所有）
-    const baseResourceLoader = new DefaultResourceLoader({
+  /** 创建并 reload 基础 ResourceLoader（必须 reload 后才能加载 skills）。 */
+  private async createBaseLoader(): Promise<DefaultResourceLoader> {
+    const loader = new DefaultResourceLoader({
       cwd: this.config.cwd,
       agentDir: `${this.config.cwd}/.agent`,
       systemPrompt: this.config.systemPrompt,
     });
+    await loader.reload();
+    return loader;
+  }
 
-    // 必须先 reload 才能加载 skills
-    await baseResourceLoader.reload();
-
+  /**
+   * 打印系统启动时可用的资源（管理员视角）
+   * 用于启动日志，让用户知道加载了哪些 Skills 和 Tools
+   */
+  async printAvailableResources(): Promise<void> {
+    const baseResourceLoader = await this.createBaseLoader();
     const { skills } = baseResourceLoader.getSkills();
 
     if (skills.length > 0) {
@@ -201,31 +212,13 @@ export class FeishuPiRuntime {
     const model = getModel(this.config.modelProvider as never, this.config.modelName as never);
     if (!model) throw new Error(`Model not found: ${this.config.modelProvider}/${this.config.modelName}`);
 
-    // 创建基础 ResourceLoader
-    const baseResourceLoader = new DefaultResourceLoader({
-      cwd: this.config.cwd,
-      agentDir: `${this.config.cwd}/.agent`,
-      systemPrompt: this.config.systemPrompt,
-    });
-
-    // 必须先 reload 才能加载 skills
-    await baseResourceLoader.reload();
-
-    // 包装成权限过滤的 ResourceLoader
+    // 包装成权限过滤的 ResourceLoader，再按角色过滤自定义工具
+    const baseResourceLoader = await this.createBaseLoader();
     const resourceLoader = new PermissionFilteredResourceLoader(baseResourceLoader, userRole);
 
-    // 获取用户可用的 skills（不打印，只用于加载）
-    const { skills } = resourceLoader.getSkills();
-
-    // 从 .agent/tools/ 加载用户自定义工具
+    // 从 .agent/tools/ 加载用户自定义工具，按角色过滤
     const allCustomTools = await createToolRegistryAsync(this.config.cwd, this.tools);
-    let customTools = allCustomTools.filter((tool) => {
-      const permission = (tool as any).permission || "default";
-      if (permission === "default") return true;
-      if (permission === "team") return userRole === "team" || userRole === "admin";
-      if (permission === "admin") return userRole === "admin";
-      return false;
-    });
+    let customTools = allCustomTools.filter((tool) => hasPermission((tool as any).permission, userRole));
 
     // 非管理员：添加受限的 read 工具（只能读 skills）
     const agentDir = `${this.config.cwd}/.agent`;
@@ -254,11 +247,10 @@ export class FeishuPiRuntime {
     // 注入工具调用 Guard：每次工具执行前经过白名单 / 大模型审核 / 管理员授权卡
     const toolGuard = this.config.toolGuard;
     if (toolGuard) {
-      const userRoleAtCreation = userRole;
       const chatId = context?.chatId;
       session.agent.beforeToolCall = async (ctx) => {
         try {
-          return await toolGuard({ toolName: ctx.toolCall.name, args: ctx.args, userRole: userRoleAtCreation, chatId });
+          return await toolGuard({ toolName: ctx.toolCall.name, args: ctx.args, chatId });
         } catch (error) {
           // Guard 自身异常按默认拒绝处理
           const detail = error instanceof Error ? error.message : String(error);
