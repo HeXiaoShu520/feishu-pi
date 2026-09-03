@@ -7,12 +7,15 @@ import { logger, colors } from "../utils/logger.ts";
 import { createRestrictedReadTool } from "../tools/restricted-read.ts";
 
 class SessionWrapper implements FeishuPiSession {
-  readonly sessionFile?: string;
   private readonly raw: AgentSession;
 
   constructor(session: AgentSession) {
     this.raw = session;
-    this.sessionFile = session.sessionFile;
+  }
+
+  /** 实时读取 Pi 的 sessionFile——新会话首次持久化后才会出现，不能在构造时快照。 */
+  get sessionFile(): string | undefined {
+    return this.raw.sessionFile;
   }
 
   getStats() {

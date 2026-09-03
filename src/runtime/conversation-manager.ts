@@ -12,6 +12,8 @@ export interface ConversationMessage {
 interface ConversationState {
   session: FeishuPiSession;
   queue: Promise<void>;
+  /** 已持久化到 store 的 sessionFile，避免重复写入 */
+  persistedSessionFile?: string;
 }
 
 /** 管理聊天会话复用，并保证同一会话内的消息按顺序执行。 */
@@ -43,20 +45,37 @@ export class ConversationManager {
     const sessionFile = await this.store?.get(conversationId);
     let session = sessionFile ? await this.runtime.createSession(sessionFile, userId, context).catch(() => undefined) : undefined;
     if (!session) session = await this.runtime.createSession(undefined, userId, context);
-    if (session.sessionFile) await this.store?.set(conversationId, session.sessionFile);
-    return { session, queue: Promise.resolve() };
+    const state: ConversationState = { session, queue: Promise.resolve() };
+    await this.persistSessionFile(conversationId, state);
+    return state;
+  }
+
+  /** sessionFile 一旦可用（Pi 首次落盘）立即持久化映射，不等整轮完成。 */
+  private async persistSessionFile(conversationId: string, state: ConversationState): Promise<void> {
+    const file = state.session.sessionFile;
+    if (file && file !== state.persistedSessionFile) {
+      state.persistedSessionFile = file;
+      await this.store?.set(conversationId, file);
+    }
   }
 
   /** 排队执行一次消息，并将 Session 事件交给调用方。 */
   async prompt(message: ConversationMessage, onEvent: Parameters<FeishuPiSession["subscribe"]>[0]): Promise<FeishuPiSession> {
     const state = await this.getState(message.conversationId, message.context);
     const task = state.queue.then(async () => {
-      const unsubscribe = state.session.subscribe(onEvent);
+      // 事件到达时同步检查 sessionFile：Pi 在首个 message_end 落盘，此时立刻持久化映射，
+      // 即使随后被中断，下次也能恢复到同一会话
+      const unsubscribe = state.session.subscribe(async (event) => {
+        await this.persistSessionFile(message.conversationId, state);
+        await onEvent(event);
+      });
       try {
         await state.session.prompt(message.prompt);
         await state.session.waitForIdle();
       } finally {
         unsubscribe();
+        // 兜底：响应结束后再检查一次
+        await this.persistSessionFile(message.conversationId, state);
       }
     });
     state.queue = task.catch(() => undefined);

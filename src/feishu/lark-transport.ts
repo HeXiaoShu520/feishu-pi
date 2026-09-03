@@ -1,6 +1,7 @@
 import { createLarkChannel, type LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { FeishuInboundMessage, FeishuReply, FeishuTransport } from "./types.ts";
 import { LarkCli } from "./lark-cli.ts";
+import { TopicRootStore } from "./topic-root-store.ts";
 import { LarkImageProcessor } from "./image-processor.ts";
 import { formatLogText } from "./log-utils.ts";
 import type { Client } from "@larksuiteoapi/node-sdk";
@@ -22,6 +23,8 @@ export interface LarkTransportConfig {
   imageCacheDir?: string;
   /** 管理员 Open ID（可选） */
   adminOpenId?: string;
+  /** 话题根持久化文件路径（话题群会话收敛用） */
+  topicRootsFile?: string;
 }
 
 /** 基于飞书官方高层 Channel 的最小消息传输实现。 */
@@ -38,11 +41,16 @@ export class LarkTransport implements FeishuTransport {
   private connecting?: Promise<void>;
   /** 会话模式缓存（p2p/group/topic），话题群与普通群的会话隔离策略不同 */
   private readonly chatModeCache = new Map<string, "p2p" | "group" | "topic">();
+  /** 话题根持久化（chatId -> 待定话题根 messageId） */
+  private readonly topicRoots?: TopicRootStore;
 
   constructor(config: LarkTransportConfig) {
     this.botOpenId = config.botOpenId;
     this.adminOpenId = config.adminOpenId;
     this.client = config.client;
+    if (config.topicRootsFile) {
+      this.topicRoots = new TopicRootStore(config.topicRootsFile);
+    }
     this.larkCli = new LarkCli(config.client!, config.appId, config.userProfileDir);
     if (config.client) {
       this.imageProcessor = new LarkImageProcessor(config.client, {
@@ -81,12 +89,24 @@ export class LarkTransport implements FeishuTransport {
 
           // 构造 conversationId：
           // - 话题群：同一话题内所有用户共享一个会话；首条消息没有 threadId，
-          //   用该消息的 messageId 作为话题键——后续消息的 threadId 恰好就是这条根消息的 ID，自然收敛到同一会话
+          //   用该消息的 messageId 作为话题键并持久化——后续消息的 threadId 恰好就是这条根消息的 ID，
+          //   收敛到同一会话；若根未确立前用户追加消息，从持久化中取回话题根，避免被打断后裂成新会话
           // - 其他会话（私聊/普通群）：按用户隔离
           const chatMode = await this.getChatModeCached(chatId);
-          const conversationId = chatMode === "topic"
-            ? `topic:${chatId}:${threadId ?? message.messageId}`
-            : `${profile.openId}-${threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`}`;
+          let conversationId: string;
+          if (chatMode === "topic") {
+            let rootId = threadId;
+            if (rootId) {
+              await this.topicRoots?.clear(chatId); // threadId 出现，话题根已确立
+            } else {
+              const pending = await this.topicRoots?.get(chatId);
+              rootId = pending ?? message.messageId;
+              if (!pending) await this.topicRoots?.set(chatId, rootId); // 首条消息：登记自己为话题根
+            }
+            conversationId = `topic:${chatId}:${rootId}`;
+          } else {
+            conversationId = `${profile.openId}-${threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`}`;
+          }
 
           // 处理图片附件
           let images;

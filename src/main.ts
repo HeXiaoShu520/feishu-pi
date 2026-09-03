@@ -94,6 +94,7 @@ export async function main(): Promise<void> {
     client,
     imageCacheDir: join(config.sessionDir, "images"),
     adminOpenId,
+    topicRootsFile: join(config.sessionDir, "topic-roots.json"),
   });
 
   // 工具调用 Guard：白名单正则 + 大模型审核 + 管理员授权卡
