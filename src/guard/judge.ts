@@ -49,7 +49,7 @@ export class SafetyJudge {
   /** 对一次工具调用给出裁决：allow 直接放行，ask 需要管理员授权。 */
   async judge(toolName: string, args: unknown): Promise<JudgeVerdict> {
     // 规则层 1：只读工具直接放行，不消耗大模型调用
-    const readonlyTools = this.options.readonlyTools ?? READ_ONLY_TOOLS;
+    const readonlyTools = this.options.readonlyTools ?? [...READ_ONLY_TOOLS];
     if (readonlyTools.includes(toolName)) {
       return { decision: "allow", reason: "只读工具" };
     }
