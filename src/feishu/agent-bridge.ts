@@ -51,12 +51,11 @@ export class FeishuAgentBridge {
       ? new ReactionController(options.client)
       : undefined;
     this.commandRegistry = createDefaultRegistry();
-    // /detail 切换详细/精简模式，状态由 bridge 持有（按 chatId 记忆）
-    this.commandRegistry.register(new DetailCommand((chatId: string) => {
-      const enabled = !this.detailMode.get(chatId);
-      this.detailMode.set(chatId, enabled);
-      return enabled;
-    }));
+    // /detail on|off 设置详细/精简模式，状态由 bridge 持有（按 chatId 记忆，默认精简）
+    this.commandRegistry.register(new DetailCommand(
+      (chatId: string, enabled: boolean) => this.detailMode.set(chatId, enabled),
+      (chatId: string) => this.detailMode.get(chatId) === true,
+    ));
   }
 
   /** 注册飞书消息处理器。 */

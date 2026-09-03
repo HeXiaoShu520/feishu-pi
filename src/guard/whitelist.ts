@@ -6,14 +6,16 @@ export interface WhitelistConfig {
   patterns: string[];
   /** 只读工具名单，命中直接放行；缺省用内置基线 */
   readonlyTools?: string[];
-  /** 额外的可写目录（相对 cwd），写操作落到这些目录时放行；缺省用内置基线 */
+  /** 可读目录（相对 cwd），只读工具仅放行这些目录内的读取；缺省为整个工作目录 */
+  readableDirs?: string[];
+  /** 可写目录（相对 cwd），写操作落到这些目录时放行；缺省用内置基线 */
   writableDirs?: string[];
 }
 
 /**
  * 从 JSON 文件加载白名单配置。支持两种格式：
  *   字符串数组（仅正则）: ["^read\\s", "^git (status|diff|log)"]
- *   对象: { "patterns": [...], "readonly_tools": [...], "writable_dirs": [...] }
+ *   对象: { "patterns": [...], "readonly_tools": [...], "readable_dirs": [...], "writable_dirs": [...] }
  * 文件不存在或格式非法时返回空配置并记录警告。
  */
 export function loadWhitelistConfig(path: string): WhitelistConfig {
@@ -27,8 +29,9 @@ export function loadWhitelistConfig(path: string): WhitelistConfig {
       const record = parsed as Record<string, unknown>;
       const patterns = Array.isArray(record.patterns) ? record.patterns.filter((item): item is string => typeof item === "string") : [];
       const readonlyTools = Array.isArray(record.readonly_tools) ? record.readonly_tools.filter((item): item is string => typeof item === "string") : undefined;
+      const readableDirs = Array.isArray(record.readable_dirs) ? record.readable_dirs.filter((item): item is string => typeof item === "string") : undefined;
       const writableDirs = Array.isArray(record.writable_dirs) ? record.writable_dirs.filter((item): item is string => typeof item === "string") : undefined;
-      return { patterns, readonlyTools, writableDirs };
+      return { patterns, readonlyTools, readableDirs, writableDirs };
     }
     logger.warn(`[Whitelist] ${path} 格式错误（应为字符串数组或对象），已忽略`);
     return { patterns: [] };

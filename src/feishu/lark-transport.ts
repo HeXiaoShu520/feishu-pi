@@ -237,8 +237,18 @@ export class LarkTransport implements FeishuTransport {
     writeFileSync(envFile, pattern.test(content) ? content.replace(pattern, line) : `${content.trimEnd()}\n${line}\n`, "utf-8");
   }
 
-  /** 使用卡片回调 token 更新本次点击对应的卡片。 */
+  /**
+   * 更新卡片。优先按 messageId 持久更新（实体变更，重新拉取不回退）；
+   * 失败时回退到卡片回调 token 的临时更新（仅本次点击视图可见，客户端重新拉取会还原）。
+   */
   private async updateCard(action: { messageId: string; raw?: unknown }, card: object): Promise<void> {
+    try {
+      await this.channel.updateCard(action.messageId, card);
+      return;
+    } catch (error) {
+      logger.warn(`[LarkTransport] 按 messageId 更新卡片失败，回退 token 更新: ${error instanceof Error ? error.message : error}`);
+    }
+
     const raw = action.raw as { token?: string } | undefined;
     if (raw?.token && this.client) {
       await this.client.request({
@@ -246,10 +256,7 @@ export class LarkTransport implements FeishuTransport {
         url: "/open-apis/interactive/v1/card/update",
         data: { token: raw.token, card },
       });
-      return;
     }
-
-    await this.channel.updateCard(action.messageId, card);
   }
 
   /** 关闭飞书长连接，并阻止主动关闭期间的重连竞争。 */

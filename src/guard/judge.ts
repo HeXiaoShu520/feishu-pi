@@ -17,6 +17,8 @@ export interface SafetyJudgeOptions {
   timeoutMs: number;
   /** 可写目录（相对 cwd），来自白名单配置的 writable_dirs；未配置时用内置基线 */
   writableDirs?: string[];
+  /** 可读目录（相对 cwd），来自白名单配置的 readable_dirs；未配置时用内置基线（整个工作目录） */
+  readableDirs?: string[];
   /** 只读工具名单，来自白名单配置的 readonly_tools；未配置时用内置基线 */
   readonlyTools?: string[];
 }
@@ -26,6 +28,12 @@ const READ_ONLY_TOOLS = new Set(["read", "grep", "glob", "ls", "find", "restrict
 
 /** 内置可写目录基线；白名单配置 writable_dirs 时整体覆盖此项。 */
 const WRITABLE_DIRS = [".agent", "data"];
+
+/** 内置可读目录基线：整个工作目录。白名单配置 readable_dirs 时整体覆盖此项。 */
+const READABLE_DIRS = ["."];
+
+/** 敏感文件名匹配（不论路径，一律弹卡交管理员确认）。 */
+const SENSITIVE_FILE_PATTERN = /(^|[\\/])(\.env(\..+)?|id_rsa|id_ed25519|id_ecdsa|\.ssh[\\/].*|credentials.*|.*\.pem|.*\.key|.*secret.*|.*password.*)$/i;
 
 const SYSTEM_PROMPT = `你是一个工具调用安全审核器。你会收到一次 AI Agent 即将执行的工具调用（工具名和参数）。
 请判断该调用是否安全到可以无需人工确认直接执行：
@@ -48,16 +56,25 @@ export class SafetyJudge {
 
   /** 对一次工具调用给出裁决：allow 直接放行，ask 需要管理员授权。 */
   async judge(toolName: string, args: unknown): Promise<JudgeVerdict> {
-    // 规则层 1：只读工具直接放行，不消耗大模型调用
+    // 规则层 1：只读工具，但仅限读取可读目录内的非敏感文件
     const readonlyTools = this.options.readonlyTools ?? [...READ_ONLY_TOOLS];
     if (readonlyTools.includes(toolName)) {
-      return { decision: "allow", reason: "只读工具" };
+      const target = extractPath(args);
+      // 无法识别目标路径的只读调用（如无参数的列表）放行
+      if (!target) return { decision: "allow", reason: "只读工具（无目标路径）" };
+      // 敏感文件（密钥/凭据/环境变量）即使在工作目录内也弹卡
+      if (isSensitiveFile(target)) return { decision: "ask", reason: "读取敏感文件，需管理员确认" };
+      const readableDirs = this.options.readableDirs ?? READABLE_DIRS;
+      if (isUnderDir(target, this.options.cwd, readableDirs)) {
+        return { decision: "allow", reason: "读取工作目录内文件" };
+      }
+      return { decision: "ask", reason: "读取工作目录之外，需管理员确认" };
     }
 
     // 规则层 2：写工具写入可写目录时放行，写其他路径一律 ask
     if (toolName === "write" || toolName === "edit") {
       const target = extractPath(args);
-      if (target && isUnderWritableDir(target, this.options.cwd, this.options.writableDirs ?? WRITABLE_DIRS)) {
+      if (target && isUnderDir(target, this.options.cwd, this.options.writableDirs ?? WRITABLE_DIRS)) {
         return { decision: "allow", reason: "写入可写目录" };
       }
       return { decision: "ask", reason: "写入可写目录之外，需管理员确认" };
@@ -123,13 +140,18 @@ function extractPath(args: unknown): string | undefined {
   return undefined;
 }
 
-/** 判断目标路径是否落在 cwd 下的可写目录内（拒绝 ../ 逃逸）。 */
-function isUnderWritableDir(target: string, cwd: string, writableDirs: string[]): boolean {
+/** 判断目标路径是否落在 cwd 下指定目录集合内（拒绝 ../ 逃逸）。 */
+function isUnderDir(target: string, cwd: string, dirs: string[]): boolean {
   const abs = resolve(cwd, target);
-  return writableDirs.some((dir) => {
+  return dirs.some((dir) => {
     const base = resolve(cwd, dir) + sep;
     return (abs + sep).startsWith(base);
   });
+}
+
+/** 判断目标是否为敏感文件（密钥/凭据/环境变量等）。 */
+function isSensitiveFile(target: string): boolean {
+  return SENSITIVE_FILE_PATTERN.test(target);
 }
 
 /** 从模型返回文本中提取 JSON 裁决；解析失败返回 undefined。 */

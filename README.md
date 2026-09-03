@@ -557,8 +557,8 @@ function getUserRole(userId: string): "default" | "team" | "admin" {
 
 **安全设计：**
 
-- **白名单**：`.agent/whitelist.json` 为正则字符串数组（或含 `patterns` / `writable_dirs` 的对象），匹配「工具名 + 参数」；文件不存在时回退 `FEISHU_CMD_WHITELIST` 环境变量（正则，分号分隔）。
-- **内置安全基线**：只读工具（默认 read/grep/glob 等，可用 `readonly_tools` 覆盖）直接放行；write/edit 写入可写目录（默认 `.agent/`、`data/`，可用 `writable_dirs` 覆盖）放行，写其他路径弹卡。
+- **白名单**：`.agent/whitelist.json` 为正则字符串数组（或含 `patterns` / `readonly_tools` / `readable_dirs` / `writable_dirs` 的对象），匹配「工具名 + 参数」；文件不存在时回退 `FEISHU_CMD_WHITELIST` 环境变量（正则，分号分隔）。
+- **内置安全基线**：只读工具（默认 read/grep/glob 等，可用 `readonly_tools` 覆盖）仅放行**可读目录**（默认整个工作目录，可用 `readable_dirs` 收紧）内的读取；敏感文件（`.env`、`id_rsa`、`*.pem`、`*secret*` 等）无论在哪都弹卡；write/edit 写入可写目录（默认 `.agent/`、`data/`，可用 `writable_dirs` 覆盖）放行，写其他路径弹卡。
 - **Guard 默认拒绝**：Guard 模型未配置、超时、接口异常、返回无法解析时，一律按 ask 处理。
 - **授权卡服务端校验**：每次授权有唯一 `approval_id` + 一次性 `token`；回调时在服务端校验 token 一致、卡片来源（原卡或转发卡）、点击者必须是管理员、decision 合法、未处理过。非管理员点击、伪造 token、卡片被转发到其他会话再点击均无效。授权是单次的，不缓存。
 - **参数脱敏**：授权卡中 `token`、`password`、`api_key`、`secret`、`cookie` 等字段脱敏为 `***`，命令最多展示 1200 字符。
@@ -575,12 +575,13 @@ function getUserRole(userId: string): "default" | "team" | "admin" {
 ]
 ```
 
-完整格式（可覆盖只读工具与可写目录，均整体替换内置基线）：
+完整格式（可覆盖只读工具、可读目录与可写目录，均整体替换内置基线）：
 
 ```json
 {
   "patterns": ["^read\\s", "^git (status|diff|log)\\b"],
   "readonly_tools": ["read", "grep", "glob", "ls", "find"],
+  "readable_dirs": [".", "docs"],
   "writable_dirs": [".agent", "data", "output"]
 }
 ```
@@ -627,7 +628,7 @@ feishu-pi 提供以下内置指令，在飞书对话中直接输入即可使用�
 | `/help` | 查看帮助信息 | 所有用户 | 显示机器人功能和可用指令 |
 | `/new` | 清空当前对话 | 所有用户 | 清空会话历史，开始新对话 |
 | `/stop` | 中断当前响应 | 所有用户 | 停止正在生成的 AI 回复 |
-| `/detail` | 切换详细/精简模式 | 所有用户 | 控制工具调用过程是否保留在正文中（详见下文） |
+| `/detail on` / `/detail off` | 切换详细/精简模式 | 所有用户 | 控制工具调用过程是否保留在正文中，默认精简；无参数时显示当前模式（详见下文） |
 
 **使用示例：**
 
@@ -641,13 +642,13 @@ feishu-pi 提供以下内置指令，在飞书对话中直接输入即可使用�
 你: /stop
 机器人: ⏸️ 已停止当前响应。
 
-你: /detail
+你: /detail on
 机器人: ✅ 已开启详细模式：工具调用过程将保留在正文中。…
 ```
 
-**详细模式与精简模式（`/detail`）：**
+**详细模式与精简模式（`/detail on|off`）：**
 
-回复卡片对工具调用的展示方式分两种，`/detail` 随时切换（按会话记忆）：
+回复卡片对工具调用的展示方式分两种，`/detail on` 开启详细模式、`/detail off` 回到精简模式（按会话记忆，默认精简，无参数时显示当前模式）：
 
 - **精简模式（默认）**：工具调用时正文临时显示 `⚙ 正在调用 xxx …`，工具结束后自动清除，只保留正文（类似滚动刷新）；卡片底部小字同步显示工具调用动画
 - **详细模式**：工具调用过程永久保留在正文中，便于审查完整执行链路

@@ -113,6 +113,7 @@ export async function main(): Promise<void> {
     apiKey: config.guardApiKey,
     timeoutMs: config.guardTimeoutMs,
     writableDirs: whitelistConfig.writableDirs,
+    readableDirs: whitelistConfig.readableDirs,
     readonlyTools: whitelistConfig.readonlyTools,
   });
   // bridge 在下方创建，先用闭包引用（授权卡撤回需查询该会话的详细模式开关）

@@ -243,7 +243,8 @@ export class HelpCommand implements CommandHandler {
 \`/help\` - 显示此帮助信息
 \`/new\` - 开始新对话（清空历史）
 \`/stop\` - 停止当前 AI 响应
-\`/detail\` - 切换详细/精简模式（工具调用是否保留在正文）`,
+\`/detail on\` - 开启详细模式（工具调用保留在正文）
+\`/detail off\` - 开启精简模式（工具调用临时显示后清除，默认）`,
             },
           ],
         },
@@ -309,30 +310,42 @@ export class StopCommand implements CommandHandler {
  * 切换逻辑通过回调交给调用方（FeishuAgentBridge 持有模式状态），返回是否已开启详细模式
  */
 export class DetailCommand implements CommandHandler {
-  private readonly toggle: (chatId: string) => boolean;
+  private readonly setMode: (chatId: string, enabled: boolean) => void;
+  private readonly getMode: (chatId: string) => boolean;
 
-  constructor(toggle: (chatId: string) => boolean) {
-    this.toggle = toggle;
+  constructor(setMode: (chatId: string, enabled: boolean) => void, getMode: (chatId: string) => boolean) {
+    this.setMode = setMode;
+    this.getMode = getMode;
   }
 
   match(text: string): boolean {
-    return text.trim() === "/detail";
+    return /^\/detail( on| off)?$/i.test(text.trim());
   }
 
   async execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
-    const enabled = this.toggle(message.context.chatId);
+    const arg = message.text.trim().split(/\s+/)[1]?.toLowerCase();
+    const chatId = message.context.chatId;
+    let enabled: boolean;
+    let statusLine: string;
+
+    if (arg === "on" || arg === "off") {
+      // 显式指定 on/off
+      enabled = arg === "on";
+      this.setMode(chatId, enabled);
+      statusLine = enabled
+        ? "✅ 已开启**详细模式**：工具调用过程将保留在正文中。\n\n发送 `/detail off` 切换回精简模式。"
+        : "✅ 已开启**精简模式**：工具调用仅在执行时临时显示，完成后只保留正文。\n\n发送 `/detail on` 切换到详细模式。";
+    } else {
+      // 无参数：显示当前模式
+      enabled = this.getMode(chatId);
+      statusLine = `当前模式：**${enabled ? "详细模式" : "精简模式"}**\n\n发送 \`/detail on\` 开启详细模式，\`/detail off\` 开启精简模式。`;
+    }
+
     return {
       card: {
         schema: "2.0",
         body: {
-          elements: [
-            {
-              tag: "markdown",
-              content: enabled
-                ? "✅ 已开启**详细模式**：工具调用过程将保留在正文中。\n\n再次发送 `/detail` 切换回精简模式。"
-                : "✅ 已开启**精简模式**：工具调用仅在执行时临时显示，完成后只保留正文。\n\n再次发送 `/detail` 切换回详细模式。",
-            },
-          ],
+          elements: [{ tag: "markdown", content: statusLine }],
         },
       },
     };
