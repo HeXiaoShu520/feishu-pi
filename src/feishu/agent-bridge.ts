@@ -134,7 +134,6 @@ export class FeishuAgentBridge {
 
       // 记录 prompt 前的基线统计，用于计算本次新增 token
       const statsBefore = await this.conversations.getStats(conversationId, message.context);
-
       session = await this.conversations.prompt(
         {
           conversationId,
@@ -163,7 +162,14 @@ export class FeishuAgentBridge {
           // 工具事件：正文写入（详细模式保留 / 精简模式临时显示），小字位置同步显示动画。
           if (event.type === "tool_started") {
             activeToolName = event.toolName;
-            const toolLine = `\n\n> ⚙ 正在调用 **${event.toolName}** …`;
+            // 工具开始调用即停止"分析中"动画，清掉占位的 spinner 帧
+            if (!hasRealContent) {
+              hasRealContent = true;
+              latestText = "";
+              clearInterval(animationTimer);
+              await reply.replace("");
+            }
+            const toolLine = `\n\n> ⚙ ${formatToolCall(event.toolName, event.args)}`;
             if (this.detailMode.get(message.chatId)) {
               // 详细模式：工具调用永久保留在正文
               toolLog += toolLine;
@@ -287,4 +293,46 @@ export class FeishuAgentBridge {
       throw err;
     });
   }
+}
+
+/** 工具调用行展示的最大字符数（防止超长命令/路径刷屏）。 */
+const TOOL_CALL_MAX_CHARS = 300;
+
+/**
+ * 格式化一次工具调用的展示文本，把关键参数带出来：
+ * bash 显示命令本身，read/write/edit/grep 显示目标路径，skill 读取显示技能文件，
+ * 其余显示脱敏后的参数 JSON（单行、截断）。
+ */
+export function formatToolCall(toolName: string, args: unknown): string {
+  const record = (typeof args === "object" && args !== null ? args : {}) as Record<string, unknown>;
+  const firstString = (...keys: string[]): string | undefined => {
+    for (const key of keys) {
+      if (typeof record[key] === "string" && record[key]) return record[key] as string;
+    }
+    return undefined;
+  };
+
+  let detail: string | undefined;
+  if (toolName === "bash" || toolName === "execute" || toolName === "run_command") {
+    detail = firstString("command", "cmd");
+  } else if (toolName === "write" || toolName === "edit" || toolName === "read" || toolName === "restricted_read") {
+    detail = firstString("path", "file_path", "filePath");
+  } else if (toolName === "grep" || toolName === "glob" || toolName === "find") {
+    detail = firstString("pattern", "path");
+  } else {
+    detail = firstString("path", "file_path", "filePath", "url", "name", "skill", "script");
+  }
+
+  // 兜底：无法从常用字段提取时，展示整包参数（单行截断）
+  if (!detail) {
+    try {
+      detail = JSON.stringify(args)?.replace(/\s+/g, " ");
+    } catch {
+      detail = undefined;
+    }
+  }
+  if (!detail) return `正在调用 **${toolName}** …`;
+  if (detail.length > TOOL_CALL_MAX_CHARS) detail = `${detail.slice(0, TOOL_CALL_MAX_CHARS)}…`;
+  const escaped = detail.replace(/\n/g, " ").replace(/`/g, "'");
+  return `正在调用 **${toolName}**：\`${escaped}\``;
 }

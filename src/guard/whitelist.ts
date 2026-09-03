@@ -13,9 +13,10 @@ export interface WhitelistConfig {
 }
 
 /**
- * 从 JSON 文件加载白名单配置。支持两种格式：
- *   字符串数组（仅正则）: ["^read\\s", "^git (status|diff|log)"]
- *   对象: { "patterns": [...], "readonly_tools": [...], "readable_dirs": [...], "writable_dirs": [...] }
+ * 从 JSON 文件加载白名单配置。参照 Claude Code settings.json 的风格，支持三种格式：
+ *   Claude 风格: { "permissions": { "allow": ["^read\\s", ...], "readonly_tools": [...], ... } }
+ *   旧版对象:    { "patterns": [...], "readonly_tools": [...], "readable_dirs": [...], "writable_dirs": [...] }
+ *   字符串数组:  ["^read\\s", "^git (status|diff|log)"]
  * 文件不存在或格式非法时返回空配置并记录警告。
  */
 export function loadWhitelistConfig(path: string): WhitelistConfig {
@@ -27,10 +28,17 @@ export function loadWhitelistConfig(path: string): WhitelistConfig {
     }
     if (typeof parsed === "object" && parsed !== null) {
       const record = parsed as Record<string, unknown>;
-      const patterns = Array.isArray(record.patterns) ? record.patterns.filter((item): item is string => typeof item === "string") : [];
-      const readonlyTools = Array.isArray(record.readonly_tools) ? record.readonly_tools.filter((item): item is string => typeof item === "string") : undefined;
-      const readableDirs = Array.isArray(record.readable_dirs) ? record.readable_dirs.filter((item): item is string => typeof item === "string") : undefined;
-      const writableDirs = Array.isArray(record.writable_dirs) ? record.writable_dirs.filter((item): item is string => typeof item === "string") : undefined;
+      // Claude 风格：permissions.allow 为白名单正则；其余只读/目录配置放在 permissions 同级
+      const permissions = typeof record.permissions === "object" && record.permissions !== null
+        ? (record.permissions as Record<string, unknown>)
+        : undefined;
+      const stringList = (value: unknown): string[] | undefined =>
+        Array.isArray(value) ? value.filter((item): item is string => typeof item === "string") : undefined;
+
+      const patterns = stringList(permissions?.allow) ?? stringList(record.patterns) ?? [];
+      const readonlyTools = stringList(permissions?.readonly_tools) ?? stringList(record.readonly_tools);
+      const readableDirs = stringList(permissions?.readable_dirs) ?? stringList(record.readable_dirs);
+      const writableDirs = stringList(permissions?.writable_dirs) ?? stringList(record.writable_dirs);
       return { patterns, readonlyTools, readableDirs, writableDirs };
     }
     logger.warn(`[Whitelist] ${path} 格式错误（应为字符串数组或对象），已忽略`);

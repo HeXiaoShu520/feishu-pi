@@ -35,7 +35,7 @@ class SessionWrapper implements FeishuPiSession {
       }
       if (event.type === "tool_execution_start" || event.type === "tool_execution_update" || event.type === "tool_execution_end") {
         const toolName = "toolName" in event && typeof event.toolName === "string" ? event.toolName : "unknown";
-        if (event.type === "tool_execution_start") listener({ type: "tool_started", toolName });
+        if (event.type === "tool_execution_start") listener({ type: "tool_started", toolName, args: "args" in event ? event.args : undefined });
         if (event.type === "tool_execution_update") listener({ type: "tool_updated", toolName });
         if (event.type === "tool_execution_end") listener({ type: "tool_finished", toolName, isError: "isError" in event && event.isError === true });
       }

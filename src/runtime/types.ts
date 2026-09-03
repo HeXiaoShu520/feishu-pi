@@ -5,7 +5,7 @@ export type UserRole = "default" | "team" | "admin";
 
 export type FeishuPiEvent =
   | { type: "assistant_text"; text: string }
-  | { type: "tool_started"; toolName: string }
+  | { type: "tool_started"; toolName: string; args?: unknown }
   | { type: "tool_updated"; toolName: string }
   | { type: "tool_finished"; toolName: string; isError: boolean };
 
