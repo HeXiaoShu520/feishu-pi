@@ -538,7 +538,7 @@ function getUserRole(userId: string): "default" | "team" | "admin" {
 
 ## 工具调用 Guard：白名单 + 大模型审核 + 授权卡
 
-在角色过滤之上，每次工具实际执行前还会经过一层动态审核（`beforeToolCall` 钩子，`src/guard/`）。管理员自己的会话不审核；普通用户的工具调用按以下顺序裁决：
+在角色过滤之上，每次工具实际执行前还会经过一层动态审核（`beforeToolCall` 钩子，`src/guard/`）。**所有用户（含管理员）的会话都审核**——大模型可能乱来，高危操作一律需要人工确认。裁决顺序：
 
 ```
 工具调用
