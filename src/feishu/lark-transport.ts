@@ -198,8 +198,9 @@ export class LarkTransport implements FeishuTransport {
     dispatcher.invoke = async (data, opts) => {
       const result = await original(data, opts);
       // 仅对卡片回调补空应答；普通事件维持原样
-      const text = typeof (data as { data?: unknown })?.data === "string" ? (data as { data: string }).data : "";
-      const isCardAction = text.includes("card.action.trigger");
+      // 注意：invoke 收到的是 mergeData 之后的已解析对象（{schema, header, event}），不是字符串
+      const eventType = (data as { header?: { event_type?: string } } | undefined)?.header?.event_type;
+      const isCardAction = eventType === "card.action.trigger";
       if (isCardAction) logger.info(`[CardAck] 卡片回调事件到达，原始应答=${result === undefined ? "undefined" : "有值"}，补充 toast 应答`);
       if (result == null && isCardAction) {
         return { toast: { type: "info", content: "✅ 已收到，处理中…" } };
