@@ -233,7 +233,18 @@ export async function main(): Promise<void> {
     process.exit(0);
   };
 
-  process.on("SIGINT", () => gracefulShutdown("SIGINT"));
+  // Ctrl+C 双击确认：第一次只提示（避免想复制终端文本时误触退出），
+  // 3 秒内再按一次才真正优雅退出；SIGTERM/SIGBREAK 仍立即退出
+  let sigintArmed = false;
+  process.on("SIGINT", () => {
+    if (sigintArmed) {
+      gracefulShutdown("SIGINT");
+      return;
+    }
+    sigintArmed = true;
+    logger.info("[Main] 再按一次 Ctrl+C 退出服务（3 秒内）");
+    setTimeout(() => (sigintArmed = false), 3000);
+  });
   process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
   // Windows 特有：监听 Ctrl+Break
