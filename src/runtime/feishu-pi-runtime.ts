@@ -145,6 +145,15 @@ export class FeishuPiRuntime {
    * 打印系统启动时可用的资源（管理员视角）
    * 用于启动日志，让用户知道加载了哪些 Skills 和 Tools
    */
+  /**
+   * 运行时切换模型：立即对新会话生效（已创建的会话沿用旧模型直到清空/重建）。
+   * 持久化由调用方负责（transport 写 .env）。
+   */
+  setModelName(modelName: string): void {
+    (this.config as { modelName: string }).modelName = modelName;
+    logger.info(`[Runtime] 模型已切换为 ${colors.cyan}${modelName}${colors.reset}（新会话生效）`);
+  }
+
   /** 创建并 reload 基础 ResourceLoader（必须 reload 后才能加载 skills）。 */
   private async createBaseLoader(): Promise<DefaultResourceLoader> {
     const loader = new DefaultResourceLoader({

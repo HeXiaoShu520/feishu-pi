@@ -25,6 +25,8 @@ export interface LarkTransportConfig {
   adminOpenId?: string;
   /** 话题根持久化文件路径（话题群会话收敛用） */
   topicRootsFile?: string;
+  /** 模型切换回调（/model 指令确认后触发，用于运行时热切换） */
+  onModelSwitch?: (modelName: string) => void;
 }
 
 /** 基于飞书官方高层 Channel 的最小消息传输实现。 */
@@ -34,6 +36,7 @@ export class LarkTransport implements FeishuTransport {
   private readonly larkCli: LarkCli;
   private readonly imageProcessor?: LarkImageProcessor;
   private readonly adminOpenId?: string;
+  private readonly onModelSwitch?: (modelName: string) => void;
   private readonly client?: Client;
   private handler?: (message: FeishuInboundMessage) => Promise<void>;
   private approvalHandler?: (params: { value: Record<string, unknown>; action: { messageId: string; chatId: string; operatorOpenId: string } }) => Promise<void>;
@@ -47,6 +50,7 @@ export class LarkTransport implements FeishuTransport {
   constructor(config: LarkTransportConfig) {
     this.botOpenId = config.botOpenId;
     this.adminOpenId = config.adminOpenId;
+    this.onModelSwitch = config.onModelSwitch;
     this.client = config.client;
     if (config.topicRootsFile) {
       this.topicRoots = new TopicRootStore(config.topicRootsFile);
@@ -281,8 +285,9 @@ export class LarkTransport implements FeishuTransport {
     }
   }
 
-  /** 持久化模型配置，供服务重启后使用。 */
+  /** 持久化模型配置并通知运行时热切换（供服务重启与当前进程同时生效）。 */
   private persistModelName(modelName: string): void {
+    this.onModelSwitch?.(modelName);
     const envFile = join(process.cwd(), ".env");
     const content = readFileSync(envFile, "utf-8");
     const line = `FEISHU_PI_MODEL_NAME=${modelName}`;

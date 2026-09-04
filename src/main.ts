@@ -88,6 +88,9 @@ export async function main(): Promise<void> {
     logger.info(`[Main] 团队成员配置: ${config.feishuTeamMembers.length} 人`);
   }
 
+  // runtime 先声明（transport 的 onModelSwitch 回调引用它）
+  let runtime: FeishuPiRuntime;
+
   const transport = new LarkTransport({
     appId: config.feishuAppId,
     appSecret: config.feishuAppSecret,
@@ -96,6 +99,8 @@ export async function main(): Promise<void> {
     imageCacheDir: join(config.sessionDir, "images"),
     adminOpenId,
     topicRootsFile: join(config.sessionDir, "topic-roots.json"),
+    // /model 切换时通知运行时热切换（持久化到 .env 仍在 transport 内完成）
+    onModelSwitch: (name) => runtime?.setModelName(name),
   });
 
   // 工具调用 Guard：白名单正则 + 大模型审核 + 管理员授权卡
@@ -167,7 +172,7 @@ export async function main(): Promise<void> {
   });
 
   // 创建 runtime 配置
-  const runtime = new FeishuPiRuntime({
+  runtime = new FeishuPiRuntime({
     cwd: config.cwd,
     sessionDir: config.sessionDir,
     modelProvider: config.modelProvider,
