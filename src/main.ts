@@ -120,7 +120,7 @@ export async function main(): Promise<void> {
   const judge = new SafetyJudge({
     cwd: config.cwd,
     baseUrl: config.guardBaseUrl,
-    model: config.guardModel,
+    models: config.guardModels,
     apiKey: config.guardApiKey,
     timeoutMs: config.guardTimeoutMs,
     writableDirs: whitelistConfig.writableDirs,

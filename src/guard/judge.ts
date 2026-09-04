@@ -10,9 +10,10 @@ export interface JudgeVerdict {
 
 export interface SafetyJudgeOptions {
   cwd: string;
-  /** Guard 大模型（OpenAI 兼容接口）配置 */
+  /** Guard 审核接口（OpenAI 兼容）；未配置则不启用大模型审核 */
   baseUrl?: string;
-  model?: string;
+  /** Guard 模型列表：多个模型并行审核，全部 allow 才放行（安全交集），任一 ask 即弹卡 */
+  models: string[];
   apiKey?: string;
   timeoutMs: number;
   /** 可写目录（相对 cwd），来自白名单配置的 writable_dirs；未配置时用内置基线 */
@@ -80,16 +81,25 @@ export class SafetyJudge {
       return { decision: "ask", reason: "写入可写目录之外，需管理员确认" };
     }
 
-    // 其余交给大模型判断
-    return this.judgeWithModel(toolName, args);
+    // 大模型审核未启用（未配置接口或模型列表为空）：风险调用直接弹卡交人工
+    const { baseUrl, models } = this.options;
+    if (!baseUrl || models.length === 0) {
+      return { decision: "ask", reason: "大模型审核未启用，需管理员确认" };
+    }
+
+    // 多模型并行审核，取安全交集：全部 allow 才放行，任一 ask 即弹卡
+    const verdicts = await Promise.all(models.map((model) => this.judgeWithSingleModel(model, toolName, args)));
+    const asks = verdicts.filter((v) => v.decision === "ask");
+    if (asks.length === 0) {
+      return { decision: "allow", reason: `Guard 放行（${verdicts.length} 个模型一致）` };
+    }
+    return { decision: "ask", reason: asks.map((v) => v.reason).join("；") };
   }
 
-  /** 调用 OpenAI 兼容接口让轻量大模型审核；异常一律返回 ask。 */
-  private async judgeWithModel(toolName: string, args: unknown): Promise<JudgeVerdict> {
-    const { baseUrl, model, apiKey, timeoutMs } = this.options;
-    if (!baseUrl || !model) {
-      return { decision: "ask", reason: "Guard 模型未配置" };
-    }
+  /** 调用单个 Guard 模型审核；异常一律返回 ask。 */
+  private async judgeWithSingleModel(model: string, toolName: string, args: unknown): Promise<JudgeVerdict> {
+    const { baseUrl, apiKey, timeoutMs } = this.options;
+    if (!baseUrl) return { decision: "ask", reason: "Guard 接口未配置" };
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {

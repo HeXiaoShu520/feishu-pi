@@ -13,9 +13,11 @@ export interface FeishuPiAppConfig {
   cmdWhitelist: string[];
   /** 是否启用大模型 Guard 审核层 */
   guardEnabled: boolean;
-  /** Guard 模型（OpenAI 兼容接口）配置；未配置 baseUrl 时回退主模型配置 */
+  /** Guard 审核接口（OpenAI 兼容）；未配置则不启用大模型审核，风险调用直接弹卡 */
   guardBaseUrl?: string;
-  guardModel?: string;
+  /** Guard 模型列表（多个时全部 allow 才放行，任一 ask 即弹卡） */
+  guardModels: string[];
+  /** 未配置时回退主模型 Key */
   guardApiKey?: string;
   guardTimeoutMs: number;
   /** 授权卡片等待管理员点击的超时时间（超时视为拒绝） */
@@ -43,8 +45,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     // 白名单按行或分号分隔，每项是一个正则
     cmdWhitelist: (env.FEISHU_CMD_WHITELIST ?? "").split(/\n|;/).map((s) => s.trim()).filter(Boolean),
     guardEnabled: env.FEISHU_GUARD_ENABLED !== "false",
-    guardBaseUrl: env.FEISHU_GUARD_BASE_URL ?? env.FEISHU_PI_MODEL_BASE_URL,
-    guardModel: env.FEISHU_GUARD_MODEL ?? env.FEISHU_PI_MODEL_NAME,
+    // 空 = 不启用大模型审核（不再回退主模型，避免审核花主模型的钱）
+    guardBaseUrl: env.FEISHU_GUARD_BASE_URL || undefined,
+    // 支持逗号分隔多个 Guard 模型，取"安全交集"：全部 allow 才放行
+    guardModels: (env.FEISHU_GUARD_MODELS ?? env.FEISHU_GUARD_MODEL ?? "").split(",").map((m) => m.trim()).filter(Boolean),
     guardApiKey: env.FEISHU_GUARD_API_KEY ?? env.FEISHU_PI_MODEL_API_KEY,
     guardTimeoutMs: Number(env.FEISHU_GUARD_TIMEOUT_MS) > 0 ? Number(env.FEISHU_GUARD_TIMEOUT_MS) : 15_000,
     approvalTimeoutMs: Number(env.FEISHU_APPROVAL_TIMEOUT_MS) > 0 ? Number(env.FEISHU_APPROVAL_TIMEOUT_MS) : 5 * 60_000,
