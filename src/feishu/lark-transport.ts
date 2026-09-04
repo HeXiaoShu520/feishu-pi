@@ -1,4 +1,4 @@
-import { createLarkChannel, type LarkChannel } from "@larksuiteoapi/node-sdk";
+import { createLarkChannel, normalizeCardAction, type LarkChannel } from "@larksuiteoapi/node-sdk";
 import type { FeishuInboundMessage, FeishuReply, FeishuTransport } from "./types.ts";
 import { LarkCli } from "./lark-cli.ts";
 import { TopicRootStore } from "./topic-root-store.ts";
@@ -144,7 +144,11 @@ export class LarkTransport implements FeishuTransport {
           // 判断是否为管理员
           const isAdmin = this.adminOpenId ? profile.openId === this.adminOpenId : false;
 
-          await this.handler?.({
+          // 关键：不能 await 完整处理——SDK 按 chatId 串行排队，
+          // 若在此等待整个 Agent 流程（可能卡在等授权卡点击），
+          // 后续卡片回调会在同一队列里被饿死 → 点击永远无响应（死锁）。
+          // 交给 handler 后台处理即可，会话内的顺序由 ConversationManager 保证。
+          void this.handler?.({
             messageId: message.messageId,
             chatId,
             context: {
@@ -158,6 +162,8 @@ export class LarkTransport implements FeishuTransport {
             },
             text: cleanedText,
             images,
+          }).catch((error) => {
+            logger.error(`[LarkTransport] 消息处理失败: ${error instanceof Error ? error.message : error}`);
           });
         } catch (error) {
           const detail = error instanceof Error ? error.message : String(error);
@@ -171,6 +177,8 @@ export class LarkTransport implements FeishuTransport {
       this.channel.on("cardAction", (action) => {
         void this.handleCardAction(action).catch((error) => logger.error("[CardAction] 处理卡片回调失败:", error));
       });
+      // 卡片回调不在 channel.on("cardAction") 上注册——它在 SDK 去重层之后、且丢弃应答数据，
+      // 由 patchCardAck() 在 WSClient dispatcher 层直接接管（见 patchCardAck 注释）
     }
     this.connecting = this.channel.connect().then(() => {
       this.patchCardAck();
@@ -181,11 +189,13 @@ export class LarkTransport implements FeishuTransport {
   }
 
   /**
-   * SDK 缺陷补丁：LarkChannel 的 card.action.trigger 分发不 return handler 的返回值，
-   * 导致底层 WSClient 的回调应答帧永远没有 data——飞书客户端把"无数据应答"视为
-   * 未响应，点击按钮时弹「目标回调服务超时未响应」。
-   * 参考 cc-connect（Go SDK）：回调必须返回 Toast/Card 结构。
-   * 这里包装 WSClient 的 eventDispatcher.invoke，为卡片回调补一个 toast 应答体。
+   * SDK 缺陷补丁（两个）：
+   * 1. LarkChannel 的 card.action.trigger 分发不 return handler 返回值 → 应答帧永远没有 data，
+   *    飞书弹「目标回调服务超时未响应」（对照 Go 官方 SDK：回调必须返回 Toast/Card 结构）。
+   * 2. safety.pushAction 对"10 分钟内重复点击/处理中重复事件"静默丢弃（无任何应答），
+   *    重复点击同一按钮在去重窗口内全部无响应。
+   * 处理：卡片回调绕过 channel 的去重/锁，自行分发（幂等由 PermissionBroker 保证），
+   * 并始终返回带 toast 的应答体。普通事件走原逻辑不受影响。
    */
   private patchCardAck(): void {
     const ws = (this.channel as unknown as { rawWsClient?: { eventDispatcher?: { invoke: (data: unknown, opts?: unknown) => Promise<unknown> } } }).rawWsClient;
@@ -196,16 +206,23 @@ export class LarkTransport implements FeishuTransport {
     }
     const original = dispatcher.invoke.bind(dispatcher);
     dispatcher.invoke = async (data, opts) => {
-      const result = await original(data, opts);
-      // 仅对卡片回调补空应答；普通事件维持原样
-      // 注意：invoke 收到的是 mergeData 之后的已解析对象（{schema, header, event}），不是字符串
+      // invoke 收到的是 mergeData 之后的已解析对象（{schema, header, event}）
       const eventType = (data as { header?: { event_type?: string } } | undefined)?.header?.event_type;
-      const isCardAction = eventType === "card.action.trigger";
-      if (isCardAction) logger.info(`[CardAck] 卡片回调事件到达，原始应答=${result === undefined ? "undefined" : "有值"}，补充 toast 应答`);
-      if (result == null && isCardAction) {
-        return { toast: { type: "info", content: "✅ 已收到，处理中…" } };
+      if (eventType !== "card.action.trigger") {
+        return original(data, opts);
       }
-      return result;
+
+      // 卡片回调：绕过去重层直接分发（异步执行，不阻塞应答）
+      try {
+        const evt = normalizeCardAction(data as object, { includeRaw: true });
+        if (evt) {
+          logger.info(`[CardAction] 收到卡片回调: ${evt.operator.openId}`);
+          void this.handleCardAction(evt).catch((error) => logger.error("[CardAction] 处理卡片回调失败:", error));
+        }
+      } catch (error) {
+        logger.error("[CardAction] 事件解析失败:", error);
+      }
+      return { toast: { type: "info", content: "✅ 已收到，处理中…" } };
     };
     (dispatcher as { __cardAckPatched?: boolean }).__cardAckPatched = true;
     logger.info(`[CardAck] 卡片回调应答补丁已安装`);
