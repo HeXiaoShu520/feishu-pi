@@ -172,10 +172,36 @@ export class LarkTransport implements FeishuTransport {
         void this.handleCardAction(action).catch((error) => logger.error("[CardAction] 处理卡片回调失败:", error));
       });
     }
-    this.connecting = this.channel.connect().finally(() => {
+    this.connecting = this.channel.connect().then(() => {
+      this.patchCardAck();
+    }).finally(() => {
       this.connecting = undefined;
     });
     return this.connecting;
+  }
+
+  /**
+   * SDK 缺陷补丁：LarkChannel 的 card.action.trigger 分发不 return handler 的返回值，
+   * 导致底层 WSClient 的回调应答帧永远没有 data——飞书客户端把"无数据应答"视为
+   * 未响应，点击按钮时弹「目标回调服务超时未响应」。
+   * 参考 cc-connect（Go SDK）：回调必须返回 Toast/Card 结构。
+   * 这里包装 WSClient 的 eventDispatcher.invoke，为卡片回调补一个 toast 应答体。
+   */
+  private patchCardAck(): void {
+    const ws = (this.channel as unknown as { rawWsClient?: { eventDispatcher?: { invoke: (data: unknown, opts?: unknown) => Promise<unknown> } } }).rawWsClient;
+    const dispatcher = ws?.eventDispatcher;
+    if (!dispatcher || (dispatcher as { __cardAckPatched?: boolean }).__cardAckPatched) return;
+    const original = dispatcher.invoke.bind(dispatcher);
+    dispatcher.invoke = async (data, opts) => {
+      const result = await original(data, opts);
+      // 仅对卡片回调补空应答；普通事件维持原样
+      const text = typeof (data as { data?: unknown })?.data === "string" ? (data as { data: string }).data : "";
+      if (result == null && text.includes("card.action.trigger")) {
+        return { toast: { type: "info", content: "✅ 已收到，处理中…" } };
+      }
+      return result;
+    };
+    (dispatcher as { __cardAckPatched?: boolean }).__cardAckPatched = true;
   }
 
   /** 卡片回调的实际处理逻辑（后台执行）。 */
