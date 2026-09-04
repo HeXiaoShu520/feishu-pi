@@ -172,13 +172,8 @@ export class LarkTransport implements FeishuTransport {
         }
       });
 
-      // 监听卡片回调事件：SDK 在 handler 执行完毕后才向飞书回 ACK（约 3 秒超时），
-      // 因此 handler 立即返回，实际处理放到后台——否则飞书会弹「目标回调服务超时未响应」
-      this.channel.on("cardAction", (action) => {
-        void this.handleCardAction(action).catch((error) => logger.error("[CardAction] 处理卡片回调失败:", error));
-      });
-      // 卡片回调不在 channel.on("cardAction") 上注册——它在 SDK 去重层之后、且丢弃应答数据，
-      // 由 patchCardAck() 在 WSClient dispatcher 层直接接管（见 patchCardAck 注释）
+      // 卡片回调不通过 channel.on("cardAction") 处理——SDK 对它有缺陷
+      // （丢弃应答数据 + 去重层静默吞事件），由 patchCardAck() 在 WSClient dispatcher 层接管
     }
     this.connecting = this.channel.connect().then(() => {
       this.patchCardAck();
@@ -218,11 +213,14 @@ export class LarkTransport implements FeishuTransport {
         if (evt) {
           logger.info(`[CardAction] 收到卡片回调: ${evt.operator.openId}`);
           void this.handleCardAction(evt).catch((error) => logger.error("[CardAction] 处理卡片回调失败:", error));
+          return { toast: { type: "info", content: "✅ 已收到，处理中…" } };
         }
+        // 解析失败：退回 SDK 原逻辑，至少保证事件不丢
+        logger.warn("[CardAction] 事件解析为空，退回 SDK 原始分发");
       } catch (error) {
-        logger.error("[CardAction] 事件解析失败:", error);
+        logger.error("[CardAction] 事件解析失败，退回 SDK 原始分发:", error);
       }
-      return { toast: { type: "info", content: "✅ 已收到，处理中…" } };
+      return original(data, opts);
     };
     (dispatcher as { __cardAckPatched?: boolean }).__cardAckPatched = true;
     logger.info(`[CardAck] 卡片回调应答补丁已安装`);
