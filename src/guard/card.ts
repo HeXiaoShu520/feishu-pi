@@ -85,8 +85,12 @@ export function buildNoticeCard(text: string): object {
 }
 
 /** 决策结果卡：替换原授权卡，不再保留可点击按钮。 */
-export function buildResultCard(decision: "allow_once" | "deny" | "timeout", detail?: string): object {
-  const text = decision === "allow_once" ? "✅ 已授权一次" : decision === "deny" ? "❌ 已拒绝" : "⏱ 授权已超时";
+export function buildResultCard(decision: "allow_once" | "deny" | "timeout" | "cancelled", detail?: string): object {
+  const text =
+    decision === "allow_once" ? "✅ 已授权一次" :
+    decision === "deny" ? "❌ 已拒绝" :
+    decision === "timeout" ? "⏱ 授权已超时" :
+    "⏹ 会话已中断，授权已取消";
   const reason = detail ? `\n\n${detail}` : "";
   return {
     schema: "2.0",

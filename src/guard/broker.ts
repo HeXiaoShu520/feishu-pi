@@ -52,6 +52,26 @@ export class PermissionBroker {
   }
 
   /**
+   * 授权结束（点击/超时/中断）后统一收尾所有已知卡片：
+   * 精简模式（shouldRecall 为 true）撤回卡片，详细模式更新为结果卡。
+   */
+  private finalizeCards(pending: PendingApproval, decision: "allow_once" | "deny" | "timeout" | "cancelled"): void {
+    const cardIds = [pending.messageId, pending.forwarded?.messageId].filter((id): id is string => Boolean(id));
+    const recall = this.options.recallCard && this.options.shouldRecall?.(pending.chatId);
+    for (const id of cardIds) {
+      if (recall) {
+        this.options.recallCard!(id).catch((error) =>
+          logger.warn(`[Broker] 撤回授权卡失败: ${error instanceof Error ? error.message : error}`),
+        );
+      } else {
+        this.options.updateCard(id, buildResultCard(decision)).catch((error) =>
+          logger.warn(`[Broker] 更新结果卡失败: ${error instanceof Error ? error.message : error}`),
+        );
+      }
+    }
+  }
+
+  /**
    * 发起一次授权：发送授权卡片并等待管理员决策；超时按拒绝处理。
    * signal 中止（如 /stop 中断会话）时立即取消等待、撤下卡片并释放队列。
    */
@@ -69,26 +89,19 @@ export class PermissionBroker {
         if (!pending) return;
         this.pending.delete(approvalId);
         pending.resolve(false);
-        if (pending.messageId) {
-          this.options.updateCard(pending.messageId, buildResultCard("timeout")).catch((error) =>
-            logger.warn(`[Broker] 更新超时结果卡失败: ${error instanceof Error ? error.message : error}`),
-          );
-        }
+        this.finalizeCards(pending, "timeout");
       }, this.options.timeoutMs);
 
       this.pending.set(approvalId, { token, chatId: request.chatId, toolName: request.toolName, toolArgs: request.args, timer, resolve });
 
-      // 会话中断（/stop）：立即取消等待，卡片更新为已取消提示并移除按钮
+      // 会话中断（/stop）：立即取消等待，卡片收尾（精简模式撤回 / 详细模式更新为已取消）
       const onAbort = () => {
         const pending = this.pending.get(approvalId);
         if (!pending) return;
         clearTimeout(pending.timer);
         this.pending.delete(approvalId);
         pending.resolve(false);
-        const cardIds = [pending.messageId, pending.forwarded?.messageId].filter((id): id is string => Boolean(id));
-        for (const id of cardIds) {
-          this.options.updateCard(id, buildNoticeCard("⏹ 会话已中断，本次授权请求已取消。")).catch(() => {});
-        }
+        this.finalizeCards(pending, "cancelled");
       };
       signal?.addEventListener("abort", onAbort, { once: true });
 
@@ -147,20 +160,8 @@ export class PermissionBroker {
     const allowed = decision === "allow_once";
     pending.resolve(allowed);
 
-    // 决策后处理所有已知卡片：确认且精简模式时撤回，其余更新为结果卡，避免残留可点击按钮
-    const cardIds = [pending.messageId, pending.forwarded?.messageId].filter((id): id is string => Boolean(id));
-    const recall = allowed && this.options.recallCard && this.options.shouldRecall?.(pending.chatId);
-    await Promise.all(
-      cardIds.map((id) =>
-        recall
-          ? this.options.recallCard!(id).catch((error) =>
-              logger.warn(`[Broker] 撤回授权卡失败: ${error instanceof Error ? error.message : error}`),
-            )
-          : this.options
-              .updateCard(id, buildResultCard(decision))
-              .catch((error) => logger.warn(`[Broker] 更新结果卡失败: ${error instanceof Error ? error.message : error}`)),
-      ),
-    );
+    // 决策后收尾所有已知卡片：精简模式撤回，详细模式更新为结果卡
+    this.finalizeCards(pending, decision);
     return { accepted: true, detail: allowed ? "已授权一次" : "已拒绝" };
   }
 
