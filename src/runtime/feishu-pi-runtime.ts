@@ -253,6 +253,14 @@ export class FeishuPiRuntime {
       resourceLoader,
     });
 
+    // 立即落盘会话头：Pi 默认在首个 message_end 才创建 session 文件，
+    // 提前写入 session_info 条目让 sessionFile 马上可用，
+    // 会话映射因此能在"开始响应之前"就持久化，中断/崩溃也不丢
+    if (!session.sessionFile) {
+      const name = `feishu:${context?.userName || userId}:${new Date().toISOString()}`;
+      sessionManager.appendSessionInfo(name);
+    }
+
     // 注入工具调用 Guard：每次工具执行前经过白名单 / 大模型审核 / 管理员授权卡
     const toolGuard = this.config.toolGuard;
     if (toolGuard) {
