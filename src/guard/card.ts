@@ -16,60 +16,43 @@ export interface PermissionCardParams {
   token: string;
 }
 
-/** 生成授权卡片（CardKit 2.0），按钮 value 携带 approval_id / token / decision。 */
+/** 提取工具调用的一句话摘要（command/path 等关键字段，单行截断）。 */
+function summarizeArgs(toolName: string, args: unknown): string {
+  const record = (typeof args === "object" && args !== null ? args : {}) as Record<string, unknown>;
+  const first = ["command", "cmd", "path", "file_path", "filePath", "url", "pattern"].map((k) => record[k]).find((v) => typeof v === "string" && v) as string | undefined;
+  const detail = first ?? (Object.keys(record).length > 0 ? JSON.stringify(redact(record)).replace(/\s+/g, " ") : "");
+  return detail.slice(0, COMMAND_MAX_LENGTH).replace(/\n/g, " ").replace(/`/g, "'");
+}
+
+/** 生成授权卡片（CardKit 2.0）：一行工具摘要 + 一行按钮（允许/拒绝/转发三等分）。 */
 export function buildPermissionCard(params: PermissionCardParams): object {
   const { toolName, args, approvalId, token } = params;
-  const elements: object[] = [
-    { tag: "markdown", content: `**工具：** ${toolName}` },
-  ];
 
-  // 命令/路径类参数单独展示（最多 1200 字符），其余参数脱敏后以 JSON 展示
-  const record = (typeof args === "object" && args !== null ? args : {}) as Record<string, unknown>;
-  const commandLike = ["command", "cmd", "path", "file_path", "filePath", "content", "url"];
-  const commandLines = commandLike
-    .filter((key) => typeof record[key] === "string" && record[key])
-    .map((key) => `${key}: ${String(record[key]).slice(0, COMMAND_MAX_LENGTH)}`);
-  if (commandLines.length > 0) {
-    elements.push({ tag: "markdown", content: `**内容：**\n\`\`\`\n${commandLines.join("\n").slice(0, COMMAND_MAX_LENGTH)}\n\`\`\`` });
-  }
-
-  const rest = redact(Object.fromEntries(Object.entries(record).filter(([key]) => !commandLike.includes(key))) as Record<string, unknown>) as Record<string, unknown>;
-  if (Object.keys(rest).length > 0) {
-    elements.push({ tag: "markdown", content: `**其他参数：**\n\`\`\`json\n${JSON.stringify(rest, null, 2).slice(0, COMMAND_MAX_LENGTH)}\n\`\`\`` });
-  }
-
-  elements.push({
-    tag: "markdown",
-    content: "⚠️ 仅配置的管理员点击有效，授权只对当前这一次调用生效。",
+  const summary = summarizeArgs(toolName, args);
+  const button = (text: string, type: string, value: Record<string, unknown>) => ({
+    tag: "button",
+    text: { tag: "plain_text", content: text },
+    type,
+    behaviors: [{ type: "callback", value }],
   });
+  const buttonsRow = {
+    tag: "column_set",
+    flex_mode: "none",
+    background_style: "default",
+    columns: [
+      { tag: "column", width: "weighted", weight: 1, vertical_align: "top", elements: [button("✅ 允许一次", "primary", { action: "tool_approval", approval_id: approvalId, token, decision: "allow_once" })] },
+      { tag: "column", width: "weighted", weight: 1, vertical_align: "top", elements: [button("❌ 拒绝", "default", { action: "tool_approval", approval_id: approvalId, token, decision: "deny" })] },
+      { tag: "column", width: "weighted", weight: 1, vertical_align: "top", elements: [button("📨 转发管理员", "default", { action: "forward_approval", approval_id: approvalId, token })] },
+    ],
+  };
 
   return {
     schema: "2.0",
     header: { title: { tag: "plain_text", content: "🛡 工具调用授权请求" } },
     body: {
       elements: [
-        ...elements,
-        {
-          tag: "button",
-          width: "fill",
-          text: { tag: "plain_text", content: "✅ 允许一次" },
-          type: "primary",
-          behaviors: [{ type: "callback", value: { action: "tool_approval", approval_id: approvalId, token, decision: "allow_once" } }],
-        },
-        {
-          tag: "button",
-          width: "fill",
-          text: { tag: "plain_text", content: "❌ 拒绝" },
-          type: "default",
-          behaviors: [{ type: "callback", value: { action: "tool_approval", approval_id: approvalId, token, decision: "deny" } }],
-        },
-        {
-          tag: "button",
-          width: "fill",
-          text: { tag: "plain_text", content: "📨 申请转发给管理员" },
-          type: "default",
-          behaviors: [{ type: "callback", value: { action: "forward_approval", approval_id: approvalId, token } }],
-        },
+        { tag: "markdown", content: `**${toolName}**${summary ? `：\`${summary}\`` : ""}\n⚠️ 仅管理员点击有效，授权仅本次生效` },
+        buttonsRow,
       ],
     },
   };

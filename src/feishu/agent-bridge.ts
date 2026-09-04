@@ -133,6 +133,19 @@ export class FeishuAgentBridge {
 
       // 记录 prompt 前的基线统计，用于计算本次新增 token
       const statsBefore = await this.conversations.getStats(conversationId, message.context);
+
+      // 首个真实内容（正文或工具调用）到达时的公共收尾：
+      // 停掉思考动画、清空累积器并清掉卡片上残留的 spinner 帧，避免动画文字混入正文
+      let startedRealContent = false;
+      const startRealContent = async () => {
+        if (startedRealContent) return;
+        startedRealContent = true;
+        hasRealContent = true;
+        latestText = "";
+        clearInterval(animationTimer);
+        await reply.replace("");
+      };
+
       session = await this.conversations.prompt(
         {
           conversationId,
@@ -143,11 +156,7 @@ export class FeishuAgentBridge {
           await this.onEvent?.(event, message);
           if (event.type === "assistant_text") {
             // 收到第一个真实内容时：停止动画、清空累积器，从头推送真实内容
-            if (!hasRealContent) {
-              hasRealContent = true;
-              clearInterval(animationTimer);
-              latestText = "";
-            }
+            if (!hasRealContent) await startRealContent();
 
             const prevText = latestText;
             latestText = event.text;
@@ -158,13 +167,7 @@ export class FeishuAgentBridge {
           // 工具事件：正文写入（详细模式保留 / 精简模式临时显示），小字位置同步显示动画。
           if (event.type === "tool_started") {
             activeToolName = event.toolName;
-            // 工具开始调用即停止"分析中"动画，清掉占位的 spinner 帧
-            if (!hasRealContent) {
-              hasRealContent = true;
-              latestText = "";
-              clearInterval(animationTimer);
-              await reply.replace("");
-            }
+            if (!hasRealContent) await startRealContent();
             const toolLine = `\n\n> ⚙ ${formatToolCall(event.toolName, event.args)}`;
             if (this.detailMode.get(message.chatId)) {
               // 详细模式：工具调用永久保留在正文
