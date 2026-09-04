@@ -31,6 +31,7 @@ export function buildPermissionCard(params: PermissionCardParams): object {
   const summary = summarizeArgs(toolName, args);
   const button = (text: string, type: string, value: Record<string, unknown>) => ({
     tag: "button",
+    width: "fill",
     text: { tag: "plain_text", content: text },
     type,
     behaviors: [{ type: "callback", value }],
@@ -51,7 +52,9 @@ export function buildPermissionCard(params: PermissionCardParams): object {
     header: { title: { tag: "plain_text", content: "🛡 工具调用授权请求" } },
     body: {
       elements: [
-        { tag: "markdown", content: `**${toolName}**${summary ? `：\`${summary}\`` : ""}\n⚠️ 仅管理员点击有效，授权仅本次生效` },
+        { tag: "markdown", content: `**${toolName}**` },
+        ...(summary ? [{ tag: "markdown", content: `\`\`\`\n${summary}\n\`\`\`` }] : []),
+        { tag: "markdown", content: "⚠️ 仅管理员点击有效，授权仅本次生效" },
         buttonsRow,
       ],
     },
