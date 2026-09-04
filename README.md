@@ -59,6 +59,21 @@ interface FeishuContext {
 2. **降级到群成员列表** - 支持分页查询，适用于外部成员
 3. **兜底方案** - 返回最小信息（Open ID），确保服务不中断
 
+## 会话模型
+
+会话的隔离与共享规则由消息所在的飞书会话类型决定（`getChatMode` 判定，结果按 chatId 缓存）：
+
+| 场景 | 会话归属 | conversationId 格式 |
+|------|---------|--------------------|
+| 私聊 / 普通群 | **按用户隔离**——同一群里每个人独立上下文 | `{openId}-chat:{chatId}` 或 `{openId}-{chatId}:thread:{threadId}` |
+| 话题群的话题 | **按话题共享**——话题内所有用户共用一个上下文，可以接力讨论 | `topic:{chatId}:{话题根消息ID}` |
+
+**话题根的收敛规则：** 话题的第一条消息没有 threadId，此时用该消息自己的 messageId 作为话题键并落盘（`data/sessions/topic-roots.json`）；后续消息的 threadId 恰好就是这条根消息的 ID，自然收敛到同一会话。若根未确立前用户追加消息（比如首条还在处理时被打断），会从落盘中取回话题根，**不会裂成新会话**。
+
+**增量持久化：** `conversationId → sessionFile` 的映射在 Pi 首次落盘（首个 `message_end` 事件）时就写入，不等整轮回复完成——响应中途被中断或进程退出，下次也能恢复到同一会话。
+
+`/new` 在话题内被禁止（共享会话不允许单人清空），私聊和普通群可用。
+
 ## 我们最终要实现什么
 
 构建一个可靠、可维护且响应快的飞书原生 Agent：
@@ -544,7 +559,7 @@ function getUserRole(userId: string): "default" | "team" | "admin" {
 ```
 工具调用
   ↓
-① 指令白名单（.agent/whitelist.json，正则命中即放行）
+① 指令白名单（.agent/settings.json，正则命中即放行）
   ↓ 未命中
 ② 规则层：只读工具放行；write/edit 写入可写目录（.agent/、data/）放行，写其他路径 → 弹卡
   ↓ 其余
@@ -557,7 +572,7 @@ function getUserRole(userId: string): "default" | "team" | "admin" {
 
 **安全设计：**
 
-- **白名单**：`.agent/whitelist.json` 为正则字符串数组（或含 `patterns` / `readonly_tools` / `readable_dirs` / `writable_dirs` 的对象），匹配「工具名 + 参数」；文件不存在时回退 `FEISHU_CMD_WHITELIST` 环境变量（正则，分号分隔）。
+- **白名单**：优先读 `.agent/settings.json`（Claude Code settings.json 风格，`permissions.allow` 为正则数组），旧的 `.agent/whitelist.json` 兼容读取；均不存在时回退 `FEISHU_CMD_WHITELIST` 环境变量（正则，分号分隔）。白名单匹配「工具名 + 参数」，命中即放行，不再经过规则层和 Guard。
 - **内置安全基线**：只读工具（默认 read/grep/glob 等，可用 `readonly_tools` 覆盖）仅放行**可读目录**（默认整个工作目录，可用 `readable_dirs` 收紧）内的读取；敏感文件（`.env`、`id_rsa`、`*.pem`、`*secret*` 等）无论在哪都弹卡；write/edit 写入可写目录（默认 `.agent/`、`data/`，可用 `writable_dirs` 覆盖）放行，写其他路径弹卡。
 - **Guard 默认拒绝**：Guard 模型未配置、超时、接口异常、返回无法解析时，一律按 ask 处理。
 - **授权卡服务端校验**：每次授权有唯一 `approval_id` + 一次性 `token`；回调时在服务端校验 token 一致、卡片来源（原卡或转发卡）、点击者必须是管理员、decision 合法、未处理过。非管理员点击、伪造 token、卡片被转发到其他会话再点击均无效。授权是单次的，不缓存。
@@ -566,25 +581,23 @@ function getUserRole(userId: string): "default" | "team" | "admin" {
 
 **配置：**
 
-`.agent/whitelist.json`（简单格式：正则数组）：
-
-```json
-[
-  "^read\\s",
-  "^git (status|diff|log)\\b"
-]
-```
-
-完整格式（可覆盖只读工具、可读目录与可写目录，均整体替换内置基线）：
+`.agent/settings.json`（推荐，Claude Code 风格；`allow` 为白名单正则数组）：
 
 ```json
 {
-  "patterns": ["^read\\s", "^git (status|diff|log)\\b"],
-  "readonly_tools": ["read", "grep", "glob", "ls", "find"],
-  "readable_dirs": [".", "docs"],
-  "writable_dirs": [".agent", "data", "output"]
+  "permissions": {
+    "allow": ["^read\\s", "^git (status|diff|log)\\b"],
+    "readonly_tools": ["read", "grep", "glob", "ls", "find"],
+    "readable_dirs": [".", "docs"],
+    "writable_dirs": [".agent", "data", "output"]
+  }
 }
 ```
+
+- `allow`：命中「工具名 + 参数」即放行（必填才有白名单效果）
+- `readonly_tools` / `readable_dirs` / `writable_dirs`：可选，配置后**整体替换**对应内置基线
+
+旧的 `.agent/whitelist.json` 两种格式仍兼容读取（正则数组，或含同名顶层字段的对象）。
 
 `.env`（Guard 与授权卡）：
 
@@ -622,9 +635,7 @@ npm test
 
 feishu-pi 提供以下内置指令，在飞书对话中直接输入即可使用：
 
-| 指令 | 功能 | 权限要求 | 说明 |
-|------|------|---------|------|
-| `/model` | 查看/切换 AI 模型 | 仅管理员 | 显示当前可用模型列表，点击切换（开发中） |
+| `/model` | 查看/切换 AI 模型 | 仅管理员 | 显示当前可用模型列表，点击切换，**即时生效**（新会话使用新模型，同时持久化到 `.env`） |
 | `/help` | 查看帮助信息 | 所有用户 | 显示机器人功能和可用指令 |
 | `/new` | 清空当前对话 | 所有用户 | 清空会话历史，开始新对话 |
 | `/stop` | 中断当前响应 | 所有用户 | 停止正在生成的 AI 回复 |
@@ -674,10 +685,12 @@ claude-sonnet-4-6 · 90.8K（新增 1.6K） · $1.0886 · 4.6s · 01a05e14
 
 **权限说明：**
 - `/model` 仅管理员可用（由 `FEISHU_ADMIN` 配置）
+- `/new` 在话题群的话题内被禁止（话题会话为所有人共享，不允许单人清空）
 - 其他指令所有用户都可以使用，仅影响自己的会话
 
 **模型切换功能：**
 - `/model` 会从配置的模型中继站获取可用模型列表
 - 支持无需 API Key 的公开端点
 - 智能 URL 候选生成（参考 cc-switch 实现）
-- 当前版本仅支持查看，切换功能开发中
+- 点击按钮即切换：当前进程内的新会话立即使用新模型，同时持久化到 `.env` 供重启后使用
+- 非管理员点击模型按钮会收到「仅管理员可切换模型」提示（服务端校验，与卡片文案无关）
