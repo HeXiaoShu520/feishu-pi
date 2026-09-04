@@ -45,6 +45,8 @@ export interface FeishuPiSession {
   abort(): void;
   getStats(): any;
   getModelName?(): string;
+  /** 当前上下文占用估算（含窗口与百分比），可选 */
+  getContextUsage?(): { tokens: number | null; contextWindow: number; percent: number | null } | undefined;
 }
 
 export type FeishuPiTool = AgentTool;

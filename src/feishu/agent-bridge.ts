@@ -201,7 +201,10 @@ export class FeishuAgentBridge {
         const deltaTokens = Math.max(0, (tokens.total || 0) - ((statsBefore as any)?.tokens?.total || 0));
         const cost = typeof stats.cost === "number" ? `$${stats.cost.toFixed(4)}` : "";
         const elapsed = `${((Date.now() - requestStartedAt) / 1000).toFixed(1)}s`;
-        statsLine = [session.getModelName?.() || "模型未知", `${formatTokens(tokens.total || 0)}（新增 ${formatTokens(deltaTokens)}）`, cost, elapsed, sessionAlias(stats.sessionId)].filter(Boolean).join(" · ");
+        // ctx：当前上下文占用百分比（模型窗口口径，区别于上面的累计计费 token）
+        const usage = session?.getContextUsage?.();
+        const ctx = usage?.percent != null ? `ctx ~${Math.round(usage.percent)}%` : "";
+        statsLine = [session.getModelName?.() || "模型未知", `${formatTokens(tokens.total || 0)}（新增 ${formatTokens(deltaTokens)}）`, ctx, cost, elapsed, sessionAlias(stats.sessionId)].filter(Boolean).join(" · ");
       }
 
       // logger.log(`[Debug] finalize with latestText="${latestText}"`);
