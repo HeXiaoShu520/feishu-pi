@@ -1,8 +1,13 @@
 {
   "permissions": {
     "allow": [
-      "^read\\s",
-      "^git (status|diff|log)\\b"
-    ]
+      "^read\s",
+      "^grep\s",
+      "^ls\s",
+      "^git (status|diff|log|add|commit)\b",
+      "^npm (run check|run test|test)\b"
+    ],
+    "readable_dirs": [".", "docs"],
+    "writable_dirs": [".agent", "data", "output"]
   }
 }
