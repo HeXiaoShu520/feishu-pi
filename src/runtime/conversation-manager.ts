@@ -2,6 +2,7 @@ import type { FeishuPiPrompt, FeishuPiSession } from "./types.ts";
 import type { FeishuPiRuntime } from "./feishu-pi-runtime.ts";
 import type { ConversationStore } from "./conversation-store.ts";
 import type { FeishuContext } from "../context/types.ts";
+import { logger } from "../utils/logger.ts";
 
 export interface ConversationMessage {
   conversationId: string;
@@ -12,6 +13,8 @@ export interface ConversationMessage {
 interface ConversationState {
   session: FeishuPiSession;
   queue: Promise<void>;
+  /** 当前是否有在途请求（新消息到达时据此打断） */
+  busy?: boolean;
   /** 已持久化到 store 的 sessionFile，避免重复写入 */
   persistedSessionFile?: string;
 }
@@ -59,10 +62,18 @@ export class ConversationManager {
     }
   }
 
-  /** 排队执行一次消息，并将 Session 事件交给调用方。 */
+  /** 排队执行一次消息，并将 Session 事件交给调用方。新消息到达时会打断在途请求。 */
   async prompt(message: ConversationMessage, onEvent: Parameters<FeishuPiSession["subscribe"]>[0]): Promise<FeishuPiSession> {
     const state = await this.getState(message.conversationId, message.context);
+
+    // 新消息打断：当前还在思考/执行时，先中断在途请求，本条消息排队后立即开始
+    if (state.busy) {
+      logger.info(`[Conversation] 新消息打断在途响应: ${message.conversationId}`);
+      state.session.abort();
+    }
+
     const task = state.queue.then(async () => {
+      state.busy = true;
       // 事件到达时同步检查 sessionFile：Pi 在首个 message_end 落盘，此时立刻持久化映射，
       // 即使随后被中断，下次也能恢复到同一会话
       const unsubscribe = state.session.subscribe(async (event) => {
@@ -73,6 +84,7 @@ export class ConversationManager {
         await state.session.prompt(message.prompt);
         await state.session.waitForIdle();
       } finally {
+        state.busy = false;
         unsubscribe();
         // 兜底：响应结束后再检查一次
         await this.persistSessionFile(message.conversationId, state);
