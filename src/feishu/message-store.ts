@@ -1,5 +1,4 @@
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { JsonMapStore } from "../utils/json-store.ts";
 
 /** 消息处理状态：处理中 / 已完成 / 失败 */
 type MessageStatus = "processing" | "completed" | "failed";
@@ -12,63 +11,38 @@ interface MessageRecord {
 }
 
 /** 使用 JSON 保存消息处理状态，避免重复投递重复执行 Agent。 */
-export class MessageStore {
-  private records = new Map<string, MessageRecord>();
-  private loaded = false;
-  private writeQueue: Promise<void> = Promise.resolve();
-
-  private readonly filePath: string;
+export class MessageStore extends JsonMapStore<MessageRecord> {
+  /** processing 状态超过该时长视为卡住，允许重新认领 */
   private readonly processingTtlMs: number;
 
   constructor(filePath: string, processingTtlMs = 10 * 60 * 1000) {
-    this.filePath = filePath;
+    super(filePath);
     this.processingTtlMs = processingTtlMs;
   }
 
   /** 原子认领一条消息；已完成或仍在处理的消息不会再次执行。 */
   async claim(messageId: string): Promise<boolean> {
-    await this.load();
+    await this.ensureLoaded();
     const existing = this.records.get(messageId);
     if (existing && (existing.status === "completed" || (existing.status === "processing" && Date.now() - existing.updatedAt < this.processingTtlMs))) return false;
-    this.records.set(messageId, { status: "processing", updatedAt: Date.now() });
-    await this.persist();
+    await this.setStatus(messageId, "processing");
     return true;
   }
 
   /** 标记消息处理完成。 */
   async complete(messageId: string): Promise<void> {
-    await this.update(messageId, "completed");
+    await this.setStatus(messageId, "completed");
   }
 
   /** 标记消息处理失败，避免重复投递立即再次执行。 */
   async fail(messageId: string): Promise<void> {
-    await this.update(messageId, "failed");
+    await this.setStatus(messageId, "failed");
   }
 
-  private async update(messageId: string, status: MessageStatus): Promise<void> {
-    await this.load();
+  /** 写入状态并落盘。 */
+  private async setStatus(messageId: string, status: MessageStatus): Promise<void> {
+    await this.ensureLoaded();
     this.records.set(messageId, { status, updatedAt: Date.now() });
     await this.persist();
-  }
-
-  private async load(): Promise<void> {
-    if (this.loaded) return;
-    this.loaded = true;
-    try {
-      const records = JSON.parse(await readFile(this.filePath, "utf8")) as Record<string, MessageRecord>;
-      this.records = new Map(Object.entries(records));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-    }
-  }
-
-  private async persist(): Promise<void> {
-    this.writeQueue = this.writeQueue.then(async () => {
-      await mkdir(dirname(this.filePath), { recursive: true });
-      const temporaryPath = join(dirname(this.filePath), `.${Date.now()}-${process.pid}.tmp`);
-      await writeFile(temporaryPath, `${JSON.stringify(Object.fromEntries(this.records), null, 2)}\n`, "utf8");
-      await rename(temporaryPath, this.filePath);
-    });
-    await this.writeQueue;
   }
 }
