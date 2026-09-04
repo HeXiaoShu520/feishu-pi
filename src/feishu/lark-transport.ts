@@ -190,18 +190,24 @@ export class LarkTransport implements FeishuTransport {
   private patchCardAck(): void {
     const ws = (this.channel as unknown as { rawWsClient?: { eventDispatcher?: { invoke: (data: unknown, opts?: unknown) => Promise<unknown> } } }).rawWsClient;
     const dispatcher = ws?.eventDispatcher;
-    if (!dispatcher || (dispatcher as { __cardAckPatched?: boolean }).__cardAckPatched) return;
+    if (!dispatcher || (dispatcher as { __cardAckPatched?: boolean }).__cardAckPatched) {
+      logger.warn(`[CardAck] 应答补丁未安装：rawWsClient/eventDispatcher 不存在或已打过补丁`);
+      return;
+    }
     const original = dispatcher.invoke.bind(dispatcher);
     dispatcher.invoke = async (data, opts) => {
       const result = await original(data, opts);
       // 仅对卡片回调补空应答；普通事件维持原样
       const text = typeof (data as { data?: unknown })?.data === "string" ? (data as { data: string }).data : "";
-      if (result == null && text.includes("card.action.trigger")) {
+      const isCardAction = text.includes("card.action.trigger");
+      if (isCardAction) logger.info(`[CardAck] 卡片回调事件到达，原始应答=${result === undefined ? "undefined" : "有值"}，补充 toast 应答`);
+      if (result == null && isCardAction) {
         return { toast: { type: "info", content: "✅ 已收到，处理中…" } };
       }
       return result;
     };
     (dispatcher as { __cardAckPatched?: boolean }).__cardAckPatched = true;
+    logger.info(`[CardAck] 卡片回调应答补丁已安装`);
   }
 
   /** 卡片回调的实际处理逻辑（后台执行）。 */
