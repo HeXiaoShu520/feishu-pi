@@ -51,8 +51,11 @@ export class PermissionBroker {
     this.options = options;
   }
 
-  /** 发起一次授权：发送授权卡片并等待管理员决策；超时按拒绝处理。 */
-  async requestApproval(request: ApprovalRequest): Promise<{ allowed: boolean; detail: string }> {
+  /**
+   * 发起一次授权：发送授权卡片并等待管理员决策；超时按拒绝处理。
+   * signal 中止（如 /stop 中断会话）时立即取消等待、撤下卡片并释放队列。
+   */
+  async requestApproval(request: ApprovalRequest, signal?: AbortSignal): Promise<{ allowed: boolean; detail: string }> {
     if (this.options.adminOpenIds.length === 0) {
       return { allowed: false, detail: "未配置管理员，无法授权" };
     }
@@ -75,6 +78,20 @@ export class PermissionBroker {
 
       this.pending.set(approvalId, { token, chatId: request.chatId, toolName: request.toolName, toolArgs: request.args, timer, resolve });
 
+      // 会话中断（/stop）：立即取消等待，卡片更新为已取消提示并移除按钮
+      const onAbort = () => {
+        const pending = this.pending.get(approvalId);
+        if (!pending) return;
+        clearTimeout(pending.timer);
+        this.pending.delete(approvalId);
+        pending.resolve(false);
+        const cardIds = [pending.messageId, pending.forwarded?.messageId].filter((id): id is string => Boolean(id));
+        for (const id of cardIds) {
+          this.options.updateCard(id, buildNoticeCard("⏹ 会话已中断，本次授权请求已取消。")).catch(() => {});
+        }
+      };
+      signal?.addEventListener("abort", onAbort, { once: true });
+
       const card = buildPermissionCard({ toolName: request.toolName, args: request.args, approvalId, token });
       this.options
         .sendCard(request.chatId, card)
@@ -94,7 +111,7 @@ export class PermissionBroker {
         });
     }).then((allowed) => ({
       allowed,
-      detail: allowed ? "管理员已授权" : "管理员拒绝或授权超时",
+      detail: allowed ? "管理员已授权" : "管理员拒绝、授权超时或会话已中断",
     }));
   }
 

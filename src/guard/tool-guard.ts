@@ -28,8 +28,8 @@ export class ToolGuard {
     this.broker = broker;
   }
 
-  /** 审核一次工具调用，返回 block 信息；放行时返回 undefined。管理员会话同样审核。 */
-  async check(params: ToolGuardCheckParams): Promise<{ block: true; reason: string } | undefined> {
+  /** 审核一次工具调用，返回 block 信息；放行时返回 undefined。管理员会话同样审核。signal 中止（/stop）时取消授权等待。 */
+  async check(params: ToolGuardCheckParams, signal?: AbortSignal): Promise<{ block: true; reason: string } | undefined> {
     const { toolName, args } = params;
 
     const hit = this.whitelist.match(toolName, args);
@@ -50,7 +50,7 @@ export class ToolGuard {
     }
 
     logger.info(`[ToolGuard] Guard 要求授权 (${verdict.reason})，发送授权卡: ${toolName}`);
-    const { allowed, detail } = await this.broker.requestApproval({ toolName, args, chatId: params.chatId, reason: verdict.reason });
+    const { allowed, detail } = await this.broker.requestApproval({ toolName, args, chatId: params.chatId, reason: verdict.reason }, signal);
     if (allowed) return undefined;
     return { block: true, reason: `工具 ${toolName} 未获得管理员授权：${detail}` };
   }

@@ -257,9 +257,9 @@ export class FeishuPiRuntime {
     const toolGuard = this.config.toolGuard;
     if (toolGuard) {
       const chatId = context?.chatId;
-      session.agent.beforeToolCall = async (ctx) => {
+      session.agent.beforeToolCall = async (ctx, signal) => {
         try {
-          return await toolGuard({ toolName: ctx.toolCall.name, args: ctx.args, chatId });
+          return await toolGuard({ toolName: ctx.toolCall.name, args: ctx.args, chatId }, signal);
         } catch (error) {
           // Guard 自身异常按默认拒绝处理
           const detail = error instanceof Error ? error.message : String(error);

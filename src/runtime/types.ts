@@ -32,8 +32,8 @@ export interface FeishuPiConfig {
   systemPrompt?: string;
   adminId: string;
   teamMemberIdentifiers: string[];  // 团队成员标识（Open ID / 姓名 / 邮箱）
-  /** 工具调用 Guard（beforeToolCall 钩子），可选 */
-  toolGuard?: (params: { toolName: string; args: unknown; chatId?: string }) => Promise<{ block: true; reason: string } | undefined>;
+  /** 工具调用 Guard（beforeToolCall 钩子），可选；signal 中止（/stop）时取消授权等待 */
+  toolGuard?: (params: { toolName: string; args: unknown; chatId?: string }, signal?: AbortSignal) => Promise<{ block: true; reason: string } | undefined>;
 }
 
 /** 对 Pi AgentSession 的最小接口封装（供会话管理与卡片渲染使用） */
