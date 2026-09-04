@@ -206,31 +206,27 @@ export async function main(): Promise<void> {
   // 打印配置页面地址
   console.log(`\n配置页面: http://localhost:3456\n`);
 
-  // 优雅退出处理：确保所有资源完全释放
+  // 优雅退出处理：Windows 上 WebSocket disconnect 可能挂住，
+  // 因此后台尝试断开 + 短宽限后立即硬退出，不阻塞终端
   let exiting = false;
   const gracefulShutdown = async (signal: string) => {
     if (exiting) return;
     exiting = true;
     logger.info(`[Main] 收到 ${signal} 信号，正在关闭服务...`);
 
-    // 清理定时器
     clearInterval(cleanupTimer);
 
-    try {
-      // 设置 3 秒超时，防止 WebSocket 断开卡住
-      const disconnectPromise = transport.disconnect();
-      const timeout = new Promise((_, reject) =>
-        setTimeout(() => reject(new Error("disconnect timeout")), 3000)
-      );
-      await Promise.race([disconnectPromise, timeout]);
-      logger.info("[Main] 飞书连接已关闭");
-    } catch (err) {
-      logger.warn("[Main] 关闭飞书连接超时或失败:", err instanceof Error ? err.message : err);
-    }
+    // 断开在后台进行，不 await——挂住也不影响退出
+    void transport.disconnect().then(
+      () => logger.info("[Main] 飞书连接已关闭"),
+      (err) => logger.warn("[Main] 关闭飞书连接失败:", err instanceof Error ? err.message : err),
+    );
 
-    // 强制退出，确保所有子进程和定时器被清理
-    logger.info("[Main] 服务已完全退出");
-    process.exit(0);
+    // 给断开操作 500ms 宽限期后强制退出（进程退出后未完成的连接由操作系统回收）
+    setTimeout(() => {
+      logger.info("[Main] 服务已退出");
+      process.exit(0);
+    }, 500);
   };
 
   process.on("SIGINT", () => gracefulShutdown("SIGINT"));
