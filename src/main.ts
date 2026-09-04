@@ -18,6 +18,7 @@ import { CommandWhitelist, loadWhitelistConfig } from "./guard/whitelist.ts";
 import { SafetyJudge } from "./guard/judge.ts";
 import { PermissionBroker } from "./guard/broker.ts";
 import { ToolGuard } from "./guard/tool-guard.ts";
+import { buildNoticeCard } from "./guard/card.ts";
 
 /** 启动轻量飞书 Agent 服务。 */
 export async function main(): Promise<void> {
@@ -152,6 +153,8 @@ export async function main(): Promise<void> {
         logger.info(`[Main] 授权请求已转发给管理员私聊（点击者 ${action.operatorOpenId}）`);
       } else {
         logger.warn(`[Main] 转发请求被拒绝: ${result.detail}（点击者 ${action.operatorOpenId}）`);
+        // 服务重启等导致请求失效：就地更新点击的卡片，给点击者明确提示
+        await transport.updateCardById(action.messageId, buildNoticeCard("⚠️ 该授权请求已失效（服务已重启或已处理），请重新发起任务。")).catch(() => {});
       }
       return;
     }
@@ -168,6 +171,10 @@ export async function main(): Promise<void> {
       logger.info(`[Main] 授权回调已处理: ${result.detail}（点击者 ${action.operatorOpenId}）`);
     } else {
       logger.warn(`[Main] 授权回调被拒绝: ${result.detail}（点击者 ${action.operatorOpenId}）`);
+      // 失效点击就地更新卡片提示（服务重启后旧授权卡会命中这里）
+      if (result.detail.includes("不存在")) {
+        await transport.updateCardById(action.messageId, buildNoticeCard("⚠️ 该授权请求已失效（服务已重启或已处理），请重新发起任务。")).catch(() => {});
+      }
     }
   });
 

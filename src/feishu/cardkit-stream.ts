@@ -191,13 +191,13 @@ export class CardKitStream {
     }
   }
 
-  /** PUT 正文元素内容。 */
+  /** PUT 正文元素内容（content 不允许为空串，空时用空格占位）。 */
   private putContent(fullText: string): Promise<void> {
     return this.client.request({
       method: "PUT",
       url: `/open-apis/cardkit/v1/cards/${this.cardId}/elements/${STREAM_ELEMENT_ID}/content`,
       data: {
-        content: fullText,
+        content: fullText || " ",
         sequence: ++this.sequence,
         uuid: this.uuid(),
       },
