@@ -130,6 +130,19 @@ npm install
 
 > `npm install` 会自动执行 `postinstall` 脚本（`scripts/patch-pi-ai.js`），对 `node_modules/@earendil-works/pi-ai` 打补丁：移除 Anthropic 请求头中的 `anthropic-dangerous-direct-browser-access`，避免经 API 中转站调用时返回 403。重新安装依赖后补丁会自动重新应用，无需手动处理。
 
+### 依赖补丁与升级注意
+
+项目目前有 **1 个文件补丁 + 1 处历史行为补丁（已删除）**，升级依赖前扫一眼本节：
+
+| 补丁 | 补的对象 | 原因 | 失效症状 | 何时可删 |
+|------|---------|------|---------|---------|
+| `scripts/patch-pi-ai.js`（postinstall，自动重放） | `@earendil-works/pi-ai` | 浏览器访问请求头导致 API 中转站 403 | 直连官方 API 时中转站不再 403，或改用官方直连 | pi-ai 上游移除该请求头 |
+| ~~`patchCardAck()`（已删除）~~ | `@larksuiteoapi/node-sdk` LarkChannel | 卡片回调应答无数据体 + 去重静默吞事件 | — | 已于传输层切换到官方底层 `WSClient + EventDispatcher` 后删除（详见 `git log` 中"传输层切换"提交） |
+
+**传输层实现说明**：`src/feishu/lark-transport.ts` 使用官方**底层** `WSClient + EventDispatcher`（而非 LarkChannel 高层封装）——卡片回调 handler 的返回值会原样进 ACK 数据体（与 Go 官方 SDK 行为一致），消息归一化使用官方导出的 `normalize()`。升级 node-sdk 版本后建议快速回归一次：收发消息、文件附件、授权卡点击、/model 切换。
+
+**版本策略**：`@larksuiteoapi/node-sdk` 使用精确锁版（无 `^`），升级需手动改版本号并回归；`@earendil-works/*`（Pi 系）跟随上游 minor 版本。
+
 ### 1. 配置飞书应用权限
 
 在 [飞书开放平台](https://open.feishu.cn/) 开发者后台配置以下权限：
