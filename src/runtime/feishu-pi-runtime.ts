@@ -31,7 +31,7 @@ class SessionWrapper implements FeishuPiSession {
   }
 
   getStats() {
-    return (this.raw as any).getSessionStats?.();
+    return this.raw.getSessionStats();
   }
 
   getModelName(): string {
@@ -73,9 +73,8 @@ class SessionWrapper implements FeishuPiSession {
   }
 
   abort(): void {
-    if (typeof (this.raw as any).abort === "function") {
-      (this.raw as any).abort();
-    }
+    // abort 返回 Promise，这里不等待（调用方只负责触发中断）
+    void this.raw.abort();
   }
 }
 
