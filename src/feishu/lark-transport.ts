@@ -1,10 +1,9 @@
-import { createLarkChannel, normalizeCardAction, type LarkChannel } from "@larksuiteoapi/node-sdk";
-import type { FeishuInboundMessage, FeishuReply, FeishuTransport } from "./types.ts";
+import { EventDispatcher, normalize, normalizeCardAction, WSClient, type Client } from "@larksuiteoapi/node-sdk";
+import type { FeishuInboundMessage, FeishuTransport } from "./types.ts";
 import { LarkCli } from "./lark-cli.ts";
 import { TopicRootStore } from "./topic-root-store.ts";
 import { LarkImageProcessor } from "./image-processor.ts";
 import { formatLogText } from "./log-utils.ts";
-import type { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "../utils/logger.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -17,8 +16,8 @@ export interface LarkTransportConfig {
   userProfileDir?: string;
   handshakeTimeoutMs?: number;
   pingTimeout?: number;
-  /** 飞书 Client 实例（用于图片下载） */
-  client?: Client;
+  /** 飞书 Client 实例（消息发送、卡片更新、资源下载等 API 调用） */
+  client: Client;
   /** 图片缓存目录（可选） */
   imageCacheDir?: string;
   /** 文件附件缓存目录（可选，提供后支持 file/audio/video 附件下载） */
@@ -31,19 +30,27 @@ export interface LarkTransportConfig {
   onModelSwitch?: (modelName: string) => void;
 }
 
-/** 基于飞书官方高层 Channel 的最小消息传输实现。 */
+/**
+ * 基于飞书官方底层 WSClient + EventDispatcher 的消息传输实现。
+ *
+ * 不使用 LarkChannel 高层封装——它对卡片回调有两个问题：
+ *  1. 分发时丢弃 handler 返回值，ACK 帧没有数据体，客户端弹「目标回调服务超时未响应」
+ *  2. 去重层对 10 分钟内重复点击静默吞事件（连 ACK 都不发）
+ * 底层方式下 handler 返回值原样进 ACK（与 Go 官方 SDK 行为一致），
+ * 消息去重由 MessageStore.claim 保证，会话内顺序由 ConversationManager 保证。
+ */
 export class LarkTransport implements FeishuTransport {
-
-  private readonly channel: LarkChannel;
+  private wsClient?: WSClient;
+  private readonly appId: string;
+  private readonly appSecret: string;
   private readonly botOpenId?: string;
   private readonly larkCli: LarkCli;
   private readonly imageProcessor?: LarkImageProcessor;
   private readonly adminOpenId?: string;
   private readonly onModelSwitch?: (modelName: string) => void;
-  private readonly client?: Client;
+  private readonly client: Client;
   private handler?: (message: FeishuInboundMessage) => Promise<void>;
   private approvalHandler?: (params: { value: Record<string, unknown>; action: { messageId: string; chatId: string; operatorOpenId: string } }) => Promise<void>;
-  private messageHandlerRegistered = false;
   private connecting?: Promise<void>;
   /** 会话模式缓存（p2p/group/topic），话题群与普通群的会话隔离策略不同 */
   private readonly chatModeCache = new Map<string, "p2p" | "group" | "topic">();
@@ -51,213 +58,193 @@ export class LarkTransport implements FeishuTransport {
   private readonly topicRoots?: TopicRootStore;
   /** 文件附件缓存目录 */
   private readonly filesCacheDir?: string;
+  /** 图片缓存目录（供附件下载参考） */
+  private readonly imageCacheDir?: string;
 
   constructor(config: LarkTransportConfig) {
+    this.appId = config.appId;
+    this.appSecret = config.appSecret;
     this.botOpenId = config.botOpenId;
     this.adminOpenId = config.adminOpenId;
     this.onModelSwitch = config.onModelSwitch;
     this.client = config.client;
+    this.filesCacheDir = config.filesCacheDir;
+    this.imageCacheDir = config.imageCacheDir;
     if (config.topicRootsFile) {
       this.topicRoots = new TopicRootStore(config.topicRootsFile);
     }
-    this.filesCacheDir = config.filesCacheDir;
-    this.larkCli = new LarkCli(config.client!, config.appId, config.userProfileDir);
-    if (config.client) {
-      this.imageProcessor = new LarkImageProcessor(config.client, {
-        cacheDir: config.imageCacheDir,
-      });
-    }
-    this.channel = createLarkChannel({
-      appId: config.appId,
-      appSecret: config.appSecret,
-      transport: "websocket",
-      source: config.source ?? "feishu-pi",
-      handshakeTimeoutMs: config.handshakeTimeoutMs ?? 15_000,
-      wsConfig: { pingTimeout: config.pingTimeout ?? 30 },
-      safety: { dedup: { maxEntries: 10_000, ttl: 10 * 60 * 1000 } },
-      includeRawEvent: true,
+    this.larkCli = new LarkCli(config.client, config.appId, config.userProfileDir);
+    this.imageProcessor = new LarkImageProcessor(config.client, {
+      cacheDir: config.imageCacheDir,
     });
-    this.channel.on("reconnecting", () => logger.warn("[LarkTransport] 飞书 WebSocket 正在重连"));
-    this.channel.on("reconnected", () => logger.info("[LarkTransport] 飞书 WebSocket 已恢复"));
-    this.channel.on("error", (error) => logger.error("[LarkTransport] 飞书 WebSocket 错误", error));
   }
 
-  /** 建立飞书长连接并开始接收消息。 */
+  /** 建立飞书长连接并开始接收事件。 */
   async connect(): Promise<void> {
     if (this.connecting) return this.connecting;
-    if (!this.messageHandlerRegistered) {
-      this.messageHandlerRegistered = true;
+    if (this.wsClient) return; // 已连接（WSClient 自带重连，无需重复 start）
 
-      // 监听普通消息
-      this.channel.on("message", async (message) => {
-        if (this.botOpenId && message.senderId === this.botOpenId) return;
-        const chatId = message.chatId;
-        const threadId = message.threadId;
+    const dispatcher = new EventDispatcher({});
+    dispatcher.register({
+      // 普通消息：normalize 归一化（content/resources/mentions），交给 handler 后台处理
+      "im.message.receive_v1": async (raw: Record<string, unknown>) => {
         try {
-          const profile = await this.larkCli.getUserProfile(message.senderId, chatId);
-          const displayName = profile.name || profile.englishName || profile.openId;
-
-          // 构造 conversationId：
-          // - 话题群：同一话题内所有用户共享一个会话；首条消息没有 threadId，
-          //   用该消息的 messageId 作为话题键并持久化——后续消息的 threadId 恰好就是这条根消息的 ID，
-          //   收敛到同一会话；若根未确立前用户追加消息，从持久化中取回话题根，避免被打断后裂成新会话
-          // - 其他会话（私聊/普通群）：按用户隔离
-          const chatMode = await this.getChatModeCached(chatId);
-          let conversationId: string;
-          if (chatMode === "topic") {
-            let rootId = threadId;
-            if (rootId) {
-              await this.topicRoots?.clear(chatId); // threadId 出现，话题根已确立
-            } else {
-              const pending = await this.topicRoots?.get(chatId);
-              rootId = pending ?? message.messageId;
-              if (!pending) await this.topicRoots?.set(chatId, rootId); // 首条消息：登记自己为话题根
-            }
-            conversationId = `topic:${chatId}:${rootId}`;
-          } else {
-            conversationId = `${profile.openId}-${threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`}`;
-          }
-
-          // 过滤消息中的 @ 机器人标记
-          let cleanedText = message.content;
-          if (this.botOpenId) {
-            // 匹配 @bot_xxx 或 <at user_id="bot_xxx"></at> 等格式
-            cleanedText = cleanedText
-              .replace(new RegExp(`<at\\s+user_id="${this.botOpenId}"[^>]*>.*?</at>`, "gi"), "")
-              .replace(new RegExp(`@${this.botOpenId}\\s*`, "gi"), "")
-              .trim();
-          }
-
-          // 处理图片附件（含 post 富文本里的图片：SDK 会把它们放进 resources）
-          let images;
-          let imageCount = 0;
-          if (this.imageProcessor && message.resources && message.resources.length > 0) {
-            const imageKeys = message.resources
-              .filter((r) => r.type === "image")
-              .map((r) => r.fileKey);
-
-            if (imageKeys.length > 0) {
-              imageCount = imageKeys.length;
-              images = await this.imageProcessor.processImages(imageKeys);
-            }
-          }
-
-          // 下载文件类附件（file/audio/video/media），保存到本地并把路径写进消息文本，
-          // Agent 可用 read/bash 直接访问
-          let attachmentNote = "";
-          const fileResources = (message.resources ?? []).filter(
-            (r) => ["file", "audio", "video", "media"].includes(r.type) && r.fileKey,
-          );
-          if (this.filesCacheDir && fileResources.length > 0) {
-            const { writeFile, mkdir } = await import("node:fs/promises");
-            await mkdir(this.filesCacheDir, { recursive: true });
-            for (const resource of fileResources.slice(0, 5)) {
-              try {
-                const buffer = await this.channel.downloadResource(resource.fileKey, resource.type as "file");
-                const fileName = sanitizeFileName((resource as { fileName?: string }).fileName || resource.fileKey);
-                const filePath = join(this.filesCacheDir, `${Date.now()}-${fileName}`);
-                await writeFile(filePath, buffer);
-                attachmentNote += `\n[附件] ${fileName} 已保存到: ${filePath}`;
-              } catch (error) {
-                logger.warn(`[LarkTransport] 下载附件失败 ${resource.fileKey}: ${error instanceof Error ? error.message : error}`);
-              }
-            }
-            if (attachmentNote) cleanedText += `\n${attachmentNote}`;
-          }
-
-          // 记录收到的消息
-          const msgPreview = formatLogText(message.content);
-          const imageInfo = imageCount > 0 ? `（含 ${imageCount} 张图片）` : "";
-          logger.userInput(displayName, `收到消息${imageInfo}: ${msgPreview}`);
-
-          // 判断是否为管理员
-          const isAdmin = this.adminOpenId ? profile.openId === this.adminOpenId : false;
-
-          // 关键：不能 await 完整处理——SDK 按 chatId 串行排队，
-          // 若在此等待整个 Agent 流程（可能卡在等授权卡点击），
-          // 后续卡片回调会在同一队列里被饿死 → 点击永远无响应（死锁）。
-          // 交给 handler 后台处理即可，会话内的顺序由 ConversationManager 保证。
-          void this.handler?.({
-            messageId: message.messageId,
-            chatId,
-            context: {
-              userOpenId: profile.openId,
-              userName: displayName,
-              departmentNames: profile.departmentNames,
-              chatId,
-              threadId,
-              conversationId,
-              isAdmin,
-            },
-            text: cleanedText,
-            images,
-          }).catch((error) => {
-            logger.error(`[LarkTransport] 消息处理失败: ${error instanceof Error ? error.message : error}`);
-          });
+          const message = await normalize(raw as never, {
+            botIdentity: this.botOpenId ? { openId: this.botOpenId } : undefined,
+            stripBotMentions: true,
+            includeRaw: true,
+          } as never);
+          if (!message) return;
+          await this.dispatchMessage(message as unknown as { messageId: string; chatId: string; threadId?: string; senderId: string; content: string; resources?: Array<{ type: string; fileKey: string; fileName?: string }> });
         } catch (error) {
-          const detail = error instanceof Error ? error.message : String(error);
-          logger.error(`[${message.senderId}] ${detail}`);
-          await this.channel.send(`无法读取用户资料：${detail}`, { text: `无法读取用户资料：${detail}` }, { replyTo: message.messageId, replyInThread: true });
+          logger.error("[LarkTransport] 消息归一化/分发失败:", error);
         }
-      });
+      },
+      // 卡片回调：handler 返回值（toast）会进 ACK 帧，反馈点击行为——不再弹「超时未响应」
+      "card.action.trigger": async (raw: Record<string, unknown>) => {
+        const evt = normalizeCardAction(raw as object, { includeRaw: true });
+        if (evt) {
+          logger.info(`[CardAction] 收到卡片回调: ${evt.operator.openId}`);
+          void this.handleCardAction(evt).catch((error) => logger.error("[CardAction] 处理卡片回调失败:", error));
+        }
+        return { toast: { type: "info", content: "✅ 已收到，处理中…" } };
+      },
+    });
 
-      // 卡片回调主路径在 patchCardAck()（WSClient dispatcher 层，绕过 SDK 缺陷）。
-      // 这里仍注册 channel 路径作为兜底：若 SDK 升级导致补丁内部依赖失效，
-      // 事件自动退回此路径（功能退化但不失联）。两条路径运行时互斥，不会重复处理。
-      this.channel.on("cardAction", (action) => {
-        logger.info(`[CardAction]（channel 兜底路径）收到卡片回调: ${action.operator.openId}`);
-        void this.handleCardAction(action).catch((error) => logger.error("[CardAction] 处理卡片回调失败:", error));
-      });
-    }
-    this.connecting = this.channel.connect().then(() => {
-      this.patchCardAck();
-    }).finally(() => {
+    this.wsClient = new WSClient({
+      appId: this.appId,
+      appSecret: this.appSecret,
+      source: "feishu-pi",
+      handshakeTimeoutMs: 15_000,
+      wsConfig: { pingTimeout: 30 },
+      onReconnecting: () => logger.warn("[LarkTransport] 飞书 WebSocket 正在重连"),
+      onReconnected: () => logger.info("[LarkTransport] 飞书 WebSocket 已恢复"),
+      onError: (error: unknown) => logger.error("[LarkTransport] 飞书 WebSocket 错误", error),
+    } as never);
+
+    this.connecting = this.wsClient.start({ eventDispatcher: dispatcher as never }).then(() => {
+      logger.info("[LarkTransport] 飞书 WebSocket 已连接");
       this.connecting = undefined;
+    }).catch((error) => {
+      this.connecting = undefined;
+      throw error;
     });
     return this.connecting;
   }
 
   /**
-   * SDK 缺陷补丁（两个）：
-   * 1. LarkChannel 的 card.action.trigger 分发不 return handler 返回值 → 应答帧永远没有 data，
-   *    飞书弹「目标回调服务超时未响应」（对照 Go 官方 SDK：回调必须返回 Toast/Card 结构）。
-   * 2. safety.pushAction 对"10 分钟内重复点击/处理中重复事件"静默丢弃（无任何应答），
-   *    重复点击同一按钮在去重窗口内全部无响应。
-   * 处理：卡片回调绕过 channel 的去重/锁，自行分发（幂等由 PermissionBroker 保证），
-   * 并始终返回带 toast 的应答体。普通事件走原逻辑不受影响。
+   * 分发一条归一化后的消息给 handler。
+   * 关键：不能 await 完整处理——若在此等待整个 Agent 流程（可能卡在等授权卡点击），
+   * SDK 的事件处理会被阻塞。交给 handler 后台处理，
+   * 会话内的顺序由 ConversationManager 保证，消息去重由 MessageStore.claim 保证。
    */
-  private patchCardAck(): void {
-    const ws = (this.channel as unknown as { rawWsClient?: { eventDispatcher?: { invoke: (data: unknown, opts?: unknown) => Promise<unknown> } } }).rawWsClient;
-    const dispatcher = ws?.eventDispatcher;
-    if (!dispatcher || (dispatcher as { __cardAckPatched?: boolean }).__cardAckPatched) {
-      logger.warn(`[CardAck] 应答补丁未安装：rawWsClient/eventDispatcher 不存在或已打过补丁`);
-      return;
-    }
-    const original = dispatcher.invoke.bind(dispatcher);
-    dispatcher.invoke = async (data, opts) => {
-      // invoke 收到的是 mergeData 之后的已解析对象（{schema, header, event}）
-      const eventType = (data as { header?: { event_type?: string } } | undefined)?.header?.event_type;
-      if (eventType !== "card.action.trigger") {
-        return original(data, opts);
+  private async dispatchMessage(message: {
+    messageId: string;
+    chatId: string;
+    threadId?: string;
+    senderId: string;
+    content: string;
+    resources?: Array<{ type: string; fileKey: string; fileName?: string }>;
+  }): Promise<void> {
+    if (this.botOpenId && message.senderId === this.botOpenId) return;
+    const chatId = message.chatId;
+    try {
+      const profile = await this.larkCli.getUserProfile(message.senderId, chatId);
+      const displayName = profile.name || profile.englishName || profile.openId;
+
+      // 构造 conversationId：
+      // - 话题群：同一话题内所有用户共享一个会话；首条消息没有 threadId，
+      //   用该消息的 messageId 作为话题键并持久化——后续消息的 threadId 恰好就是这条根消息的 ID，
+      //   收敛到同一会话；若根未确立前用户追加消息，从持久化中取回话题根，避免裂成新会话
+      // - 其他会话（私聊/普通群）：按用户隔离
+      const chatMode = await this.getChatModeCached(chatId);
+      const threadId = message.threadId;
+      let conversationId: string;
+      if (chatMode === "topic") {
+        let rootId = threadId;
+        if (rootId) {
+          await this.topicRoots?.clear(chatId); // threadId 出现，话题根已确立
+        } else {
+          const pending = await this.topicRoots?.get(chatId);
+          rootId = pending ?? message.messageId;
+          if (!pending) await this.topicRoots?.set(chatId, rootId); // 首条消息：登记自己为话题根
+        }
+        conversationId = `topic:${chatId}:${rootId}`;
+      } else {
+        conversationId = `${profile.openId}-${threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`}`;
       }
 
-      // 卡片回调：绕过去重层直接分发（异步执行，不阻塞应答）
-      try {
-        const evt = normalizeCardAction(data as object, { includeRaw: true });
-        if (evt) {
-          logger.info(`[CardAction] 收到卡片回调: ${evt.operator.openId}`);
-          void this.handleCardAction(evt).catch((error) => logger.error("[CardAction] 处理卡片回调失败:", error));
-          return { toast: { type: "info", content: "✅ 已收到，处理中…" } };
+      // 处理图片附件（含 post 富文本里的图片：SDK 会把它们放进 resources）
+      let images;
+      let imageCount = 0;
+      const resources = (message as unknown as { resources?: Array<{ type: string; fileKey: string; fileName?: string }> }).resources ?? [];
+      if (resources.length > 0) {
+        const imageKeys = resources.filter((r) => r.type === "image").map((r) => r.fileKey);
+        if (imageKeys.length > 0) {
+          imageCount = imageKeys.length;
+          images = await this.imageProcessor?.processImages(imageKeys);
         }
-        // 解析失败：退回 SDK 原逻辑，至少保证事件不丢
-        logger.warn("[CardAction] 事件解析为空，退回 SDK 原始分发");
-      } catch (error) {
-        logger.error("[CardAction] 事件解析失败，退回 SDK 原始分发:", error);
       }
-      return original(data, opts);
-    };
-    (dispatcher as { __cardAckPatched?: boolean }).__cardAckPatched = true;
-    logger.info(`[CardAck] 卡片回调应答补丁已安装`);
+
+      // 过滤消息中的 @ 机器人标记（normalize 已按占位符替换，这里兜底清洗）
+      let cleanedText = message.content;
+      if (this.botOpenId) {
+        cleanedText = cleanedText
+          .replace(new RegExp(`<at\\s+user_id="${this.botOpenId}"[^>]*>.*?</at>`, "gi"), "")
+          .replace(new RegExp(`@${this.botOpenId}\\s*`, "gi"), "")
+          .trim();
+      }
+
+      // 下载文件类附件（file/audio/video/media），保存到本地并把路径写进消息文本，
+      // Agent 可用 read/bash 直接访问
+      const fileResources = resources.filter((r) => ["file", "audio", "video", "media"].includes(r.type) && r.fileKey);
+      if (this.filesCacheDir && fileResources.length > 0) {
+        const { writeFile, mkdir } = await import("node:fs/promises");
+        await mkdir(this.filesCacheDir, { recursive: true });
+        let attachmentNote = "";
+        for (const resource of fileResources.slice(0, 5)) {
+          try {
+            const buffer = await this.downloadResource(resource.fileKey, resource.type);
+            const fileName = sanitizeFileName(resource.fileName || resource.fileKey);
+            const filePath = join(this.filesCacheDir, `${Date.now()}-${fileName}`);
+            await writeFile(filePath, buffer);
+            attachmentNote += `\n[附件] ${fileName} 已保存到: ${filePath}`;
+          } catch (error) {
+            logger.warn(`[LarkTransport] 下载附件失败 ${resource.fileKey}: ${error instanceof Error ? error.message : error}`);
+          }
+        }
+        if (attachmentNote) cleanedText += `\n${attachmentNote}`;
+      }
+
+      // 记录收到的消息
+      const imageInfo = imageCount > 0 ? `（含 ${imageCount} 张图片）` : "";
+      logger.userInput(displayName, `收到消息${imageInfo}: ${formatLogText(cleanedText)}`);
+
+      // 判断是否为管理员
+      const isAdmin = this.adminOpenId ? profile.openId === this.adminOpenId : false;
+
+      // fire-and-forget：后台处理，失败仅记日志
+      void this.handler?.({
+        messageId: message.messageId,
+        chatId,
+        context: {
+          userOpenId: profile.openId,
+          userName: displayName,
+          departmentNames: profile.departmentNames,
+          chatId,
+          threadId,
+          conversationId,
+          isAdmin,
+        },
+        text: cleanedText,
+        images,
+      }).catch((error) => {
+        logger.error(`[LarkTransport] 消息处理失败: ${error instanceof Error ? error.message : error}`);
+      });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      logger.error(`[LarkTransport] 消息预处理失败: ${detail}`);
+    }
   }
 
   /** 卡片回调的实际处理逻辑（后台执行）。 */
@@ -269,10 +256,8 @@ export class LarkTransport implements FeishuTransport {
     raw?: unknown;
   }): Promise<void> {
     try {
-      logger.info(`[CardAction] 收到卡片回调: ${action.operator.openId}`);
-
       // 解析回调数据（value 可能是对象或 JSON 字符串）
-      let value: Record<string, unknown> | string = action.action.value as any;
+      let value: Record<string, unknown> | string = action.action.value as never;
       if (typeof value === "string") {
         try {
           value = JSON.parse(value);
@@ -281,7 +266,7 @@ export class LarkTransport implements FeishuTransport {
         }
       }
 
-      // 授权卡回调（授权/拒绝/申请转发）：交给 PermissionBroker 在服务端校验（含管理员身份），不走通用管理员拦截
+      // 授权卡回调（授权/拒绝/申请转发）：交给 PermissionBroker 在服务端校验（含管理员身份）
       if (typeof value === "object" && (value?.action === "tool_approval" || value?.action === "forward_approval")) {
         await this.approvalHandler?.({
           value,
@@ -290,29 +275,16 @@ export class LarkTransport implements FeishuTransport {
         return;
       }
 
-      // 判断是否为管理员
+      // 其余卡片（/model）：管理员校验后处理
       const operatorOpenId = action.operator.openId;
       const isAdmin = this.adminOpenId ? operatorOpenId === this.adminOpenId : false;
 
       if (!isAdmin) {
         logger.warn(`[CardAction] 非管理员点击卡片: ${operatorOpenId}`);
-        // 更新卡片显示权限错误
         await this.updateCard(action, {
           schema: "2.0",
-          header: {
-            title: {
-              tag: "plain_text",
-              content: "模型切换",
-            },
-          },
-          body: {
-            elements: [
-              {
-                tag: "markdown",
-                content: "❌ 仅管理员可执行此操作",
-              },
-            ],
-          },
+          header: { title: { tag: "plain_text", content: "模型切换" } },
+          body: { elements: [{ tag: "markdown", content: "❌ 仅管理员可执行此操作" }] },
         });
         return;
       }
@@ -325,27 +297,13 @@ export class LarkTransport implements FeishuTransport {
           this.persistModelName(modelName);
           await this.updateCard(action, {
             schema: "2.0",
-            header: {
-              title: {
-                tag: "plain_text",
-                content: "模型切换结果",
-              },
-            },
-            config: {
-              update_multi: true,
-            },
-            body: {
-              elements: [
-                {
-                  tag: "markdown",
-                  content: `✅ 已切换到模型：${value.model_id}\n\n当前卡片已更新。`,
-                },
-              ],
-            },
+            header: { title: { tag: "plain_text", content: "模型切换结果" } },
+            config: { update_multi: true },
+            body: { elements: [{ tag: "markdown", content: `✅ 已切换到模型：${value.model_id}\n\n当前卡片已更新。` }] },
           });
           logger.info(`[CardAction] 卡片更新成功`);
         } catch (err) {
-          logger.error(`[CardAction] 更新卡片失败:`, err);
+          logger.error(`[CardAction] 切换模型失败:`, err);
         }
       }
     } catch (error) {
@@ -358,9 +316,11 @@ export class LarkTransport implements FeishuTransport {
     const cached = this.chatModeCache.get(chatId);
     if (cached) return cached;
     try {
-      const mode = await this.channel.getChatMode(chatId);
-      this.chatModeCache.set(chatId, mode);
-      return mode;
+      const res = await this.client.im.v1.chat.get({ path: { chat_id: chatId } });
+      const mode = (res.data as { chat_mode?: string } | undefined)?.chat_mode;
+      const result: "p2p" | "group" | "topic" = mode === "p2p" ? "p2p" : mode === "topic" ? "topic" : "group";
+      this.chatModeCache.set(chatId, result);
+      return result;
     } catch (error) {
       logger.warn(`[LarkTransport] 获取会话模式失败，按普通会话处理: ${error instanceof Error ? error.message : error}`);
       return "group";
@@ -378,19 +338,22 @@ export class LarkTransport implements FeishuTransport {
   }
 
   /**
-   * 更新卡片。优先按 messageId 持久更新（实体变更，重新拉取不回退）；
-   * 失败时回退到卡片回调 token 的临时更新（仅本次点击视图可见，客户端重新拉取会还原）。
+   * 更新卡片。优先按 messageId 持久更新（im.v1.message.patch，实体变更）；
+   * 失败时回退到卡片回调 token 的临时更新（仅本次点击视图可见）。
    */
   private async updateCard(action: { messageId: string; raw?: unknown }, card: object): Promise<void> {
     try {
-      await this.channel.updateCard(action.messageId, card);
+      await this.client.im.v1.message.patch({
+        path: { message_id: action.messageId },
+        data: { content: JSON.stringify(card) },
+      });
       return;
     } catch (error) {
       logger.warn(`[LarkTransport] 按 messageId 更新卡片失败，回退 token 更新: ${error instanceof Error ? error.message : error}`);
     }
 
     const raw = action.raw as { token?: string } | undefined;
-    if (raw?.token && this.client) {
+    if (raw?.token) {
       await this.client.request({
         method: "POST",
         url: "/open-apis/interactive/v1/card/update",
@@ -399,9 +362,18 @@ export class LarkTransport implements FeishuTransport {
     }
   }
 
-  /** 关闭飞书长连接，并阻止主动关闭期间的重连竞争。 */
+  /** 下载消息资源（image/file）为 Buffer。 */
+  private async downloadResource(fileKey: string, type: string): Promise<Buffer> {
+    const res =
+      type === "image"
+        ? await this.client.im.v1.image.get({ path: { image_key: fileKey } })
+        : await this.client.im.v1.file.get({ path: { file_key: fileKey } });
+    return bufferFromResponse(res as unknown);
+  }
+
+  /** 关闭飞书长连接。 */
   async disconnect(): Promise<void> {
-    await this.channel.disconnect();
+    this.wsClient?.close();
   }
 
   onMessage(handler: (message: FeishuInboundMessage) => Promise<void>): void {
@@ -415,26 +387,62 @@ export class LarkTransport implements FeishuTransport {
 
   /** 向指定会话发送一张卡片，返回 messageId。 */
   async sendCardToChat(chatId: string, card: object): Promise<string> {
-    const result = await this.channel.send(chatId, { card });
-    return result.messageId;
+    const res = await this.client.im.v1.message.create({
+      params: { receive_id_type: "chat_id" },
+      data: {
+        receive_id: chatId,
+        msg_type: "interactive",
+        content: JSON.stringify(card),
+      },
+    });
+    const messageId = (res.data as { message_id?: string } | undefined)?.message_id;
+    if (!messageId) throw new Error(`发送卡片失败：响应缺少 message_id`);
+    return messageId;
   }
 
   /** 按 messageId 更新已发送的卡片。 */
   async updateCardById(messageId: string, card: object): Promise<void> {
-    await this.channel.updateCard(messageId, card);
+    await this.client.im.v1.message.patch({
+      path: { message_id: messageId },
+      data: { content: JSON.stringify(card) },
+    });
   }
 
   /** 按 messageId 撤回消息。 */
   async recallMessageById(messageId: string): Promise<void> {
-    await this.client!.request({
-      method: "DELETE",
-      url: `/open-apis/im/v1/messages/${messageId}`,
-    });
+    await this.client.im.v1.message.delete({ path: { message_id: messageId } });
   }
 
+  /** 以文本形式向会话发送错误提示。 */
+  async sendTextToChat(chatId: string, text: string): Promise<void> {
+    await this.client.im.v1.message.create({
+      params: { receive_id_type: "chat_id" },
+      data: { receive_id: chatId, msg_type: "text", content: JSON.stringify({ text }) },
+    });
+  }
 }
 
 /** 清理文件名：去掉路径分隔符等不安全字符，防止下载路径逃逸。 */
 function sanitizeFileName(name: string): string {
-  return name.replace(/[\/:*?"<>|]/g, "_").slice(0, 120) || "attachment";
+  return name.replace(/[\\/:*?"<>|]/g, "_").slice(0, 120) || "attachment";
+}
+
+/** 把资源下载接口的返回（wrapper/流/Buffer）收敛为 Buffer。 */
+function bufferFromResponse(res: unknown): Promise<Buffer> {
+  const collect = (stream: NodeJS.ReadableStream) =>
+    new Promise<Buffer>((resolve, reject) => {
+      const chunks: Buffer[] = [];
+      stream.on("data", (chunk: Buffer) => chunks.push(chunk));
+      stream.on("end", () => resolve(Buffer.concat(chunks)));
+      stream.on("error", reject);
+    });
+
+  const anyRes = res as { data?: unknown; getReadableStream?: () => NodeJS.ReadableStream } | Buffer | undefined;
+  if (Buffer.isBuffer(anyRes)) return Promise.resolve(anyRes);
+  if (anyRes && typeof anyRes === "object") {
+    if (typeof anyRes.getReadableStream === "function") return collect(anyRes.getReadableStream());
+    if (Buffer.isBuffer(anyRes.data)) return Promise.resolve(anyRes.data);
+    if (anyRes.data && typeof (anyRes.data as NodeJS.ReadableStream).on === "function") return collect(anyRes.data as NodeJS.ReadableStream);
+  }
+  return Promise.reject(new Error("无法识别的资源下载响应结构"));
 }
