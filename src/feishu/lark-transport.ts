@@ -172,8 +172,13 @@ export class LarkTransport implements FeishuTransport {
         }
       });
 
-      // 卡片回调不通过 channel.on("cardAction") 处理——SDK 对它有缺陷
-      // （丢弃应答数据 + 去重层静默吞事件），由 patchCardAck() 在 WSClient dispatcher 层接管
+      // 卡片回调主路径在 patchCardAck()（WSClient dispatcher 层，绕过 SDK 缺陷）。
+      // 这里仍注册 channel 路径作为兜底：若 SDK 升级导致补丁内部依赖失效，
+      // 事件自动退回此路径（功能退化但不失联）。两条路径运行时互斥，不会重复处理。
+      this.channel.on("cardAction", (action) => {
+        logger.info(`[CardAction]（channel 兜底路径）收到卡片回调: ${action.operator.openId}`);
+        void this.handleCardAction(action).catch((error) => logger.error("[CardAction] 处理卡片回调失败:", error));
+      });
     }
     this.connecting = this.channel.connect().then(() => {
       this.patchCardAck();

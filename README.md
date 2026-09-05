@@ -118,14 +118,27 @@ Pi 已经提供 Agent 运行时中最难长期维护的部分：模型流式调�
 
 ## 开始使用
 
+### 0. 安装依赖
+
+环境要求：Node.js 22+（类型定义基于 @types/node 22.x），包管理器为 npm。
+
+```bash
+git clone <repo-url>
+cd mini-claw
+npm install
+```
+
+> `npm install` 会自动执行 `postinstall` 脚本（`scripts/patch-pi-ai.js`），对 `node_modules/@earendil-works/pi-ai` 打补丁：移除 Anthropic 请求头中的 `anthropic-dangerous-direct-browser-access`，避免经 API 中转站调用时返回 403。重新安装依赖后补丁会自动重新应用，无需手动处理。
+
 ### 1. 配置飞书应用权限
 
 在 [飞书开放平台](https://open.feishu.cn/) 开发者后台配置以下权限：
 
 **必需权限：**
-- `im:message` - 获取与发送单聊、群组消息
+- `im:message` - 获取与发送单聊、群组消息（含撤回机器人自己的消息）
 - `im:message.group_at_msg` - 接收群聊中 @机器人 消息事件
 - `im:message.p2p_msg` - 接收用户单聊消息事件
+- `im:message.reaction:write` - 添加/删除表情回复（思考动画 emoji）
 - `contact:user.base:readonly` - 获取用户基本信息（中文名、英文名、部门 ID）
 - `im:chat.member:readonly` - 读取群成员列表（用于外部成员降级查询）
 
@@ -134,7 +147,8 @@ Pi 已经提供 Agent 运行时中最难长期维护的部分：模型流式调�
 
 **事件订阅：**
 - 订阅方式：选择「使用长连接接收事件/回调」
-- 订阊事件：`im.message.receive_v1` - 接收消息
+- 订阅事件：`im.message.receive_v1` - 接收消息
+- 卡片回调：`card.action.trigger` - 授权卡按钮点击、模型切换等卡片交互（长连接模式下随事件回调自动接管，无需额外配置公网回调地址）
 
 **应用可用范围：**
 - 设置可使用该应用的部门或成员范围
