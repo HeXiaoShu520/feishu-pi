@@ -30,6 +30,6 @@ try {
     console.log('ℹ️  [patch-pi-ai] 未发现需要修补的请求头（可能已被修补或版本已修复）');
   }
 } catch (error) {
-  console.error('❌ [patch-pi-ai] 修补失败:', error.message);
-  process.exit(1);
+  // 目标文件不存在（pi-ai 升级改路径）等情况只告警，不阻塞 npm install
+  console.warn('⚠️  [patch-pi-ai] 修补失败（不影响安装）:', error.message);
 }
