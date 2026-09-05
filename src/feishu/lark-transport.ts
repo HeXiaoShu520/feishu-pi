@@ -21,6 +21,8 @@ export interface LarkTransportConfig {
   client?: Client;
   /** 图片缓存目录（可选） */
   imageCacheDir?: string;
+  /** 文件附件缓存目录（可选，提供后支持 file/audio/video 附件下载） */
+  filesCacheDir?: string;
   /** 管理员 Open ID（可选） */
   adminOpenId?: string;
   /** 话题根持久化文件路径（话题群会话收敛用） */
@@ -31,6 +33,7 @@ export interface LarkTransportConfig {
 
 /** 基于飞书官方高层 Channel 的最小消息传输实现。 */
 export class LarkTransport implements FeishuTransport {
+
   private readonly channel: LarkChannel;
   private readonly botOpenId?: string;
   private readonly larkCli: LarkCli;
@@ -46,6 +49,8 @@ export class LarkTransport implements FeishuTransport {
   private readonly chatModeCache = new Map<string, "p2p" | "group" | "topic">();
   /** 话题根持久化（chatId -> 待定话题根 messageId） */
   private readonly topicRoots?: TopicRootStore;
+  /** 文件附件缓存目录 */
+  private readonly filesCacheDir?: string;
 
   constructor(config: LarkTransportConfig) {
     this.botOpenId = config.botOpenId;
@@ -55,6 +60,7 @@ export class LarkTransport implements FeishuTransport {
     if (config.topicRootsFile) {
       this.topicRoots = new TopicRootStore(config.topicRootsFile);
     }
+    this.filesCacheDir = config.filesCacheDir;
     this.larkCli = new LarkCli(config.client!, config.appId, config.userProfileDir);
     if (config.client) {
       this.imageProcessor = new LarkImageProcessor(config.client, {
@@ -112,7 +118,17 @@ export class LarkTransport implements FeishuTransport {
             conversationId = `${profile.openId}-${threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`}`;
           }
 
-          // 处理图片附件
+          // 过滤消息中的 @ 机器人标记
+          let cleanedText = message.content;
+          if (this.botOpenId) {
+            // 匹配 @bot_xxx 或 <at user_id="bot_xxx"></at> 等格式
+            cleanedText = cleanedText
+              .replace(new RegExp(`<at\\s+user_id="${this.botOpenId}"[^>]*>.*?</at>`, "gi"), "")
+              .replace(new RegExp(`@${this.botOpenId}\\s*`, "gi"), "")
+              .trim();
+          }
+
+          // 处理图片附件（含 post 富文本里的图片：SDK 会把它们放进 resources）
           let images;
           let imageCount = 0;
           if (this.imageProcessor && message.resources && message.resources.length > 0) {
@@ -126,20 +142,33 @@ export class LarkTransport implements FeishuTransport {
             }
           }
 
+          // 下载文件类附件（file/audio/video/media），保存到本地并把路径写进消息文本，
+          // Agent 可用 read/bash 直接访问
+          let attachmentNote = "";
+          const fileResources = (message.resources ?? []).filter(
+            (r) => ["file", "audio", "video", "media"].includes(r.type) && r.fileKey,
+          );
+          if (this.filesCacheDir && fileResources.length > 0) {
+            const { writeFile, mkdir } = await import("node:fs/promises");
+            await mkdir(this.filesCacheDir, { recursive: true });
+            for (const resource of fileResources.slice(0, 5)) {
+              try {
+                const buffer = await this.channel.downloadResource(resource.fileKey, resource.type as "file");
+                const fileName = sanitizeFileName((resource as { fileName?: string }).fileName || resource.fileKey);
+                const filePath = join(this.filesCacheDir, `${Date.now()}-${fileName}`);
+                await writeFile(filePath, buffer);
+                attachmentNote += `\n[附件] ${fileName} 已保存到: ${filePath}`;
+              } catch (error) {
+                logger.warn(`[LarkTransport] 下载附件失败 ${resource.fileKey}: ${error instanceof Error ? error.message : error}`);
+              }
+            }
+            if (attachmentNote) cleanedText += `\n${attachmentNote}`;
+          }
+
           // 记录收到的消息
           const msgPreview = formatLogText(message.content);
           const imageInfo = imageCount > 0 ? `（含 ${imageCount} 张图片）` : "";
           logger.userInput(displayName, `收到消息${imageInfo}: ${msgPreview}`);
-
-          // 过滤消息中的 @ 机器人标记
-          let cleanedText = message.content;
-          if (this.botOpenId) {
-            // 匹配 @bot_xxx 或 <at user_id="bot_xxx"></at> 等格式
-            cleanedText = cleanedText
-              .replace(new RegExp(`<at\\s+user_id="${this.botOpenId}"[^>]*>.*?</at>`, "gi"), "")
-              .replace(new RegExp(`@${this.botOpenId}\\s*`, "gi"), "")
-              .trim();
-          }
 
           // 判断是否为管理员
           const isAdmin = this.adminOpenId ? profile.openId === this.adminOpenId : false;
@@ -403,4 +432,9 @@ export class LarkTransport implements FeishuTransport {
     });
   }
 
+}
+
+/** 清理文件名：去掉路径分隔符等不安全字符，防止下载路径逃逸。 */
+function sanitizeFileName(name: string): string {
+  return name.replace(/[\/:*?"<>|]/g, "_").slice(0, 120) || "attachment";
 }

@@ -98,6 +98,7 @@ export async function main(): Promise<void> {
     botOpenId,
     client,
     imageCacheDir: join(config.sessionDir, "images"),
+    filesCacheDir: join(config.sessionDir, "files"),
     adminOpenId,
     topicRootsFile: join(config.sessionDir, "topic-roots.json"),
     // /model 切换时通知运行时热切换（持久化到 .env 仍在 transport 内完成）
