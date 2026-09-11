@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>技能使用统计</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif; background: #f5f6f7; color: #1f2329; padding: 24px; }
+  .wrap { max-width: 1200px; margin: 0 auto; }
+  h1 { font-size: 20px; margin-bottom: 4px; }
+  .sub { color: #86909c; font-size: 12px; margin-bottom: 16px; }
+  .bar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; background: #fff; border: 1px solid #e5e6eb; border-radius: 8px; padding: 12px 16px; margin-bottom: 16px; }
+  .group { display: flex; align-items: center; gap: 8px; }
+  .label { font-size: 13px; color: #4e5969; white-space: nowrap; }
+  .seg { display: flex; border: 1px solid #e5e6eb; border-radius: 6px; overflow: hidden; }
+  .seg button { border: none; background: #fff; padding: 5px 12px; font-size: 13px; cursor: pointer; color: #4e5969; }
+  .seg button + button { border-left: 1px solid #e5e6eb; }
+  .seg button.on { background: #3370ff; color: #fff; }
+  input[type="date"] { border: 1px solid #e5e6eb; border-radius: 6px; padding: 5px 8px; font-size: 13px; }
+  .picker { position: relative; }
+  .picker > button { border: 1px solid #e5e6eb; background: #fff; border-radius: 6px; padding: 5px 12px; font-size: 13px; cursor: pointer; color: #1f2329; }
+  .panel { display: none; position: absolute; top: 110%; left: 0; z-index: 10; background: #fff; border: 1px solid #e5e6eb; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,.08); padding: 8px; min-width: 220px; max-height: 320px; overflow: auto; }
+  .picker.open .panel { display: block; }
+  .panel .quick { display: flex; gap: 12px; padding: 4px 6px 8px; border-bottom: 1px solid #f0f1f2; margin-bottom: 6px; }
+  .panel .quick a { font-size: 12px; color: #3370ff; cursor: pointer; user-select: none; }
+  .panel label { display: flex; align-items: center; gap: 6px; padding: 5px 6px; font-size: 13px; border-radius: 4px; cursor: pointer; }
+  .panel label:hover { background: #f5f6f7; }
+  .spacer { flex: 1; }
+  .refresh { border: 1px solid #3370ff; color: #3370ff; background: #fff; border-radius: 6px; padding: 5px 14px; font-size: 13px; cursor: pointer; }
+  .cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-bottom: 16px; }
+  .card { background: #fff; border: 1px solid #e5e6eb; border-radius: 8px; padding: 14px 16px; }
+  .card .num { font-size: 24px; font-weight: 600; margin-top: 4px; }
+  .card .cap { font-size: 12px; color: #86909c; }
+  .box { background: #fff; border: 1px solid #e5e6eb; border-radius: 8px; padding: 16px; margin-bottom: 16px; }
+  .box h2 { font-size: 14px; margin-bottom: 12px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  th { text-align: left; color: #86909c; font-weight: normal; padding: 6px 8px; border-bottom: 1px solid #e5e6eb; }
+  td { padding: 7px 8px; border-bottom: 1px solid #f5f6f7; }
+  tr:last-child td { border-bottom: none; }
+  .cnt { font-weight: 600; }
+  .muted { color: #86909c; }
+  .empty { color: #86909c; text-align: center; padding: 40px 0; font-size: 13px; }
+  svg text { font-size: 11px; fill: #86909c; }
+  @media (max-width: 900px) { .cards { grid-template-columns: repeat(2, 1fr); } .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>技能使用统计</h1>
+  <div class="sub">数据来自机器人工具调用的独立事件流（data/stats/skill-usage.jsonl），用户按 英文名 &gt; 中文名 &gt; Open ID 展示</div>
+
+  <div class="bar">
+    <div class="group">
+      <span class="label">粒度</span>
+      <div class="seg" id="segGran">
+        <button data-v="day" class="on">日</button>
+        <button data-v="month">月</button>
+        <button data-v="year">年</button>
+      </div>
+    </div>
+    <div class="group">
+      <span class="label">范围</span>
+      <div class="seg" id="segRange">
+        <button data-v="7">近7天</button>
+        <button data-v="30" class="on">近30天</button>
+        <button data-v="90">近90天</button>
+        <button data-v="all">全部</button>
+        <button data-v="custom">自定义</button>
+      </div>
+    </div>
+    <div class="group" id="customDates" style="display:none">
+      <input type="date" id="fromDate"> <span class="label">至</span> <input type="date" id="toDate">
+    </div>
+    <div class="picker" id="userPicker">
+      <button id="userBtn">全部用户 ▾</button>
+      <div class="panel">
+        <div class="quick"><a data-act="resetAll">显示全部用户</a></div>
+        <div id="userList"></div>
+      </div>
+    </div>
+    <div class="picker" id="skillPicker">
+      <button id="skillBtn">不隐藏技能 ▾</button>
+      <div class="panel">
+        <div class="quick"><a data-act="showAll">全不隐藏</a><a data-act="hideAll">全部隐藏</a></div>
+        <div id="skillList"></div>
+      </div>
+    </div>
+    <div class="spacer"></div>
+    <button class="refresh" id="refreshBtn">↻ 刷新</button>
+  </div>
+
+  <div class="cards">
+    <div class="card"><div class="cap">总使用次数</div><div class="num" id="cTotal">-</div></div>
+    <div class="card"><div class="cap">活跃用户</div><div class="num" id="cUsers">-</div></div>
+    <div class="card"><div class="cap">涉及技能</div><div class="num" id="cSkills">-</div></div>
+    <div class="card"><div class="cap">最近使用</div><div class="num" id="cLast" style="font-size:16px; line-height:32px">-</div></div>
+  </div>
+
+  <div class="box">
+    <h2 id="chartTitle">按日统计</h2>
+    <div id="chart"></div>
+  </div>
+
+  <div class="grid2">
+    <div class="box"><h2>技能排行</h2><div id="skillTable"></div></div>
+    <div class="box"><h2>用户排行</h2><div id="userTable"></div></div>
+  </div>
+
+  <div class="box">
+    <h2>调用明细（月份 × 用户 × 技能）</h2>
+    <div id="detailTable"></div>
+  </div>
+</div>
+
+<script>
+// selectedUsers：选中的用户 openId 集合，空集 = 不筛选（显示全部）
+// userNames：openId -> 展示名（英文名 > 中文名 > Open ID，服务端已解析）
+const state = {
+  granularity: "day",
+  range: "30",
+  from: null, to: null,
+  selectedUsers: new Set(),
+  excludedSkills: new Set(),
+  events: [],
+  userNames: {},
+};
+
+const $ = (id) => document.getElementById(id);
+const pad = (n) => String(n).padStart(2, "0");
+const fmtDate = (ts) => { const d = new Date(ts); return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}`; };
+const fmtMin  = (ts) => { const d = new Date(ts); return `${fmtDate(ts)} ${pad(d.getHours())}:${pad(d.getMinutes())}`; };
+const escapeHtml = (s) => String(s).replace(/[&<>"']/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+
+// 分段控件
+function seg(id, fn) {
+  $(id).addEventListener("click", (e) => {
+    const btn = e.target.closest("button"); if (!btn) return;
+    [...$(id).querySelectorAll("button")].forEach(b => b.classList.toggle("on", b === btn));
+    fn(btn.dataset.v);
+  });
+}
+seg("segGran", v => { state.granularity = v; $("chartTitle").textContent = v === "day" ? "按日统计" : v === "month" ? "按月统计" : "按年统计"; render(); });
+seg("segRange", v => {
+  state.range = v;
+  $("customDates").style.display = v === "custom" ? "flex" : "none";
+  if (v === "custom") {
+    if (!$("toDate").value) $("toDate").value = fmtDate(Date.now());
+    if (!$("fromDate").value) $("fromDate").value = fmtDate(Date.now() - 29 * 86400000);
+    state.from = $("fromDate").value ? new Date($("fromDate").value + "T00:00:00").getTime() : null;
+    state.to = $("toDate").value ? new Date($("toDate").value + "T23:59:59").getTime() : null;
+  }
+  render();
+});
+$("fromDate").addEventListener("change", () => { state.from = $("fromDate").value ? new Date($("fromDate").value + "T00:00:00").getTime() : null; render(); });
+$("toDate").addEventListener("change", () => { state.to = $("toDate").value ? new Date($("toDate").value + "T23:59:59").getTime() : null; render(); });
+
+// 下拉面板：点击面板内部不关闭
+function picker(rootId, btnId) {
+  const root = $(rootId);
+  root.querySelector(".panel").addEventListener("click", (e) => e.stopPropagation());
+  $(btnId).addEventListener("click", (e) => {
+    e.stopPropagation();
+    document.querySelectorAll(".picker").forEach(p => p !== root && p.classList.remove("open"));
+    root.classList.toggle("open");
+  });
+  document.addEventListener("click", () => root.classList.remove("open"));
+}
+picker("userPicker", "userBtn");
+picker("skillPicker", "skillBtn");
+
+$("refreshBtn").addEventListener("click", load);
+
+async function load() {
+  try {
+    const res = await fetch("/api/stats/events");
+    const data = await res.json();
+    state.events = data.events || [];
+    state.userNames = data.users || {};
+    $("refreshBtn").textContent = "↻ 已刷新 " + pad(new Date().getHours()) + ":" + pad(new Date().getMinutes());
+  } catch (err) {
+    $("refreshBtn").textContent = "刷新失败";
+  }
+  rebuildPickers();
+  render();
+}
+
+function displayName(openId) {
+  const n = state.userNames[openId];
+  return typeof n === "string" && n ? n : openId;
+}
+
+function rebuildPickers() {
+  const userIds = [...new Set(state.events.map(e => e.user))]
+    .sort((a, b) => displayName(a).localeCompare(displayName(b), "zh"));
+  $("userList").innerHTML = userIds.map(id =>
+    `<label><input type="checkbox" data-user="${escapeHtml(id)}" ${state.selectedUsers.has(id) ? "checked" : ""}>${escapeHtml(displayName(id))}</label>`
+  ).join("") || '<div class="empty">暂无数据</div>';
+
+  const skills = [...new Set(state.events.map(e => e.skill))].sort();
+  $("skillList").innerHTML = skills.map(s =>
+    `<label><input type="checkbox" data-skill="${escapeHtml(s)}" ${state.excludedSkills.has(s) ? "checked" : ""}>${escapeHtml(s)}</label>`
+  ).join("") || '<div class="empty">暂无数据</div>';
+
+  updatePickerLabels();
+}
+
+// 用户筛选快捷：恢复为全部（清空选中集合）
+$("userList").parentElement.querySelector(".quick").addEventListener("click", (e) => {
+  if (e.target.dataset.act !== "resetAll") return;
+  state.selectedUsers = new Set();
+  document.querySelectorAll("#userList input").forEach(i => i.checked = false);
+  updatePickerLabels(); render();
+});
+$("userList").addEventListener("change", (e) => {
+  const id = e.target.dataset.user; if (!id) return;
+  e.target.checked ? state.selectedUsers.add(id) : state.selectedUsers.delete(id);
+  updatePickerLabels(); render();
+});
+
+// 技能筛选快捷：全不隐藏 / 全部隐藏
+$("skillList").parentElement.querySelector(".quick").addEventListener("click", (e) => {
+  const act = e.target.dataset.act; if (!act) return;
+  state.excludedSkills = new Set();
+  if (act === "hideAll") [...new Set(state.events.map(ev => ev.skill))].forEach(s => state.excludedSkills.add(s));
+  const hide = act === "hideAll";
+  document.querySelectorAll("#skillList input").forEach(i => i.checked = hide);
+  updatePickerLabels(); render();
+});
+$("skillList").addEventListener("change", (e) => {
+  const s = e.target.dataset.skill; if (!s) return;
+  e.target.checked ? state.excludedSkills.add(s) : state.excludedSkills.delete(s);
+  updatePickerLabels(); render();
+});
+
+function updatePickerLabels() {
+  const total = new Set(state.events.map(e => e.user)).size;
+  $("userBtn").textContent = state.selectedUsers.size === 0 ? "全部用户 ▾" : `已选 ${state.selectedUsers.size}/${total} 用户 ▾`;
+  const n = state.excludedSkills.size;
+  $("skillBtn").textContent = n === 0 ? "不隐藏技能 ▾" : `已隐藏 ${n} 个技能 ▾`;
+}
+
+// 时间范围边界
+function rangeBounds() {
+  if (state.range === "custom") return { from: state.from ?? 0, to: state.to ?? Date.now() };
+  if (state.range === "all") return { from: 0, to: Number.MAX_SAFE_INTEGER };
+  const days = Number(state.range);
+  return { from: Date.now() - days * 86400000, to: Number.MAX_SAFE_INTEGER };
+}
+
+function filtered() {
+  const { from, to } = rangeBounds();
+  return state.events.filter(e =>
+    e.ts >= from && e.ts <= to &&
+    (state.selectedUsers.size === 0 || state.selectedUsers.has(e.user)) &&
+    !state.excludedSkills.has(e.skill)
+  );
+}
+
+function render() {
+  const events = filtered();
+  const users = new Set(events.map(e => e.user));
+  const skills = new Set(events.map(e => e.skill));
+  $("cTotal").textContent = events.length;
+  $("cUsers").textContent = users.size;
+  $("cSkills").textContent = skills.size;
+  $("cLast").textContent = events.length ? fmtMin(Math.max(...events.map(e => e.ts))) : "-";
+
+  drawChart(events);
+  drawSkillTable(events);
+  drawUserTable(events);
+  drawDetail(events);
+}
+
+// 按月 × 用户 × 技能聚合出明细表（谁在哪个月调了什么、各多少次）
+function drawDetail(events) {
+  const map = new Map(); // key: 月份|用户|技能
+  for (const e of events) {
+    const month = `${new Date(e.ts).getFullYear()}-${pad(new Date(e.ts).getMonth()+1)}`;
+    const key = `${month}|${displayName(e.user)}|${e.skill}`;
+    map.set(key, (map.get(key) || 0) + 1);
+  }
+  const rows = [...map.entries()].map(([k, count]) => {
+    const [month, user, skill] = k.split("|");
+    return { month, user, skill, count };
+  }).sort((a, b) => b.month.localeCompare(a.month) || b.count - a.count || a.user.localeCompare(b.user, "zh"));
+
+  if (!rows.length) {
+    $("detailTable").innerHTML = '<div class="empty">暂无数据</div>';
+    return;
+  }
+  let html = '<table><tr><th>月份</th><th>用户</th><th>技能</th><th>次数</th></tr>';
+  for (const r of rows) {
+    html += `<tr><td>${r.month}</td><td>${escapeHtml(displayName(r.user))}</td><td>${escapeHtml(r.skill)}</td><td class="cnt">${r.count}</td></tr>`;
+  }
+  $("detailTable").innerHTML = html + "</table>";
+}
+
+function bucketKey(ts) {
+  const d = new Date(ts);
+  if (state.granularity === "year") return String(d.getFullYear());
+  if (state.granularity === "month") return `${d.getFullYear()}-${pad(d.getMonth()+1)}`;
+  return fmtDate(ts);
+}
+
+function drawChart(events) {
+  if (!events.length) { $("chart").innerHTML = '<div class="empty">当前筛选条件下暂无数据</div>'; return; }
+
+  const counts = new Map();
+  for (const e of events) counts.set(bucketKey(e.ts), (counts.get(bucketKey(e.ts)) || 0) + 1);
+
+  // 日/月粒度在所选范围内补零保证时间轴连续；年粒度与其他情况只显示有数据的桶
+  let keys = [];
+  if (state.granularity !== "year" && state.range !== "all") {
+    const { from, to } = rangeBounds();
+    const end = Math.min(to, Date.now());
+    const step = state.granularity === "day" ? 86400000 : 30 * 86400000;
+    const seen = new Set();
+    for (let t = from; t <= end && keys.length < 400; t += step) {
+      const k = bucketKey(t);
+      if (!seen.has(k)) { seen.add(k); keys.push(k); }
+    }
+  }
+  for (const k of counts.keys()) if (!keys.includes(k)) keys.push(k);
+  keys.sort();
+
+  const W = 1100, H = 220, padL = 34, padB = 26, padT = 14;
+  const max = Math.max(...counts.values(), 1);
+  const bw = Math.max(2, (W - padL - 10) / keys.length - 3);
+  const yTicks = 4;
+  let svg = `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto">`;
+  for (let i = 0; i <= yTicks; i++) {
+    const v = Math.round(max * i / yTicks);
+    const y = padT + (H - padT - padB) * (1 - i / yTicks);
+    svg += `<line x1="${padL}" y1="${y}" x2="${W - 6}" y2="${y}" stroke="#f0f1f2"/>`;
+    svg += `<text x="${padL - 6}" y="${y + 4}" text-anchor="end">${v}</text>`;
+  }
+  const labelEvery = Math.ceil(keys.length / 16);
+  keys.forEach((k, i) => {
+    const x = padL + (i + 0.5) * (W - padL - 10) / keys.length;
+    const v = counts.get(k) || 0;
+    const h = (H - padT - padB) * v / max;
+    if (v > 0) {
+      svg += `<rect x="${x - bw/2}" y="${H - padB - h}" width="${bw}" height="${h}" rx="2" fill="#3370ff"><title>${escapeHtml(k)}：${v} 次</title></rect>`;
+      if (keys.length <= 24) svg += `<text x="${x}" y="${H - padB - h - 4}" text-anchor="middle">${v}</text>`;
+    }
+    if (i % labelEvery === 0) {
+      const lab = state.granularity === "day" && keys.length > 20 ? k.slice(5) : k;
+      svg += `<text x="${x}" y="${H - 8}" text-anchor="middle">${escapeHtml(lab)}</text>`;
+    }
+  });
+  svg += "</svg>";
+  $("chart").innerHTML = svg;
+}
+
+function drawSkillTable(events) {
+  const map = new Map();
+  for (const e of events) {
+    const r = map.get(e.skill) || { count: 0, users: new Set(), last: 0 };
+    r.count++; r.users.add(e.user); r.last = Math.max(r.last, e.ts);
+    map.set(e.skill, r);
+  }
+  const rows = [...map.entries()].sort((a, b) => b[1].count - a[1].count).slice(0, 20);
+  $("skillTable").innerHTML = rows.length
+    ? `<table><tr><th>技能</th><th>次数</th><th>人数</th><th>最近使用</th></tr>` +
+      rows.map(([s, r]) => `<tr><td>${escapeHtml(s)}</td><td class="cnt">${r.count}</td><td>${r.users.size}</td><td class="muted">${fmtMin(r.last)}</td></tr>`).join("") + "</table>"
+    : '<div class="empty">暂无数据</div>';
+}
+
+function drawUserTable(events) {
+  const map = new Map();
+  for (const e of events) {
+    const r = map.get(e.user) || { count: 0, skills: new Set(), last: 0 };
+    r.count++; r.skills.add(e.skill); r.last = Math.max(r.last, e.ts);
+    map.set(e.user, r);
+  }
+  const rows = [...map.entries()].sort((a, b) => b[1].count - a[1].count);
+  $("userTable").innerHTML = rows.length
+    ? `<table><tr><th>用户</th><th>次数</th><th>技能数</th><th>最近使用</th></tr>` +
+      rows.map(([u, r]) => `<tr><td>${escapeHtml(displayName(u))}</td><td class="cnt">${r.count}</td><td>${r.skills.size}</td><td class="muted">${fmtMin(r.last)}</td></tr>`).join("") + "</table>"
+    : '<div class="empty">暂无数据</div>';
+}
+
+load();
+</script>
+</body>
+</html>

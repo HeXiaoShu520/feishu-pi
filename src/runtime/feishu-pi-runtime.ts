@@ -1,22 +1,13 @@
-import { createAgentSession, SessionManager, type AgentSession, DefaultResourceLoader, type ResourceLoader } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, SessionManager, type AgentSession, DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
 import { getModel, type ImageContent } from "@earendil-works/pi-ai/compat";
-import type { FeishuPiConfig, FeishuPiEvent, FeishuPiPrompt, FeishuPiSession, FeishuPiTool, UserRole } from "./types.ts";
+import type { FeishuPiConfig, FeishuPiEvent, FeishuPiPrompt, FeishuPiSession, FeishuPiTool } from "./types.ts";
 import type { FeishuContext } from "../context/types.ts";
-import { createToolRegistryAsync, DEFAULT_BUILTIN_TOOLS } from "../tools/registry.ts";
+import { DEFAULT_BUILTIN_TOOLS, createToolRegistryAsync } from "../tools/registry.ts";
+import { join } from "node:path";
 import { logger, colors } from "../utils/logger.ts";
-import { createRestrictedReadTool } from "../tools/restricted-read.ts";
-
-/**
- * 判断某个 skill/tool 的 permission 标记是否对指定角色可见。
- * 约定：default 所有人可见、team 需团队成员或管理员、admin 仅管理员。
- */
-function hasPermission(permission: string | undefined, userRole: UserRole): boolean {
-  const level = permission || "default";
-  if (level === "default") return true;
-  if (level === "team") return userRole === "team" || userRole === "admin";
-  if (level === "admin") return userRole === "admin";
-  return false;
-}
+import { matchSkillRead } from "../stats/skill-usage-store.ts";
+import type { SkillUsageStore } from "../stats/skill-usage-store.ts";
+import type { GroupPolicy } from "../permission/policy.ts";
 
 class SessionWrapper implements FeishuPiSession {
   private readonly raw: AgentSession;
@@ -79,62 +70,9 @@ class SessionWrapper implements FeishuPiSession {
 }
 
 /**
- * 根据权限过滤 Skills 的 ResourceLoader
+ * 技能文档对所有用户开放，不做权限过滤（技能是说明书而非能力，
+ * 能力边界在工具注册层的组过滤与 ToolGuard）。资源加载直接使用 Pi 的基础实现。
  */
-class PermissionFilteredResourceLoader implements ResourceLoader {
-  private base: DefaultResourceLoader;
-  private userRole: UserRole;
-
-  constructor(base: DefaultResourceLoader, userRole: UserRole) {
-    this.base = base;
-    this.userRole = userRole;
-  }
-
-  getExtensions() {
-    return this.base.getExtensions();
-  }
-
-  getSkills() {
-    const { skills, diagnostics } = this.base.getSkills();
-    return { skills: skills.filter((skill) => hasPermission((skill as any).permission, this.userRole)), diagnostics };
-  }
-
-  getPrompts() {
-    return this.base.getPrompts();
-  }
-
-  getThemes() {
-    return this.base.getThemes();
-  }
-
-  getAgentsFiles() {
-    return this.base.getAgentsFiles();
-  }
-
-  getSystemPrompt() {
-    return this.base.getSystemPrompt();
-  }
-
-  getSystemPromptSource() {
-    return this.base.getSystemPromptSource();
-  }
-
-  getAppendSystemPrompt() {
-    return this.base.getAppendSystemPrompt();
-  }
-
-  getAppendSystemPromptSources() {
-    return this.base.getAppendSystemPromptSources();
-  }
-
-  extendResources(paths: any) {
-    return this.base.extendResources(paths);
-  }
-
-  async reload(options?: any) {
-    return this.base.reload(options);
-  }
-}
 
 export class FeishuPiRuntime {
   private readonly config: FeishuPiConfig;
@@ -176,31 +114,18 @@ export class FeishuPiRuntime {
   async printAvailableResources(): Promise<void> {
     const baseResourceLoader = await this.createBaseLoader();
     const { skills } = baseResourceLoader.getSkills();
-
+  
     if (skills.length > 0) {
-      logger.info(`[Runtime] 已加载 ${colors.bright}${colors.magenta}${skills.length}${colors.reset} 个 Skills:`);
+      logger.info(`[Runtime] 已加载 ${colors.bright}${colors.magenta}${skills.length}${colors.reset} 个 Skills（对所有人开放）:`);
       skills.forEach((skill) => {
-        const permission = (skill as any).permission || "default";
-        logger.info(`  ${colors.magenta}✦${colors.reset} ${colors.cyan}${skill.name}${colors.reset}: ${skill.description} ${colors.gray}[${permission}]${colors.reset}`);
+        logger.info(`  ${colors.magenta}✆${colors.reset} ${colors.cyan}${skill.name}${colors.reset}: ${skill.description}`);
       });
     } else {
       logger.warn(`[Runtime] 未找到任何 Skills`);
     }
-
-    // 加载自定义 Tools（从 .agent/tools/）
-    const customTools = await createToolRegistryAsync(this.config.cwd, this.tools);
-    if (customTools.length > 0) {
-      logger.info(`[Runtime] 已加载 ${colors.bright}${colors.green}${customTools.length}${colors.reset} 个自定义 Tools:`);
-      customTools.forEach((tool) => {
-        const permission = (tool as any).permission || "default";
-        logger.info(`  ${colors.green}⚙${colors.reset} ${colors.cyan}${tool.name}${colors.reset}: ${tool.description} ${colors.gray}[${permission}]${colors.reset}`);
-      });
-    } else {
-      logger.info(`[Runtime] 未找到自定义 Tools`);
-    }
-
+  
     // 打印内置工具列表
-    logger.info(`[Runtime] 内置工具: ${colors.gray}${DEFAULT_BUILTIN_TOOLS.join(", ")}${colors.reset}`);
+    logger.info(`[Runtime] 内置工具(按组策略注册): ${colors.gray}${DEFAULT_BUILTIN_TOOLS.join(", ")}${colors.reset}`);
   }
 
   async createSession(sessionFile: string | undefined, userId: string, context?: FeishuContext): Promise<FeishuPiSession> {
@@ -215,9 +140,10 @@ export class FeishuPiRuntime {
       process.env.OPENAI_API_KEY = apiKey;
     }
 
-    // 判断用户角色
-    const userRole = this.getUserRole(userId, context);
-    logger.info(`[Runtime] 用户角色: ${colors.cyan}${userId}${colors.reset} -> ${colors.yellow}${userRole}${colors.reset}`);
+    // 判定所属身份组（owner 负责人 / user 用户），并取该组的已编译策略
+    const groups = await this.config.permissionPolicy.groupsFor(userId, context?.userName);
+    const groupPolicy: GroupPolicy = await this.config.permissionPolicy.forGroups(groups);
+    logger.info(`[Runtime] 用户身份: ${colors.cyan}${userId}${colors.reset} -> ${colors.yellow}${groups.join(", ") || "(无组)"}${colors.reset}`);
 
     const sessionManager = sessionFile
       ? SessionManager.open(sessionFile, this.config.sessionDir, this.config.cwd)
@@ -225,36 +151,37 @@ export class FeishuPiRuntime {
     const model = getModel(this.config.modelProvider as never, this.config.modelName as never);
     if (!model) throw new Error(`Model not found: ${this.config.modelProvider}/${this.config.modelName}`);
 
-    // 包装成权限过滤的 ResourceLoader，再按角色过滤自定义工具
+    // 技能全量加载（不做权限过滤）；自定义工具从 .agent/tools/ 加载
     const baseResourceLoader = await this.createBaseLoader();
-    const resourceLoader = new PermissionFilteredResourceLoader(baseResourceLoader, userRole);
 
-    // 从 .agent/tools/ 加载用户自定义工具，按角色过滤
-    const allCustomTools = await createToolRegistryAsync(this.config.cwd, this.tools);
-    let customTools = allCustomTools.filter((tool) => hasPermission((tool as any).permission, userRole));
+    // 加载 .agent/tools/ 目录下的自定义工具（Python + TS/JS 脚本）
+    const customToolDefs = await createToolRegistryAsync(this.config.cwd);
+    let customTools: FeishuPiTool[] = customToolDefs.map((def) => ({
+      name: def.name,
+      label: def.label ?? def.name,
+      description: def.description,
+      parameters: def.parameters,
+      execute: def.execute.bind(def) as FeishuPiTool["execute"],
+      risk: (def as any).risk,
+    }));
 
-    // 非管理员：添加受限的 read 工具（只能读 skills）
-    const agentDir = `${this.config.cwd}/.agent`;
-    if (userRole !== "admin") {
-      customTools = [createRestrictedReadTool(this.config.cwd, agentDir), ...customTools];
-    }
+    // 自定义工具可标记 risk: "high"：标记后不走策略放行，仍走授权卡
+    const riskyTools = new Set(
+      customTools.filter((tool) => (tool as any).risk === "high").map((tool) => tool.name),
+    );
 
-    // 根据角色选择内置工具
-    let builtinTools: string[];
-    if (userRole === "admin") {
-      builtinTools = this.config.builtinTools ?? [...DEFAULT_BUILTIN_TOOLS];
-    } else {
-      // 非管理员：无内置工具（read 已通过 customTools 提供）
-      builtinTools = [];
-    }
+    // 内置工具：负责人全量注册；用户组注册 bash + read（范围与命令约束在漏斗按组策略执行）。
+    const builtinNames: string[] = groups.includes("admin")
+      ? ["read", "bash", "write", "edit"]
+      : ["bash", "read"];
 
     const { session } = await createAgentSession({
       cwd: this.config.cwd,
       sessionManager,
       model: this.config.modelBaseUrl ? { ...model, baseUrl: this.config.modelBaseUrl } : model,
-      tools: builtinTools,
+      tools: builtinNames,
       customTools,
-      resourceLoader,
+      resourceLoader: baseResourceLoader,
     });
 
     // 立即落盘会话头：Pi 默认在首个 message_end 才创建 session 文件，
@@ -265,44 +192,74 @@ export class FeishuPiRuntime {
       sessionManager.appendSessionInfo(name);
     }
 
-    // 注入工具调用 Guard：每次工具执行前经过白名单 / 大模型审核 / 管理员授权卡
+    // 注入 beforeToolCall 钩子（统一策略过滤层）：
+    //   read → 所属组可读范围判定（范围外拦截不弹卡，范围内放行）
+    //   bash / write / edit / 自定义工具 → ToolGuard 按所属组策略判定（名单外交授权卡）
+    //   自定义工具另由 tools 字段控制可用性
+    // 放行后记录技能使用事件。统计失败只告警不阻塞。
     const toolGuard = this.config.toolGuard;
-    if (toolGuard) {
-      const chatId = context?.chatId;
-      session.agent.beforeToolCall = async (ctx, signal) => {
+    const usageStore = this.config.skillUsageStore;
+    const chatId = context?.chatId;
+    session.agent.beforeToolCall = async (ctx, signal) => {
+      if (ctx.toolCall.name === "read") {
+        const target = extractReadPath(ctx.args);
+        if (target !== undefined) {
+          const allowed = groupPolicy.readAllowed(target);
+          if (!allowed) {
+            return { block: true, reason: "⛔ 该路径不在你的可读范围内" };
+          }
+        }
+        // 范围内的技能读取：记录使用事件（被拦截的不算使用），随后放行
+        if (usageStore) {
+          const skill = matchSkillRead(ctx.toolCall.name, ctx.args, this.config.cwd, `${this.config.cwd}/.agent`);
+          if (skill) {
+            await usageStore.record({ ts: Date.now(), user: userId, skill, chatId }).catch((error) => {
+              logger.warn(`[Runtime] 技能使用记录失败: ${error instanceof Error ? error.message : String(error)}`);
+            });
+          }
+        }
+        return undefined;
+      }
+
+      // 自定义工具：先检查 tools 可见范围
+      if (ctx.toolCall.name !== "bash" && ctx.toolCall.name !== "write" && ctx.toolCall.name !== "edit") {
+        if (!groupPolicy.toolsAllowed(ctx.toolCall.name)) {
+          return { block: true, reason: `⛔ 工具 \"${ctx.toolCall.name}\" 不在你的可用范围内` };
+        }
+      }
+      if (this.config.toolGuard) {
         try {
-          return await toolGuard({ toolName: ctx.toolCall.name, args: ctx.args, chatId }, signal);
+          const guardResult = await this.config.toolGuard(
+            groupPolicy,
+            {
+              toolName: ctx.toolCall.name,
+              args: ctx.args,
+              chatId,
+              risky: riskyTools.has(ctx.toolCall.name),
+            },
+            signal,
+          );
+          if (guardResult) return guardResult;
         } catch (error) {
           // Guard 自身异常按默认拒绝处理
           const detail = error instanceof Error ? error.message : String(error);
           logger.warn(`[Runtime] ToolGuard 异常，按拒绝处理: ${detail}`);
           return { block: true, reason: `工具 ${ctx.toolCall.name} 审核异常：${detail}` };
         }
-      };
-    }
+      }
+      return undefined;
+    };
 
     return new SessionWrapper(session);
   }
+}
 
-  private getUserRole(userId: string, context?: FeishuContext): UserRole {
-    // 管理员判断
-    if (userId === this.config.adminId) return "admin";
-
-    // 团队成员判断（支持 Open ID / 姓名 / 邮箱）
-    if (this.config.teamMemberIdentifiers.length > 0) {
-      // 直接匹配 Open ID
-      if (this.config.teamMemberIdentifiers.includes(userId)) {
-        return "team";
-      }
-
-      // 匹配姓名
-      if (context?.userName && this.config.teamMemberIdentifiers.includes(context.userName)) {
-        return "team";
-      }
-
-      // TODO: 如果需要支持邮箱匹配，需要在 context 中添加 email 字段
-    }
-
-    return "default";
+/** 从 read 调用参数中提取路径。 */
+function extractReadPath(args: unknown): string | undefined {
+  if (typeof args !== "object" || args === null) return undefined;
+  const record = args as Record<string, unknown>;
+  for (const key of ["path", "file_path"]) {
+    if (typeof record[key] === "string" && record[key]) return record[key] as string;
   }
+  return undefined;
 }

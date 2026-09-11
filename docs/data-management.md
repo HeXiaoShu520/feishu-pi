@@ -3,34 +3,50 @@
 ## 目录结构
 
 ```
-data/sessions/
-├── conversations.json          # 会话路由表
-├── messages.json               # 消息去重表
-├── images/                     # 图片缓存目录
-│   └── img_xxx.jpg            # 按 imageKey 命名
-└── 2026-08-30T...xxx.jsonl    # Pi Agent 会话文件
+data/
+├── sessions/
+│   ├── conversations.json      # 会话路由表
+│   ├── messages.json           # 消息去重表
+│   ├── topic-roots.json        # 话题根消息表
+│   ├── images/                 # 图片缓存目录（按 imageKey 命名）
+│   ├── files/                  # 文件附件缓存目录
+│   └── 2026-08-30T...xxx.jsonl # Pi Agent 会话文件
+├── stats/
+│   └── skill-usage.jsonl       # 技能使用事件流（长期留存，不清理）
+└── users/
+    └── {appId}_users.json      # 用户资料缓存（3 天过期）
 ```
 
 ## 文件说明
 
 ### conversations.json - 会话路由表
 
-**作用：** 映射飞书会话 ID 到对应的 Pi session 文件
+**作用：** 映射飞书 conversationId 到对应的 Pi session 文件
 
 **格式：**
 ```json
 {
-  "chat:oc_xxx": {
+  "ou_xxx-chat:oc_xxx": {
     "sessionFile": "/path/to/2026-08-30T09-39-04-975Z_xxx.jsonl",
     "updatedAt": "2026-08-30T09:39:05.070Z"
   }
 }
 ```
 
+键的格式由消息所在会话类型决定：
+
+| 场景 | conversationId | 会话归属 |
+|------|----------------|---------|
+| 私聊 / 普通群 | `{openId}-chat:{chatId}` | 同一群内每个人独立上下文 |
+| 群内话题 | `{openId}-{chatId}:thread:{threadId}` | 按用户隔离 |
+| 话题群的话题 | `topic:{chatId}:{话题根消息ID}` | 话题内所有人共享 |
+
 **为什么需要：**
-- 不同群聊需要独立的对话上下文
+- 不同用户/会话需要独立的对话上下文
 - 重启后能找到对应的历史会话文件
-- 实现会话隔离（群 A 的历史不会泄露给群 B）
+- 实现会话隔离（A 的历史不会泄露给 B）
+
+**注意：** 本文件不参与过期清理。session 文件被 DataCleaner 删除后，残留的映射在下次使用时由会话层容错处理（打开失败即新建会话）。
 
 ### messages.json - 消息去重表
 
@@ -60,9 +76,28 @@ data/sessions/
 - 防止重复处理导致用户看到多次回复
 - 追踪消息处理状态
 
+### topic-roots.json - 话题根消息表
+
+**作用：** 记录 chatId → 话题根消息 ID。话题群的首条消息没有 threadId，用它自己的 messageId 作为话题键；后续消息的 threadId 恰为该根消息 ID，借此收敛到同一会话，避免话题裂成多个会话。
+
+### ../stats/skill-usage.jsonl - 技能使用事件流
+
+**作用：** 记录每次技能文件读取事件（Agent 通过 read 工具读取技能目录下的 .md 时写入），供飞书内查询和本地 `/stats` 统计页面使用
+
+**格式：** JSONL（一行一条事件，只增不删）
+```json
+{"ts": 1757000000000, "user": "ou_xxx", "skill": "code-review", "chatId": "oc_xxx"}
+```
+
+**为什么独立于 session：** session 文件是 Pi 内部格式、7 天清理、话题群多人共享无法按人归因；统计需要长期留存并按「人 × 技能 × 时间」聚合，故使用独立事件流。
+
+**展示名解析：** 事件只存 Open ID；展示时从 `data/users/{appId}_users.json` 按 英文名 > 中文名 > Open ID 解析。
+
+**实现位置：** `src/stats/skill-usage-store.ts`
+
 ### xxx.jsonl - Pi Agent 会话文件
 
-**作用：** 存储单个群聊的完整对话历史
+**作用：** 存储单个会话的完整对话历史
 
 **格式：** JSONL（每行一个 JSON 对象）
 ```jsonl
@@ -89,6 +124,22 @@ data/sessions/
 - 图片从飞书下载后保存在此
 - 便于调试和事后查看
 
+### files/ - 文件附件缓存目录
+
+**作用：** 缓存用户发送的 file/audio/video 附件
+
+**内容：**
+- Agent 可通过消息文本中的本地路径直接读取附件
+- ⚠️ 当前不在 DataCleaner 清理范围内，长期运行会累积（已知缺口）
+
+### ../users/{appId}_users.json - 用户资料缓存
+
+**作用：** 缓存用户中文名、英文名、部门 ID，避免每条消息都调用飞书 API
+
+**内容：**
+- 键为用户 Open ID，条目含 `updatedAt`；有档案 3 天、空档案（三级查询未命中，仅 openId）1 天后自动重查刷新
+- 文件名带 `appId` 前缀，避免多机器人混用
+
 ## 自动清理策略
 
 **清理规则：**
@@ -98,6 +149,11 @@ data/sessions/
   - ✅ 图片缓存 - 按文件修改时间
   - ✅ 消息状态 - 按 updatedAt 时间戳
   - ✅ 卡住的消息（processing 状态超过 1 小时）
+- **不清理：**
+  - ❌ conversations.json（残留映射由会话层容错兜底）
+  - ❌ topic-roots.json
+  - ❌ stats/skill-usage.jsonl（统计事件长期留存）
+  - ❌ files/ 附件缓存（已知缺口）
 
 **触发时机：**
 - 启动时执行一次
@@ -111,8 +167,11 @@ data/sessions/
 
 - `conversations.json` - 首次运行时创建
 - `messages.json` - 首次运行时创建
+- `topic-roots.json` - 首次收到话题群消息时创建
 - `xxx.jsonl` - 每个新会话创建一个
 - `images/` - 首次收到图片时创建
+- `files/` - 首次收到文件附件时创建
+- `data/users/{appId}_users.json` - 首次查询用户资料时创建
 
 ### ❌ 不应该手动放入的文件
 
@@ -123,8 +182,8 @@ data/sessions/
 ### ⚠️ 不能合并这些文件
 
 三个 JSON 文件不能合并，因为：
-1. `conversations.json` 是 1→N 映射（一个群对应一个 session）
-2. `messages.json` 是跨所有群聊的全局去重
+1. `conversations.json` 是 1→N 映射（每个 conversationId 对应一个 session 文件）
+2. `messages.json` 是跨所有会话的全局去重
 3. `xxx.jsonl` 是 Pi SDK 管理的标准格式，不能修改
 
 ## 磁盘占用预估

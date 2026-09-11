@@ -8,6 +8,7 @@ feishu-pi 是一个基于 [Pi](https://github.com/earendil-works/pi) 的飞书 A
 
 - ✅ **CardKit 流式卡片** - 实时显示 Agent 输出（打字机效果 + Markdown 渲染）
 - ✅ **随机动画表情** - 思考时随机选择 7 种 spinner 动画（braille、halfcircle、quarter、cross、triangle、square、braille2）+ 随机前缀，每帧 200ms 循环
+- ✅ **技能使用统计** - 每次读取技能文件自动记录事件（独立于 session 的追加式事件流，长期留存）；飞书内自然语言查询（如「查看技能使用情况」），本地浏览器提供可视化界面 `/stats`（按日/月/年分组、用户筛选、技能隐藏）；用户展示名按 英文名 > 中文名 > Open ID 解析
 - ✅ **图片附件支持** - 发送图片让 Agent 识别和分析（支持视觉模型）
 - ✅ **会话隔离** - 按 `chatId` 和 `threadId` 独立会话上下文
 - ✅ **消息去重** - 防止重复处理同一消息
@@ -57,7 +58,7 @@ interface FeishuContext {
 
 1. **优先使用机器人 API** - 获取完整信息（中文名、英文名、部门 ID）
 2. **降级到群成员列表** - 支持分页查询，适用于外部成员
-3. **兜底方案** - 返回最小信息（Open ID），确保服务不中断
+3. **兜底方案** - 返回最小信息（Open ID，其余字段允许为空），**同样写入缓存**，避免每条消息都重新执行完整查询；空档案 1 天、有档案 3 天后自动重试。重查失败时保留已查到的旧资料不降级。技能内自行判断空字段做兜底展示。
 
 ## 会话模型
 
@@ -219,7 +220,7 @@ FEISHU_PI_MODEL_API_KEY=sk-ant-xxx
 FEISHU_PI_SYSTEM_PROMPT=你是一个专业的编程助手，擅长代码分析和问题解决。
 
 # 团队成员（可选，用于权限控制）
-FEISHU_TEAM_MEMBERS=ou_xxx,ou_yyy,张三,李四
+（已废弃——两档身份下没有成员名单，FEISHU_ADMIN 即全部配置）
 ```
 
 ### 4. 启动服务
@@ -293,7 +294,7 @@ export const deployTool: ToolDefinition = {
   name: "deploy_app",
   description: "一键部署应用（测试→构建→推送→部署→健康检查）",
   permission: "admin",
-  input_schema: {
+  parameters: {
     type: "object",
     properties: {
       env: { type: "string", enum: ["staging", "prod"] }
@@ -438,207 +439,139 @@ call check_health() → ✅ 服务健康
 
 ## 权限系统
 
-feishu-pi 提供三级权限控制，不同角色的用户拥有不同的 Skills 和工具访问权限。
+**一个策略文件 + 一层门禁 + 智能体仲裁；工具和技能零改造。**
 
-### 权限级别
+- `.agent/permissions.json` 定义两个身份组的全部能力：可调用的工具、可执行的命令、可读写的路径、可见的技能
+- 能力以**说明书**形式放在 `.agent/skills/*.md`——不含权限信息，不需要为权限改造它们
+- 每次工具调用时，Guard 过滤层按调用者所属组的策略判定：名单内放行，名单外交智能体综合判断，再不行弹授权卡
 
-feishu-pi 根据用户身份分配不同的权限，控制 Skills 和工具的访问范围。
+### 策略文件
 
-| 角色 | 判断依据 | Skills 权限 | Custom Tools 权限 | 文件操作 | 命令执行 |
-|------|---------|------------|------------------|---------|---------|
-| **default**（普通用户） | 不在管理员和团队列表中 | `permission: default` 的 skills | `permission: default` 的 tools | ❌ 无 | ❌ 无 |
-| **team**（团队成员） | 在 `FEISHU_TEAM_MEMBERS` 列表中 | `permission: default` 或 `team` 的 skills | `permission: default` 或 `team` 的 tools | ❌ 无 | ❌ 无 |
-| **admin**（管理员） | 匹配 `FEISHU_ADMIN` 配置 | 所有 skills | 所有 tools | ✅ read/write/edit | ✅ bash |
-
-**权限说明：**
-- 每个 skill 和 tool 在定义时可配置 `permission` 字段（`default` / `team` / `admin`）
-- 未配置 `permission` 字段的默认为 `default`（所有人可用）
-- 系统在创建用户 session 时，根据用户角色自动过滤可用的 skills 和 tools
-
-### 非管理员的受限 read 权限
-
-普通用户和团队成员拥有**受限的 read 工具**，只能读取技能文件：
-
-**✅ 可以读取：**
-- `.agent/skills/*.md` - 项目技能
-- `.pi/skills/*.md` - Pi 标准技能
-- `.agents/skills/*.md` - Agent Skills 标准技能
-
-**❌ 不能读取：**
-- `.env` - 环境变量配置
-- `src/` - 源代码
-- `data/sessions/` - 会话记录
-- 其他任意文件
-
-这样设计确保非管理员只能使用技能功能，无法访问敏感信息或修改系统文件。
-
-### Skill 权限配置
-
-在 `.agent/skills/` 下的 skill 文件 frontmatter 中添加 `permission` 字段：
-
-```markdown
----
-name: code-review
-description: 代码审查技能
-permission: team  # default | team | admin
----
-
-# Code Review Skill
-
-审查代码时按以下步骤...
-```
-
-**`permission` 字段说明：**
-
-| 值 | 含义 | 可访问的用户 |
-|----|------|------------|
-| `default` | 通用权限 | 所有用户（普通用户、团队成员、管理员） |
-| `team` | 团队权限 | 团队成员和管理员 |
-| `admin` | 管理员权限 | 仅管理员 |
-| 未配置 | 默认通用 | 等同于 `default`，所有用户可用 |
-
-**示例：**
-- 通用技能（如问候、帮助）→ `permission: default` 或不配置
-- 业务技能（如代码审查、数据查询）→ `permission: team`
-- 敏感操作（如系统配置、用户管理）→ `permission: admin`
-
-### Custom Tool 权限配置
-
-在 `src/tools/` 下的工具定义中添加 `permission` 字段：
-
-```typescript
-import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-
-export const myTool: ToolDefinition = {
-  name: "my_tool",
-  description: "我的工具",
-  permission: "admin",  // default | team | admin
-  input_schema: {
-    type: "object",
-    properties: {
-      // ...
-    },
+```json
+{
+  "common": {                        // 通用层：所有人（含负责人）自动获得
+    "tools": ["query_skill_usage"],
+    "read":  [".agent/skills/**"],
+    "skills": ["*"]
   },
-  execute: async (toolCallId, params, signal) => {
-    // 工具实现
+  "owner": {                         // 负责人 = common + 以下
+    "members": ["何小书"],
+    "tools": ["*"],
+    "bash": ["*"],
+    "read": ["**"],
+    "write": ["**"]
   },
-};
-```
-
-**`permission` 字段说明：**
-
-| 值 | 含义 | 可访问的用户 |
-|----|------|------------|
-| `"default"` | 通用权限 | 所有用户（普通用户、团队成员、管理员） |
-| `"team"` | 团队权限 | 团队成员和管理员 |
-| `"admin"` | 管理员权限 | 仅管理员 |
-| 未配置 | 默认通用 | 等同于 `"default"`，所有用户可用 |
-
-**示例：**
-- 查询类工具（如获取时间、查询天气）→ `permission: "default"`
-- 业务操作（如创建工单、查询数据库）→ `permission: "team"`
-- 系统操作（如修改配置、重启服务）→ `permission: "admin"`
-
-### 团队成员配置
-
-在 `.env` 文件中配置团队成员列表：
-
-```env
-FEISHU_TEAM_MEMBERS=ou_xxx,ou_yyy,张三,李四,admin@example.com
-```
-
-**支持的格式：**
-- Open ID：`ou_xxxxxxxx`
-- 中文姓名：`张三`
-- 英文姓名：`John`
-- 邮箱：`admin@example.com`
-
-启动时会自动解析所有团队成员的 Open ID。
-
-### 安全保障
-
-1. ✅ **代码层权限控制** - 在创建 session 时根据用户角色动态过滤工具列表
-2. ✅ **防提示词注入** - 权限判断在代码层执行，AI 无法通过提示词绕过
-3. ✅ **最小权限原则** - 非管理员默认无文件和命令操作权限
-4. ✅ **路径隔离** - 受限 read 工具只允许访问技能目录
-5. ✅ **审计追踪** - 启动日志显示每个用户的角色和可用工具
-
-### 权限判断逻辑
-
-```typescript
-function getUserRole(userId: string): "default" | "team" | "admin" {
-  if (userId === adminId) return "admin";
-  if (teamMemberIds.includes(userId)) return "team";
-  return "default";
+  "user": {                          // 用户 = common + 以下
+    "members": ["李雷", "韩梅梅"],
+    "tools": ["note_book", "get_current_time"],
+    "bash": ["npm run test:*"],
+    "read": ["docs/**"],
+    "write": ["data/notes/**"]
+  }
 }
 ```
 
-每个用户的 session 创建时，系统会：
-1. 根据 `userId` 判断角色
-2. 过滤可用的 skills 和 custom tools
-3. 选择对应的内置工具（管理员全部，其他受限 read）
-4. 在日志中显示加载的资源
+**字段与语法：**
 
-## 工具调用 Guard：白名单 + 大模型审核 + 授权卡
+| 字段 | 语法 | 含义 |
+|------|------|------|
+| `members` | openId / 中文名 / 英文名 | 仅 owner 组可配（FEISHU_ADMIN 亦自动属于 owner） |
+| `tools` | 工具名或 `*` | 该组可调用的工具（含内置 read/bash/write/edit） |
+| `bash` | 命令、`cmd:*` 或 `*` | 该组可执行的 bash 命令（精确 / 前缀 / 全部） |
+| `read` / `write` | 路径 glob | 该组可读 / 可写的路径范围 |
+| `skills` | 技能 glob 或 `*` | 该组可见的技能文件 |
 
-在角色过滤之上，每次工具实际执行前还会经过一层动态审核（`beforeToolCall` 钩子，`src/guard/`）。**所有用户（含管理员）的会话都审核**——大模型可能乱来，高危操作一律需要人工确认。裁决顺序：
+- 生效范围 = **common ∪ 所属组**（并集）；某字段两边都没配时，user 回退技能目录、owner 回退全量
+- 组文件 mtime 热重载，新会话生效（`/new` 后重算）
+- 策略文件缺失/写坏时按保守默认处理：用户仅技能目录可读、无工具，不会失效放大权限
+
+### 判定时序（每次工具调用）
+
+```
+read      → 路径在组的 read/skills 范围内？在→放行；不在→拦截（不弹卡）
+bash      → 命令命中组 bash 名单？→ 放行
+write/edit→ 路径在组 write 范围？→ 放行
+其他工具   → 命中组 tools 名单且未标高危？→ 放行
+全部未命中 → 智能体综合判断（以该组策略为参考）
+              ├─ 符合授权意图 → 放行
+              └─ 超出意图 / 不确定 → 授权卡交负责人
+智能体未配置 / 超时 / 异常 → 授权卡（fail-safe）
+```
+
+read 范围外是**能力边界**（直接拦截不弹卡）；其余名单外是**风险问题**（先问智能体，再问负责人）。
+
+### 为什么技能不配权限
+
+技能（Markdown 文档）不承载能力，只承载流程说明——把文档藏起来挡不住用户让 AI 干同样的事。真正的执行手段（工具与命令）由策略文件按组授权。技能的 `permission` frontmatter 已废弃。
+
+### /perm 查看策略
+
+管理员发送 `/perm` 可查看通用层、两个组的完整策略（工具/命令/可读/可写/技能）和成员列表。
+
+### 安全保障
+
+1. ✅ **代码层判定** - 工具注册与调用判定全部在代码层，提示词注入绕不过
+2. ✅ **最小权限** - 用户默认只能读技能目录、用名单内工具
+3. ✅ **防穿越** - 路径判定用 cwd 归一化后的形态，`..` 穿越串不参与匹配
+4. ✅ **bash 防拼接** - 含 `;` `&&` `|` 反引号 `$( 的命令不参与前缀匹配，直接交授权卡
+5. ✅ **fail-safe** - 策略文件写坏按最保守处理；策略未命中且智能体未配置 → 直接弹卡
+
+## 工具调用 Guard：白名单 + 授权卡
+
+在组过滤之上，每次工具实际执行前还有一道闸（`beforeToolCall` 钩子，`src/guard/`）。模型只有两层，**非允许即 ask**——与 Claude Code 的默认模式一致：
 
 ```
 工具调用
   ↓
-① 指令白名单（.agent/settings.json，正则命中即放行）
-  ↓ 未命中
-② 规则层：只读工具放行；write/edit 写入可写目录（.agent/、data/）放行，写其他路径 → 弹卡
-  ↓ 其余
-③ 大模型 Guard（OpenAI 兼容接口）判断 allow / ask
-  ↓ ask
-④ 发授权卡到发起者所在会话，等管理员单次确认
+① 白名单 allow 命中（裸工具名 / Tool(path) / Bash(cmd[:*])）→ 放行
+② 自定义工具快速放行（非内置且未标 risk: "high"——准入风险已在注册层由组过滤拍板）
+③ 其余一切 → 发授权卡到发起者所在会话，等管理员单次确认
      ↓
   允许一次 → 执行；拒绝 / 超时 → 拦截并返回原因
 ```
 
 **安全设计：**
 
-- **白名单**：优先读 `.agent/settings.json`（Claude Code settings.json 风格，`permissions.allow` 为正则数组），旧的 `.agent/whitelist.json` 兼容读取；均不存在时回退 `FEISHU_CMD_WHITELIST` 环境变量（正则，分号分隔）。白名单匹配「工具名 + 参数」，命中即放行，不再经过规则层和 Guard。
-- **内置安全基线**：只读工具（默认 read/grep/glob 等，可用 `readonly_tools` 覆盖）仅放行**可读目录**（默认整个工作目录，可用 `readable_dirs` 收紧）内的读取；敏感文件（`.env`、`id_rsa`、`*.pem`、`*secret*` 等）无论在哪都弹卡；write/edit 写入可写目录（默认 `.agent/`、`data/`，可用 `writable_dirs` 覆盖）放行，写其他路径弹卡。
-- **Guard 默认拒绝**：Guard 模型未配置、超时、接口异常、返回无法解析时，一律按 ask 处理。
+- **规则语法（完全对齐 Claude Code）**，大小写不敏感：
+  - 裸工具名 `Bash` —— 该工具的任何调用；
+  - `Tool(path)` —— Edit/Write 的路径规则：gitignore 风格 glob（`./` 相对项目根、`~/` 家目录、`**` 跨层级、`*` 单段）；
+  - `Bash(cmd)` / `Bash(cmd:*)` —— bash 命令精确匹配 / 前缀匹配。
+- **非允许即 ask**：没有单独的拒绝列表——不在白名单里的调用一律找管理员确认，"拒绝"由管理员在授权卡上点。想让某个操作免审，就把它写进 allow；想管住它，就别写。
+- **read 不走白名单**：读取范围是写死的两档常量（管理员一切可读，用户只读技能目录），对所有人生效含管理员，范围内免审、范围外直接拦截。
+- **自定义工具快速通道**：自定义工具不经白名单直接放行——"给哪个组开这个工具"在注册层就是对该能力风险的授权。逃生口：工具定义 `risk: "high"` 可跳过快速通道，强制走授权卡。
 - **授权卡服务端校验**：每次授权有唯一 `approval_id` + 一次性 `token`；回调时在服务端校验 token 一致、卡片来源（原卡或转发卡）、点击者必须是管理员、decision 合法、未处理过。非管理员点击、伪造 token、卡片被转发到其他会话再点击均无效。授权是单次的，不缓存。
 - **参数脱敏**：授权卡中 `token`、`password`、`api_key`、`secret`、`cookie` 等字段脱敏为 `***`，命令最多展示 1200 字符。
 - **转发到管理员私聊**：授权卡上有「📨 申请转发给管理员」按钮，点击后授权卡私聊发给管理员，管理员可直接在私聊中决策；决策后原卡和转发卡都更新为结果卡（✅ 已授权一次 / ❌ 已拒绝 / ⏱ 授权已超时）。
 
 **配置：**
 
-`.agent/settings.json`（推荐，Claude Code 风格；`allow` 为白名单正则数组）：
+`.agent/settings.json`（完全采用 Claude Code 的 permissions.allow 语法；读取范围不在这里——见上文「可读范围」）：
 
 ```json
 {
   "permissions": {
-    "allow": ["^read\\s", "^git (status|diff|log)\\b"],
-    "readonly_tools": ["read", "grep", "glob", "ls", "find"],
-    "readable_dirs": [".", "docs"],
-    "writable_dirs": [".agent", "data", "output"]
+    "allow": [
+      "Edit(.agent/**)",
+      "Write(.agent/**)",
+      "Edit(data/**)",
+      "Write(data/**)",
+      "Bash(git status:*)",
+      "Bash(npm run test:*)"
+    ]
   }
 }
 ```
 
-- `allow`：命中「工具名 + 参数」即放行（必填才有白名单效果）
-- `readonly_tools` / `readable_dirs` / `writable_dirs`：可选，配置后**整体替换**对应内置基线
+- 白名单之外的调用一律弹授权卡——加一条规则就多一类免审操作
 
-旧的 `.agent/whitelist.json` 两种格式仍兼容读取（正则数组，或含同名顶层字段的对象）。
-
-`.env`（Guard 与授权卡）：
+`.env`（授权卡）：
 
 ```env
-# Guard 模型（OpenAI 兼容接口；不配置时回退主模型配置）
-FEISHU_GUARD_ENABLED=true
-FEISHU_GUARD_BASE_URL=
-FEISHU_GUARD_MODEL=
-FEISHU_GUARD_API_KEY=
-FEISHU_GUARD_TIMEOUT_MS=15000
-
 # 授权卡等待管理员点击的超时（毫秒，超时视为拒绝）
 FEISHU_APPROVAL_TIMEOUT_MS=300000
 ```
+
+> 智能体审核（`FEISHU_GUARD_*`）用于策略外调用的综合判断：以调用者所属组的策略为参考，判断该调用是否符合授权意图——符合则免审放行，否则弹授权卡。未配置时，策略外调用直接弹卡（fail-safe）。`FEISHU_CMD_WHITELIST` 环境变量已废弃，规则统一在 permissions.json。
 
 
 
@@ -656,13 +589,35 @@ npm run check
 npm test
 ```
 
-当前结果：4 个测试文件、7 个测试用例通过。回复层已接入 CardKit 2.0 流式卡片，异常时保留文本回复回退。
+当前结果：4 个测试文件、24 个测试用例通过。回复层已接入 CardKit 2.0 流式卡片，异常时保留文本回复回退。
+
+## 技能使用统计
+
+机器人会自动记录技能（Skills）的使用情况：当 Agent 通过 `read` 工具读取技能文件（`.agent/skills/` 下的 `.md`）时，在工具执行钩子处写入一条事件。
+
+**为什么不基于 session 统计**：session 文件是 Pi 内部格式（升级易碎）、7 天即被清理、且话题群的 session 由多人共享无法按人归因。因此统计使用**独立的追加式事件流**（`data/stats/skill-usage.jsonl`，一行一条 JSON），只增不删、长期留存，与 session 生命周期解耦。
+
+**两种查看方式：**
+
+1. **飞书内查询**：直接对机器人说「查看技能使用情况」等，Agent 会调用内置的 `query_skill_usage` 工具（所有用户可用），返回使用次数排行、使用者、最近使用时间以及你自己的使用情况。
+2. **本地可视化界面**：浏览器打开 `http://localhost:3456/stats`，支持：
+   - 按日 / 月 / 年分组的时间分布柱状图
+   - 时间范围筛选（近 7/30/90 天、全部、自定义区间）
+   - 用户筛选（多选，只看选中的用户）
+   - 技能隐藏（多选，排除不关注的技能）
+   - 技能排行 / 用户排行表格
+   - 调用明细表（月份 × 用户 × 技能：谁在哪个月调了什么、各多少次）——据此评估哪些技能高频值得保留、哪些长期零调用可以考虑下线
+
+**用户展示名**：统计中的人名按 **英文名 > 中文名 > Open ID** 优先级展示（取自用户信息缓存，`src/stats/skill-usage-store.ts` 中解析）。
+
+**说明**：所有用户都可以查询全局统计（内部协作场景）；技能记录的是 Agent 实际读取技能文件的行为，与工具 Guard 的拦截无关（被拦截的调用不会计入）。
 
 ## 机器人指令
 
 feishu-pi 提供以下内置指令，在飞书对话中直接输入即可使用：
 
 | `/model` | 查看/切换 AI 模型 | 仅管理员 | 显示当前可用模型列表，点击切换，**即时生效**（新会话使用新模型，同时持久化到 `.env`） |
+| `/perm` | 查看权限配置 | 仅管理员 | 显示两档身份说明与工具档位分布 |
 | `/help` | 查看帮助信息 | 所有用户 | 显示机器人功能和可用指令 |
 | `/new` | 清空当前对话 | 所有用户 | 清空会话历史，开始新对话 |
 | `/stop` | 中断当前响应 | 所有用户 | 停止正在生成的 AI 回复 |

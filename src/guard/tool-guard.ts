@@ -1,57 +1,114 @@
-import type { CommandWhitelist } from "./whitelist.ts";
-import type { SafetyJudge } from "./judge.ts";
+import type { GroupPolicy } from "../permission/policy.ts";
 import type { PermissionBroker } from "./broker.ts";
+import type { PolicyJudge } from "./judge.ts";
 import { logger } from "../utils/logger.ts";
 
 export interface ToolGuardCheckParams {
   toolName: string;
   args: unknown;
   chatId?: string;
+  /** 自定义工具标记 risk: "high" 时为 true：跳过策略放行，仍走授权卡 */
+  risky?: boolean;
 }
 
 /**
- * 工具调用 Guard 编排层，作为 Pi Agent 的 beforeToolCall 钩子：
- *   1. 指令白名单正则命中：自动放行
- *   2. 大模型 Guard 判定 allow：放行
- *   3. 判定 ask：发授权卡，等待管理员单次确认；拒绝/超时则拦截
- * 所有用户（含管理员）的会话都审核——大模型可能乱来，高危操作一律需要人工确认。
- * 未配置 chatId 时无法发卡，一律拦截（默认拒绝）。
+ * 工具调用 Guard，作为 Pi Agent 的 beforeToolCall 钩子。
+ * 判定三层（策略 → 智能体 → 授权卡）：
+ *
+ *   ① 调用命中所属组策略（bash 名单 / write 范围 / tools 名单）→ 免审放行
+ *   ② 策略未命中 → 智能体综合判断（以该组授权策略为参考）：
+ *        allow → 放行；ask → 授权卡
+ *      （覆盖复合命令等规则永远命中不了的调用；未配置智能体时直接授权卡）
+ *   ③ 智能体 ask → 授权卡，负责人单次确认；拒绝/超时/无会话发卡 → 拦截
+ *
+ * read 的可读范围判定在 runtime 的 read 分支先行处理，不会到这里。
+ * 所有身份（含负责人）都过此闸。
  */
 export class ToolGuard {
-  private readonly whitelist: CommandWhitelist;
-  private readonly judge: SafetyJudge;
   private readonly broker: PermissionBroker;
+  private readonly judge?: PolicyJudge;
 
-  constructor(whitelist: CommandWhitelist, judge: SafetyJudge, broker: PermissionBroker) {
-    this.whitelist = whitelist;
-    this.judge = judge;
+  constructor(broker: PermissionBroker, judge?: PolicyJudge) {
     this.broker = broker;
+    this.judge = judge;
   }
 
-  /** 审核一次工具调用，返回 block 信息；放行时返回 undefined。管理员会话同样审核。signal 中止（/stop）时取消授权等待。 */
-  async check(params: ToolGuardCheckParams, signal?: AbortSignal): Promise<{ block: true; reason: string } | undefined> {
-    const { toolName, args } = params;
+  async check(policy: GroupPolicy, params: ToolGuardCheckParams, signal?: AbortSignal): Promise<{ block: true; reason: string } | undefined> {
+    const { toolName, args, risky } = params;
 
-    const hit = this.whitelist.match(toolName, args);
-    if (hit) {
-      logger.info(`[ToolGuard] 白名单命中 (${hit})，放行: ${toolName}`);
+    // ① 组策略命中 → 免审放行（确定性判定）
+    if (toolName === "bash") {
+      const command = extractCommand(args);
+      if (command !== undefined && policy.bashAllowed(command)) {
+        logger.info(`[ToolGuard] bash 命中策略名单，放行: ${command}`);
+        return undefined;
+      }
+    } else if (toolName === "write" || toolName === "edit") {
+      const path = extractPath(args);
+      if (path !== undefined && policy.writeAllowed(path)) {
+        logger.info(`[ToolGuard] 写入命中策略范围，放行: ${path}`);
+        return undefined;
+      }
+    } else if (!risky) {
+      // 自定义工具（非内置 bash/write/edit）：toolsAllowed 已在之前验证通过，免审放行；标记 risky 的走授权卡
+      logger.info(`[ToolGuard] 自定义工具放行: ${toolName}`);
       return undefined;
     }
 
-    const verdict = await this.judge.judge(toolName, args);
-    if (verdict.decision === "allow") {
-      logger.info(`[ToolGuard] Guard 放行 (${verdict.reason}): ${toolName}`);
-      return undefined;
+    // ② 策略未命中 → 智能体综合判断（以该组授权策略为参考）
+    if (this.judge?.enabled) {
+      const fields = policy.describe();
+      const verdict = await this.judge.judge({ group: policy.groups.join(","), fields, toolName, args });
+      if (verdict.decision === "allow") {
+        logger.info(`[ToolGuard] 策略外调用，智能体综合判断放行: ${toolName}（${verdict.reason}）`);
+        return undefined;
+      }
+      logger.info(`[ToolGuard] 策略外调用，智能体判断需确认: ${toolName}（${verdict.reason}）`);
+      return this.requireApproval(params, verdict.reason, signal);
     }
 
+    // ③ 智能体未配置 → 名单外调用直接授权卡
+    return this.requireApproval(params, this.defaultReason(policy, toolName), signal);
+  }
+
+  /** 未启用智能体时的兜底理由。 */
+  private defaultReason(policy: GroupPolicy, toolName: string): string {
+    if (toolName === "bash") return "命令不在 bash 允许名单内";
+    if (toolName === "write" || toolName === "edit") return "写入路径不在允许范围内";
+    return `工具 ${toolName} 不在你的可用清单内`;
+  }
+
+  /** 走授权卡流程；无会话无法发卡时按拒绝处理。 */
+  private async requireApproval(
+    params: ToolGuardCheckParams,
+    reason: string,
+    signal?: AbortSignal,
+  ): Promise<{ block: true; reason: string } | undefined> {
     if (!params.chatId) {
-      logger.warn(`[ToolGuard] 无会话 ID，无法发授权卡，按拒绝处理: ${toolName}`);
-      return { block: true, reason: `工具 ${toolName} 需要管理员授权，但当前无法发起授权请求` };
+      logger.warn(`[ToolGuard] 无会话 ID，无法发授权卡，按拒绝处理: ${params.toolName}`);
+      return { block: true, reason: `工具 ${params.toolName} 需要负责人授权（${reason}），但当前无法发起授权请求` };
     }
 
-    logger.info(`[ToolGuard] Guard 要求授权 (${verdict.reason})，发送授权卡: ${toolName}`);
-    const { allowed, detail } = await this.broker.requestApproval({ toolName, args, chatId: params.chatId, reason: verdict.reason }, signal);
+    logger.info(`[ToolGuard] 需要授权 (${reason})，发送授权卡: ${params.toolName}`);
+    const { allowed, detail } = await this.broker.requestApproval({ toolName: params.toolName, args: params.args, chatId: params.chatId, reason }, signal);
     if (allowed) return undefined;
-    return { block: true, reason: `工具 ${toolName} 未获得管理员授权：${detail}` };
+    return { block: true, reason: `工具 ${params.toolName} 未获得负责人授权：${detail}` };
   }
+}
+
+/** 从工具参数中提取路径（read/write/edit: path/file_path）。 */
+function extractPath(args: unknown): string | undefined {
+  if (typeof args !== "object" || args === null) return undefined;
+  const record = args as Record<string, unknown>;
+  for (const key of ["path", "file_path"]) {
+    if (typeof record[key] === "string" && record[key]) return record[key] as string;
+  }
+  return undefined;
+}
+
+/** 从 bash 参数中提取命令。 */
+function extractCommand(args: unknown): string | undefined {
+  if (typeof args !== "object" || args === null) return undefined;
+  const command = (args as Record<string, unknown>).command;
+  return typeof command === "string" ? command : undefined;
 }

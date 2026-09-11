@@ -1,5 +1,6 @@
 import type { Client } from "@larksuiteoapi/node-sdk";
 import type { FeishuInboundMessage } from "./types.ts";
+import type { GroupFields } from "../permission/policy.ts";
 import { logger } from "../utils/logger.ts";
 import { loadConfig } from "../config.ts";
 
@@ -194,6 +195,7 @@ export class HelpCommand implements CommandHandler {
       card: markdownCard(`**可用指令**
 
 \`/model\` - 查看并切换 AI 模型（仅管理员）
+\`/perm\` - 查看权限组与技能/工具分布（仅管理员）
 \`/help\` - 显示此帮助信息
 \`/new\` - 开始新对话（清空历史）
 \`/stop\` - 停止当前 AI 响应
@@ -260,6 +262,61 @@ export class DetailCommand implements CommandHandler {
     }
 
     return { card: markdownCard(statusLine) };
+  }
+}
+
+/**
+ * /perm - 查看权限配置（仅管理员）
+ */
+export class PermCommand implements CommandHandler {
+  private readonly listPolicy: () => Promise<{
+    groups: Record<string, GroupFields & { effective: Required<Omit<GroupFields, "tools">> & { tools: string[] } }>;
+  }>;
+
+  constructor(
+    listPolicy: () => Promise<{
+      groups: Record<string, GroupFields & { effective: Required<Omit<GroupFields, "tools">> & { tools: string[] } }>;
+    }>,
+  ) {
+    this.listPolicy = listPolicy;
+  }
+
+  match(text: string): boolean {
+    return text.trim() === "/perm";
+  }
+
+  async execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
+    if (!message.context.isAdmin) {
+      return { card: markdownCard("⚠️ 仅管理员可查看权限配置") };
+    }
+
+    const policy = await this.listPolicy();
+    const fmtAllow = (e: { bash?: string[]; read?: string[]; write?: string[]; tools?: string[] }): string[] => {
+      const groups: [string, string[]][] = [
+        ["Read", e.read ?? []],
+        ["Write", e.write ?? []],
+        ["Tools", e.tools ?? []],
+        ["Bash", e.bash ?? []],
+      ];
+      const out: string[] = [];
+      for (const [tag, items] of groups) {
+        if (items.length === 0) continue;
+        if (out.length) out.push("");
+        for (const p of items) out.push(`${tag}(${p})`);
+      }
+      return out;
+    };
+
+    const lines: string[] = [];
+
+    for (const [name, g] of Object.entries(policy.groups)) {
+      const entries = fmtAllow(g.effective);
+      lines.push(`**${name}**`, entries.length ? entries.join("\n") : "（空）", "");
+    }
+
+    lines.push("ℹ️ 名单外的调用由智能体参考本策略综合判断，仍不放行则弹授权卡。");
+
+    return { card: markdownCard(lines.join("\n")) };
   }
 }
 

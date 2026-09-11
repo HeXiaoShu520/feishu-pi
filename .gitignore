@@ -60,3 +60,7 @@ coverage/
 test/.tmp/
 
 data/
+
+# 本地工具产物
+.claude/
+.pi/

@@ -1,5 +1,6 @@
 import "dotenv/config";
 import "./config-server.ts"; // 启动配置服务器
+import { registerSkillStatsRoutes } from "./config-server.ts";
 import { ConversationManager } from "./runtime/conversation-manager.ts";
 import { FeishuPiRuntime } from "./runtime/feishu-pi-runtime.ts";
 import { FeishuAgentBridge } from "./feishu/agent-bridge.ts";
@@ -9,15 +10,17 @@ import { ConversationStore } from "./runtime/conversation-store.ts";
 import { MessageStore } from "./feishu/message-store.ts";
 import { DataCleaner } from "./runtime/data-cleaner.ts";
 import { resolveAdminOpenId } from "./feishu/admin-resolver.ts";
-import { join } from "node:path";
-import { existsSync } from "node:fs";
+import { SkillUsageStore } from "./stats/skill-usage-store.ts";
+import { ScheduleService } from "./schedule/service.ts";
+import { PermissionPolicy } from "./permission/policy.ts";
+import { PermCommand } from "./feishu/commands.ts";
+import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "./utils/logger.ts";
-import { CommandWhitelist, loadWhitelistConfig } from "./guard/whitelist.ts";
-import { SafetyJudge } from "./guard/judge.ts";
 import { PermissionBroker } from "./guard/broker.ts";
 import { ToolGuard } from "./guard/tool-guard.ts";
+import { PolicyJudge } from "./guard/judge.ts";
 import { buildNoticeCard } from "./guard/card.ts";
 
 /** 启动轻量飞书 Agent 服务。 */
@@ -84,11 +87,6 @@ export async function main(): Promise<void> {
     logger.info(`[Main] 未配置管理员`);
   }
 
-  // 团队成员配置（不需要预先解析，运行时动态匹配）
-  if (config.feishuTeamMembers.length > 0) {
-    logger.info(`[Main] 团队成员配置: ${config.feishuTeamMembers.length} 人`);
-  }
-
   // runtime 先声明（transport 的 onModelSwitch 回调引用它）
   let runtime: FeishuPiRuntime;
 
@@ -105,30 +103,17 @@ export async function main(): Promise<void> {
     onModelSwitch: (name) => runtime?.setModelName(name),
   });
 
-  // 工具调用 Guard：白名单正则 + 大模型审核 + 管理员授权卡
-  // 白名单优先从 .agent/settings.json 读取（Claude Code settings.json 风格），旧 whitelist.json 兼容读取，均不存在时回退环境变量
-  const settingsFile = join(config.cwd, ".agent", "settings.json");
-  const legacyWhitelistFile = join(config.cwd, ".agent", "whitelist.json");
-  // 优先 .agent/settings.json（Claude Code 风格），无内容时回退旧 whitelist.json
-  const fromSettings = loadWhitelistConfig(settingsFile);
-  const whitelistConfig = fromSettings.patterns.length > 0 ? fromSettings : loadWhitelistConfig(legacyWhitelistFile);
-  const loadedFrom = fromSettings.patterns.length > 0 ? settingsFile : legacyWhitelistFile;
-  if (whitelistConfig.patterns.length > 0) {
-    logger.info(`[Main] 已加载白名单 ${whitelistConfig.patterns.length} 条（${loadedFrom}）`);
-  } else if (config.cmdWhitelist.length > 0) {
-    logger.info(`[Main] 白名单文件不存在，使用 FEISHU_CMD_WHITELIST 环境变量（${config.cmdWhitelist.length} 条）`);
-  }
-  const whitelist = new CommandWhitelist(whitelistConfig.patterns.length > 0 ? whitelistConfig.patterns : config.cmdWhitelist);
-  const judge = new SafetyJudge({
+  // 工具调用 Guard：统一权限策略（.agent/permissions.json）判定 + 管理员授权卡，非允许即 ask
+  const policyFile = join(config.cwd, ".agent", "permissions.json");
+  const policy = new PermissionPolicy(policyFile, {
+    adminId: adminOpenId ?? "",
+    groupMembership: config.groupMembership,
+    usersFile: join(dirname(config.sessionDir), "users", `${config.feishuAppId}_users.json`),
     cwd: config.cwd,
-    baseUrl: config.guardBaseUrl,
-    models: config.guardModels,
-    apiKey: config.guardApiKey,
-    timeoutMs: config.guardTimeoutMs,
-    writableDirs: whitelistConfig.writableDirs,
-    readableDirs: whitelistConfig.readableDirs,
-    readonlyTools: whitelistConfig.readonlyTools,
   });
+  if (config.cmdWhitelist.length > 0) {
+    logger.warn(`[Main] FEISHU_CMD_WHITELIST 已废弃，工具规则统一在 .agent/permissions.json 中配置`);
+  }
   // bridge 在下方创建，先用闭包引用（授权卡撤回需查询该会话的详细模式开关）
   let bridgeRef: FeishuAgentBridge | undefined;
   const broker = new PermissionBroker({
@@ -140,7 +125,12 @@ export async function main(): Promise<void> {
     recallCard: (messageId) => transport.recallMessageById(messageId),
     shouldRecall: (chatId) => bridgeRef?.isDetailMode(chatId) === false,
   });
-  const toolGuard = new ToolGuard(whitelist, judge, broker);
+  const toolGuard = new ToolGuard(broker, new PolicyJudge({
+    baseUrl: config.guardBaseUrl,
+    models: config.guardModels,
+    apiKey: config.guardApiKey,
+    timeoutMs: config.guardTimeoutMs,
+  }));
 
   // 授权卡回调 → PermissionBroker 服务端校验（token / 卡片来源 / 管理员身份）
   transport.onApproval(async ({ value, action }) => {
@@ -179,7 +169,47 @@ export async function main(): Promise<void> {
     }
   });
 
-  // 创建 runtime 配置
+  // 技能使用统计：独立事件流（data/stats/，不参与 7 天清理），展示名解析复用用户缓存
+  const dataDir = dirname(config.sessionDir);
+  const usageStore = new SkillUsageStore(
+    join(dataDir, "stats", "skill-usage.jsonl"),
+    join(dataDir, "users", `${config.feishuAppId}_users.json`),
+  );
+  registerSkillStatsRoutes(usageStore);
+
+  // 定时任务：持久化（data/schedules.json）+ cron 调度；触发时以创建者身份跑智能体并推送结果卡片
+  const scheduleService = new ScheduleService({
+    storeFile: join(dataDir, "schedules.json"),
+    runTask: async (task) => {
+      const conversationId = `${task.createdBy}-schedule:${task.id}`;
+      const context = {
+        userOpenId: task.createdBy,
+        chatId: task.chatId,
+        conversationId,
+      };
+      let output = "";
+      await conversations.prompt(
+        {
+          conversationId,
+          prompt: { text: task.prompt, context },
+          context,
+        },
+        (event) => {
+          if (event.type === "assistant_text") output = event.text;
+        },
+      );
+      const trimmed = (output || "（本轮无文本输出）").slice(0, 4000);
+      await transport.sendCardToChat(task.chatId, {
+        schema: "2.0",
+        config: { update_multi: true },
+        body: { elements: [{ tag: "markdown", content: `**⏰ 定时任务：${task.name}**
+
+${trimmed}` }] },
+      });
+    },
+  });
+
+  // 创建 runtime 配置（两档身份：负责人 = FEISHU_ADMIN，用户 = 其他人；能力全部由策略文件驱动）
   runtime = new FeishuPiRuntime({
     cwd: config.cwd,
     sessionDir: config.sessionDir,
@@ -188,8 +218,10 @@ export async function main(): Promise<void> {
     modelBaseUrl: config.modelBaseUrl,
     systemPrompt: config.systemPrompt,
     adminId: adminOpenId || "",
-    teamMemberIdentifiers: config.feishuTeamMembers,  // 传原始配置
-    toolGuard: (params) => toolGuard.check(params),
+    permissionPolicy: policy,
+    toolGuard: (groupPolicy, params, signal) => toolGuard.check(groupPolicy, params, signal),
+    skillUsageStore: usageStore,
+    scheduleService,
   });
 
   // 启动时打印可用的 Skills 和 Tools（管理员视角）
@@ -204,12 +236,16 @@ export async function main(): Promise<void> {
       messages,
       client,
       enableCardKit: true,
+      // /perm 查看身份、双组策略与工具档位（仅管理员）
+      extraCommands: [new PermCommand(() => policy.describe())],
     },
   );
   bridgeRef = bridge;
 
   bridge.start();
   await transport.connect();
+  // 恢复定时任务调度（任务持久化在 data/schedules.json）
+  await scheduleService.start();
 
   // 打印配置页面地址
   console.log(`\n配置页面: http://localhost:3456\n`);
@@ -223,6 +259,7 @@ export async function main(): Promise<void> {
     logger.info(`[Main] 收到 ${signal} 信号，正在关闭服务...`);
 
     clearInterval(cleanupTimer);
+    scheduleService.stop();
 
     // 断开在后台进行，不 await——挂住也不影响退出
     void transport.disconnect().then(

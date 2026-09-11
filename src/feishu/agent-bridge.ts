@@ -39,6 +39,8 @@ export class FeishuAgentBridge {
       client?: Client;
       enableCardKit?: boolean;
       enableReaction?: boolean;
+      /** 额外指令（如 /perm），注册在默认指令之后 */
+      extraCommands?: CommandHandler[];
     },
   ) {
     this.conversations = conversations;
@@ -56,6 +58,9 @@ export class FeishuAgentBridge {
       (chatId: string, enabled: boolean) => this.detailMode.set(chatId, enabled),
       (chatId: string) => this.detailMode.get(chatId) === true,
     ));
+    for (const command of options?.extraCommands ?? []) {
+      this.commandRegistry.register(command);
+    }
   }
 
   /** 注册飞书消息处理器。 */

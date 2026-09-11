@@ -14,6 +14,13 @@ export interface LarkUserProfile {
 }
 
 const CACHE_EXPIRY_DAYS = 3;
+/** 空档案（三级查询均未命中的最小资料）的重查间隔：信息可能随时变得可查，更快重试 */
+const SPARSE_CACHE_EXPIRY_DAYS = 1;
+
+/** 空档案判定：无名字、无英文名、无部门（仅 openId） */
+function isSparseProfile(profile: LarkUserProfile): boolean {
+  return !profile.name && !profile.englishName && !profile.departmentNames?.length;
+}
 
 /** 所有用户资料的缓存结构（以 openId 为键） */
 interface UserProfileCache {
@@ -39,18 +46,22 @@ export class LarkCli {
    * 1. 应用成员：API 获取中文名、英文名、邮箱
    * 2. 群聊成员：群成员列表获取中文名
    * 3. 统一使用 lark-cli 搜索获取部门中文名
+   *
+   * 三级查询全部失败时同样入库（仅 openId，字段允许为空），空档案 1 天、
+   * 有档案 3 天后重试；消费方自行判断空字段并做兜底展示（如 openId 直显）。
    */
   async getUserProfile(openId: string, chatId?: string): Promise<LarkUserProfile> {
     await this.loadCache();
 
     const now = new Date();
 
-    // 检查缓存是否过期（超过 3 天）
+    // 检查缓存是否过期：有档案 3 天，空档案 1 天（更快重试补全）
     const cached = this.cache[openId];
     if (cached) {
       const updatedAt = new Date(cached.updatedAt);
       const ageInDays = (now.getTime() - updatedAt.getTime()) / (1000 * 60 * 60 * 24);
-      if (ageInDays < CACHE_EXPIRY_DAYS) {
+      const expiryDays = isSparseProfile(cached) ? SPARSE_CACHE_EXPIRY_DAYS : CACHE_EXPIRY_DAYS;
+      if (ageInDays < expiryDays) {
         return cached;
       }
       logger.info(`[LarkCli] 用户 ${openId} 缓存已过期（${ageInDays.toFixed(1)} 天），重新查询`);
@@ -82,7 +93,7 @@ export class LarkCli {
 
       if (!chatId) {
         logger.warn(`[LarkCli] 无 chatId，无法从群成员列表查询`);
-        return this.createFallbackProfile(openId, now);
+        return this.cacheFallbackProfile(openId, now);
       }
 
       try {
@@ -118,7 +129,7 @@ export class LarkCli {
         logger.info(`[LarkCli] 从群成员列表获取到名字: ${name}`);
       } catch (chatError) {
         logger.warn(`[LarkCli] 从群成员列表查询失败：${chatError instanceof Error ? chatError.message : String(chatError)}`);
-        return this.createFallbackProfile(openId, now);
+        return this.cacheFallbackProfile(openId, now);
       }
     }
 
@@ -228,14 +239,30 @@ export class LarkCli {
     await writeFile(this.cacheFilePath, `${JSON.stringify(this.cache, null, 2)}\n`, "utf8");
   }
 
-  /** 创建降级的用户资料（最小信息） */
-  private createFallbackProfile(openId: string, now: Date): LarkUserProfile {
-    return {
+  /**
+   * 降级资料入库：三级查询全部失败时也写缓存（字段允许为空，至少含 openId），
+   * 避免每条消息都重新执行完整查询。若缓存中已有旧资料（过期重查失败），
+   * 保留旧字段不降级，仅刷新时间戳。
+   */
+  private async cacheFallbackProfile(openId: string, now: Date): Promise<LarkUserProfile> {
+    const prev = this.cache[openId];
+    const profile: LarkUserProfile = {
       openId,
-      name: undefined,
-      englishName: undefined,
-      departmentNames: undefined,
+      name: prev?.name,
+      englishName: prev?.englishName,
+      departmentNames: prev?.departmentNames,
       updatedAt: now.toISOString(),
     };
+    const hadInfo = Boolean(prev?.name || prev?.englishName || prev?.departmentNames?.length);
+
+    this.cache[openId] = profile;
+    await this.saveCache();
+
+    if (hadInfo) {
+      logger.warn(`[LarkCli] 用户 ${profile.name || profile.englishName || openId} (${openId}) 重查失败，保留既有资料，${CACHE_EXPIRY_DAYS} 天后自动重试`);
+    } else {
+      logger.info(`[LarkCli] 🆕 新用户入库(资料暂缺): ${openId} — 三级查询均未命中，${SPARSE_CACHE_EXPIRY_DAYS} 天后自动重试`);
+    }
+    return profile;
   }
 }

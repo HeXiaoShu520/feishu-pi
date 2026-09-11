@@ -1,7 +1,6 @@
 ---
 name: code-review
 description: 代码审查技能 - 帮助审查代码质量、安全性和最佳实践
-permission: team
 ---
 
 # Code Review Skill
