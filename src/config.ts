@@ -4,6 +4,10 @@ export interface FeishuPiAppConfig {
   feishuAdmin: string;
   cwd: string;
   sessionDir: string;
+  /** 数据根目录（data/，已被 .gitignore 排除），存放用户 token 等非会话数据 */
+  dataDir: string;
+  /** Per-user 授权（Device Flow，/login）申请的用户身份 scope；留空 = 禁用 /login */
+  userAuthScopes: string[];
   modelProvider: string;
   modelName: string;
   modelBaseUrl?: string;
@@ -36,6 +40,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     feishuAdmin: env.FEISHU_ADMIN || "", // 可选：支持中文名、英文名、open_id、邮箱
     cwd: env.FEISHU_PI_CWD ?? process.cwd(),
     sessionDir: `${process.cwd()}/data/sessions`,
+    dataDir: `${process.cwd()}/data`,
+    // 用户身份授权 scope（Device Flow）：空格或逗号分隔；留空 = /login 提示未配置
+    userAuthScopes: (env.FEISHU_USER_AUTH_SCOPES ?? "").split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
     modelProvider: env.FEISHU_PI_MODEL_PROVIDER ?? "anthropic",
     modelName: env.FEISHU_PI_MODEL_NAME ?? "claude-sonnet-4-6",
     modelBaseUrl: env.FEISHU_PI_MODEL_BASE_URL,

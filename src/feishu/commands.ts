@@ -17,10 +17,12 @@ export interface CommandResult {
   card: object;
   /** 是否需要回调处理（按钮点击） */
   needsCallback?: boolean;
+  /** 卡片发出后回调（含 message_id），用于需要稍后原地更新卡片的场景（如 /login 的授权轮询结果） */
+  afterSend?: (messageId?: string) => void;
 }
 
 /** 构建一张只含单段 Markdown 的 CardKit 2.0 卡片（指令回复的标准形态）。 */
-function markdownCard(content: string): object {
+export function markdownCard(content: string): object {
   return {
     schema: "2.0",
     body: { elements: [{ tag: "markdown", content }] },
@@ -198,6 +200,8 @@ export class HelpCommand implements CommandHandler {
 
 \`/model\` - 查看并切换 AI 模型（仅管理员）
 \`/perm\` - 查看权限组与技能/工具分布（仅管理员）
+\`/login\` - 登录飞书用户身份（Device Flow 授权，用于"我的视角"能力）
+\`/logout\` - 退出用户身份登录
 \`/help\` - 显示此帮助信息
 \`/new\` - 开始新对话（清空历史）
 \`/stop\` - 停止当前 AI 响应

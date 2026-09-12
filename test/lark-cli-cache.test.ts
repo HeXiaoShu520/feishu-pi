@@ -4,81 +4,108 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { LarkCli } from "../src/feishu/lark-cli.ts";
 
-/** 让 contact.user.get 一直失败的假 Lark Client，并统计调用次数 */
-function makeFailingClient(counter: { calls: number }) {
-  return {
-    contact: {
-      user: {
-        get: async () => {
-          counter.calls += 1;
-          throw new Error("API 不可用");
-        },
-      },
-    },
-  } as unknown as ConstructorParameters<typeof LarkCli>[0];
+/** 构造注入版 LarkCli：管理员 token 与 HTTP GET 全部可脚本化，时钟由测试推进 */
+function makeLarkCli(opts: {
+  storeFile: string;
+  adminToken?: string | undefined;
+  adminGet: (pathAndQuery: string, token: string) => Promise<Record<string, unknown>>;
+}) {
+  const larkCli = new LarkCli("cli_test", opts.storeFile, {
+    adminTokenProvider: async () => opts.adminToken,
+    adminGet: opts.adminGet,
+  });
+  return { larkCli };
 }
 
-describe("LarkCli 降级资料入库", () => {
-  it("三级查询全部失败时写缓存（仅 openId），到期前不再重新查询", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "lark-cli-"));
-    const counter = { calls: 0 };
-    const larkCli = new LarkCli(makeFailingClient(counter), "cli_test", dir);
+function seedProfile(storeFile: string, openId: string, profile: Record<string, unknown>): Promise<void> {
+  return writeFile(storeFile, JSON.stringify({ [openId]: profile }), "utf8");
+}
 
-    // 无 chatId：API 失败后直接走降级入库
+describe("LarkCli 管理员身份用户资料查询", () => {
+  it("查询成功：中文名/英文名/部门名入库并缓存；二次查询不再发请求", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "larkcli-"));
+    const storeFile = join(dir, "cli_test_users.json");
+    let userCalls = 0;
+    const { larkCli } = makeLarkCli({
+      storeFile,
+      adminToken: "admin_uat",
+      adminGet: async (path) => {
+        if (path.includes("/users/")) {
+          userCalls += 1;
+          return { user: { name: "外部成员", en_name: "Guest", department_ids: ["od_dept1"] } };
+        }
+        return { items: [{ department_id: "od_dept1", name: "技术部" }] };
+      },
+    });
+
+    const profile = await larkCli.getUserProfile("ou_guest");
+    expect(profile.name).toBe("外部成员");
+    expect(profile.englishName).toBe("Guest");
+    expect(profile.departmentNames).toEqual(["技术部"]);
+    expect(userCalls).toBe(1);
+
+    // 缓存命中：3 天内不再发请求
+    const again = await larkCli.getUserProfile("ou_guest");
+    expect(again.name).toBe("外部成员");
+    expect(userCalls).toBe(1);
+  });
+
+  it("管理员未登录（token 缺失）→ 最小档案不落盘，下一条消息重试", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "larkcli-"));
+    const storeFile = join(dir, "cli_test_users.json");
+    let adminGetCalls = 0;
+    const { larkCli } = makeLarkCli({
+      storeFile,
+      adminToken: undefined,
+      adminGet: async () => {
+        adminGetCalls += 1;
+        return { user: { name: "不该被调用" } };
+      },
+    });
+
     const profile = await larkCli.getUserProfile("ou_new");
     expect(profile.openId).toBe("ou_new");
     expect(profile.name).toBeUndefined();
-    expect(profile.englishName).toBeUndefined();
+    await expect(readFile(storeFile, "utf8")).rejects.toThrow(); // 失败不落盘
 
-    // 缓存文件已写入
-    const raw = JSON.parse(await readFile(join(dir, "cli_test_users.json"), "utf8"));
-    expect(raw.ou_new.openId).toBe("ou_new");
-    expect(raw.ou_new.updatedAt).toBeTruthy();
-
-    // 第二次查询命中缓存，不再调用 API
-    await larkCli.getUserProfile("ou_new");
-    expect(counter.calls).toBe(1);
+    // 下一条消息会再尝试（虽然仍拿不到 token）
+    const again = await larkCli.getUserProfile("ou_new");
+    expect(again.openId).toBe("ou_new");
+    expect(adminGetCalls).toBe(0); // 无 token 时连 HTTP 都不发
   });
 
-  it("过期重查失败时保留既有资料，不降级为空", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "lark-cli-"));
-    const usersFile = join(dir, "cli_test_users.json");
+  it("查询失败保留旧资料且不改缓存文件；过期重查成功后更新", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "larkcli-"));
+    const storeFile = join(dir, "cli_test_users.json");
     const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
-    await writeFile(usersFile, JSON.stringify({
-      ou_known: { openId: "ou_known", name: "张三", englishName: "John", departmentNames: ["技术部"], updatedAt: tenDaysAgo },
-    }), "utf8");
+    await seedProfile(storeFile, "ou_known", {
+      openId: "ou_known", name: "张三", englishName: "John", departmentNames: ["技术部"], updatedAt: tenDaysAgo,
+    });
 
-    const larkCli = new LarkCli(makeFailingClient({ calls: 0 }), "cli_test", dir);
-    const profile = await larkCli.getUserProfile("ou_known");
+    let fail = true;
+    const larkCli = new LarkCli("cli_test", dir, {
+      adminTokenProvider: async () => "admin_uat",
+      adminGet: async (path) => {
+        if (fail) throw new Error("接口异常");
+        if (path.includes("/users/")) {
+          return { user: { name: "张三", en_name: "John", department_ids: ["od_dept1"] } };
+        }
+        return { items: [{ department_id: "od_dept1", name: "技术部" }] };
+      },
+    });
 
-    // 资料过期触发重查（API 失败），降级入库但保留旧字段
-    expect(profile.name).toBe("张三");
-    expect(profile.englishName).toBe("John");
-    expect(profile.departmentNames).toEqual(["技术部"]);
-    // 时间戳已刷新，到期前不会每条消息都重查
-    expect(new Date(profile.updatedAt).getTime()).toBeGreaterThan(Date.now() - 60 * 1000);
-  });
+    // 过期重查失败：返回旧资料，缓存文件原样（旧时间戳），下次继续重试
+    const kept = await larkCli.getUserProfile("ou_known");
+    expect(kept.name).toBe("张三");
+    const raw1 = JSON.parse(await readFile(storeFile, "utf8"));
+    expect(raw1.ou_known.updatedAt).toBe(tenDaysAgo);
 
-  it("双 TTL：空档案 1 天即过期重查，有档案 3 天内命中缓存", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "lark-cli-"));
-    const usersFile = join(dir, "cli_test_users.json");
-    const twoDaysAgo = new Date(Date.now() - 2 * 24 * 60 * 60 * 1000).toISOString();
-    await writeFile(usersFile, JSON.stringify({
-      ou_sparse: { openId: "ou_sparse", updatedAt: twoDaysAgo },
-      ou_rich: { openId: "ou_rich", name: "李四", updatedAt: twoDaysAgo },
-    }), "utf8");
-
-    const counter = { calls: 0 };
-    const larkCli = new LarkCli(makeFailingClient(counter), "cli_test", dir);
-
-    // 空档案：2 天 > 1 天 TTL → 触发重查（API 调用一次，失败后仍是空档案）
-    const sparse = await larkCli.getUserProfile("ou_sparse");
-    expect(counter.calls).toBe(1);
-    expect(sparse.name).toBeUndefined();
-
-    // 有档案：2 天 < 3 天 TTL → 直接命中缓存，不再调 API
-    const rich = await larkCli.getUserProfile("ou_rich");
-    expect(counter.calls).toBe(1);
-    expect(rich.name).toBe("李四");
+    // 恢复后重查成功：资料刷新入库
+    fail = false;
+    const refreshed = await larkCli.getUserProfile("ou_known");
+    expect(refreshed.englishName).toBe("John");
+    expect(refreshed.departmentNames).toEqual(["技术部"]);
+    const raw2 = JSON.parse(await readFile(storeFile, "utf8"));
+    expect(raw2.ou_known.updatedAt).not.toBe(tenDaysAgo);
   });
 });

@@ -5,6 +5,7 @@ import type { FeishuContext } from "../context/types.ts";
 import { DEFAULT_BUILTIN_TOOLS, createToolRegistryAsync } from "../tools/registry.ts";
 import { join } from "node:path";
 import { logger, colors } from "../utils/logger.ts";
+import { conversationDir } from "../utils/session-paths.ts";
 import { matchSkillRead } from "../stats/skill-usage-store.ts";
 import type { SkillUsageStore } from "../stats/skill-usage-store.ts";
 import type { GroupPolicy } from "../permission/policy.ts";
@@ -144,9 +145,12 @@ export class FeishuPiRuntime {
     const groupPolicy: GroupPolicy = await this.config.permissionPolicy.forGroups(groups);
     logger.info(`[Runtime] 用户身份: ${colors.cyan}${userId}${colors.reset} -> ${colors.yellow}${groups.join(", ") || "(无组)"}${colors.reset}`);
 
+    // 一个会话一个文件夹：新会话的 jsonl 落在会话专属目录；续聊传入同目录，
+    // 供 Pi 内部 /new、分支等操作在正确位置建新文件
+    const convDir = conversationDir(this.config.sessionDir, context?.conversationId ?? "default");
     const sessionManager = sessionFile
-      ? SessionManager.open(sessionFile, this.config.sessionDir, this.config.cwd)
-      : SessionManager.create(this.config.cwd, this.config.sessionDir);
+      ? SessionManager.open(sessionFile, convDir, this.config.cwd)
+      : SessionManager.create(this.config.cwd, convDir);
     const model = getModel(this.config.modelProvider as never, this.config.modelName as never);
     if (!model) throw new Error(`Model not found: ${this.config.modelProvider}/${this.config.modelName}`);
 

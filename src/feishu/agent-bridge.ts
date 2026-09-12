@@ -277,8 +277,9 @@ export class FeishuAgentBridge {
       const result = await handler.execute(message, this.client);
       if (!result) return;
 
-      // 发送卡片回复
-      await this.sendCommandCard(message, result.card);
+      // 发送卡片回复；message_id 回传给 afterSend（如 /login 轮询完成后原地更新卡片）
+      const sentMessageId = await this.sendCommandCard(message, result.card);
+      result.afterSend?.(sentMessageId);
 
       logger.info(`[Command] 卡片已发送`);
 
@@ -289,11 +290,11 @@ export class FeishuAgentBridge {
     }
   }
 
-  /** 发送指令卡片回复；话题群内以话题形式回帖到原话题（直接发消息会开出新话题）。 */
-  private async sendCommandCard(message: FeishuInboundMessage, card: object): Promise<void> {
-    if (!this.client) return;
+  /** 发送指令卡片回复；话题群内以话题形式回帖到原话题（直接发消息会开出新话题）。返回卡片 message_id。 */
+  private async sendCommandCard(message: FeishuInboundMessage, card: object): Promise<string | undefined> {
+    if (!this.client) return undefined;
     if (message.context.chatMode === "topic") {
-      await this.client.im.message.reply({
+      const reply = await this.client.im.message.reply({
         path: { message_id: message.messageId },
         data: {
           msg_type: "interactive",
@@ -301,9 +302,9 @@ export class FeishuAgentBridge {
           reply_in_thread: true,
         },
       });
-      return;
+      return extractMessageId(reply);
     }
-    await this.client.request({
+    const res = await this.client.request({
       method: "POST",
       url: "/open-apis/im/v1/messages",
       params: { receive_id_type: "chat_id" },
@@ -318,7 +319,14 @@ export class FeishuAgentBridge {
       logger.error(`[Command] 发送卡片失败:`, JSON.stringify(errorDetail, null, 2));
       throw err;
     });
+    return extractMessageId(res);
   }
+}
+
+/** 从飞书发送/回复响应中提取卡片 message_id（失败或结构不符时返回 undefined）。 */
+function extractMessageId(res: unknown): string | undefined {
+  const id = (res as { data?: { message_id?: string } } | undefined)?.data?.message_id;
+  return typeof id === "string" ? id : undefined;
 }
 
 /** 工具调用行展示的最大字符数（防止超长命令/路径刷屏）。 */

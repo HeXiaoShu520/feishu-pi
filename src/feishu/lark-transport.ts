@@ -5,6 +5,7 @@ import { TopicRootStore } from "./topic-root-store.ts";
 import { LarkImageProcessor } from "./image-processor.ts";
 import { formatLogText } from "./log-utils.ts";
 import { logger } from "../utils/logger.ts";
+import { attachmentsDir, sanitizeFileName } from "../utils/session-paths.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -20,12 +21,17 @@ export interface LarkTransportConfig {
   client: Client;
   /** 图片缓存目录（可选） */
   imageCacheDir?: string;
-  /** 文件附件缓存目录（可选，提供后支持 file/audio/video 附件下载） */
-  filesCacheDir?: string;
+  /** 会话数据根目录（可选，提供后支持 file/audio/video 附件下载，存放在 {根目录}/{会话}/files/） */
+  sessionDataDir?: string;
   /** 管理员 Open ID（可选） */
   adminOpenId?: string;
   /** 话题根持久化文件路径（话题群会话收敛用） */
   topicRootsFile?: string;
+  /**
+   * 管理员用户 token 提供器（来自 /login，FEISHU_ADMIN 的 user_access_token）。
+   * 提供后启用用户资料的"管理员身份查询"通道：补群成员英文名/部门，并兜底查应用可用范围外的用户。
+   */
+  adminTokenProvider?: () => Promise<string | undefined>;
   /** 模型切换回调（/model 指令确认后触发，用于运行时热切换） */
   onModelSwitch?: (modelName: string) => void;
 }
@@ -59,8 +65,8 @@ export class LarkTransport implements FeishuTransport {
   private readonly chatModeCache = new Map<string, "p2p" | "group" | "topic">();
   /** 话题根持久化（chatId -> 待定话题根 messageId） */
   private readonly topicRoots?: TopicRootStore;
-  /** 文件附件缓存目录 */
-  private readonly filesCacheDir?: string;
+  /** 会话数据根目录（附件下载到 {根目录}/{会话}/files/） */
+  private readonly sessionDataDir?: string;
   /** 图片缓存目录（供附件下载参考） */
   private readonly imageCacheDir?: string;
 
@@ -74,12 +80,14 @@ export class LarkTransport implements FeishuTransport {
     this.adminOpenId = config.adminOpenId;
     this.onModelSwitch = config.onModelSwitch;
     this.client = config.client;
-    this.filesCacheDir = config.filesCacheDir;
+    this.sessionDataDir = config.sessionDataDir;
     this.imageCacheDir = config.imageCacheDir;
     if (config.topicRootsFile) {
       this.topicRoots = new TopicRootStore(config.topicRootsFile);
     }
-    this.larkCli = new LarkCli(config.client, config.appId, config.userProfileDir);
+    this.larkCli = new LarkCli(config.appId, config.userProfileDir, {
+      adminTokenProvider: config.adminTokenProvider,
+    });
     this.imageProcessor = new LarkImageProcessor(config.client, {
       cacheDir: config.imageCacheDir,
     });
@@ -155,7 +163,9 @@ export class LarkTransport implements FeishuTransport {
     if (this.botOpenId && message.senderId === this.botOpenId) return;
     const chatId = message.chatId;
     try {
-      const profile = await this.larkCli.getUserProfile(message.senderId, chatId);
+      // 会话模式先行：决定用户资料的查询通道（私聊 contact API / 群聊群成员名单）与 conversationId 归属
+      const chatMode = await this.getChatModeCached(chatId);
+      const profile = await this.larkCli.getUserProfile(message.senderId);
       const displayName = profile.name || profile.englishName || profile.openId;
 
       // 构造 conversationId：
@@ -163,7 +173,6 @@ export class LarkTransport implements FeishuTransport {
       //   用该消息的 messageId 作为话题键并持久化——后续消息的 threadId 恰好就是这条根消息的 ID，
       //   收敛到同一会话；若根未确立前用户追加消息，从持久化中取回话题根，避免裂成新会话
       // - 其他会话（私聊/普通群）：按用户隔离
-      const chatMode = await this.getChatModeCached(chatId);
       const threadId = message.threadId;
       let conversationId: string;
       if (chatMode === "topic") {
@@ -201,25 +210,16 @@ export class LarkTransport implements FeishuTransport {
           .trim();
       }
 
-      // 下载文件类附件（file/audio/video/media），保存到本地并把路径写进消息文本，
+      // 下载文件类附件（file/audio/video/media），保存到会话文件夹并把路径写进消息文本，
       // Agent 可用 read/bash 直接访问
-      const fileResources = resources.filter((r) => ["file", "audio", "video", "media"].includes(r.type) && r.fileKey);
-      if (this.filesCacheDir && fileResources.length > 0) {
-        const { writeFile, mkdir } = await import("node:fs/promises");
-        await mkdir(this.filesCacheDir, { recursive: true });
-        let attachmentNote = "";
-        for (const resource of fileResources.slice(0, 5)) {
-          try {
-            const buffer = await this.downloadResource(resource.fileKey, resource.type);
-            const fileName = sanitizeFileName(resource.fileName || resource.fileKey);
-            const filePath = join(this.filesCacheDir, `${Date.now()}-${fileName}`);
-            await writeFile(filePath, buffer);
-            attachmentNote += `\n[附件] ${fileName} 已保存到: ${filePath}`;
-          } catch (error) {
-            logger.warn(`[LarkTransport] 下载附件失败 ${resource.fileKey}: ${error instanceof Error ? error.message : error}`);
-          }
-        }
-        if (attachmentNote) cleanedText += `\n${attachmentNote}`;
+      if (this.sessionDataDir) {
+        const attachmentNote = await downloadFileAttachments(
+          this.sessionDataDir,
+          conversationId,
+          resources,
+          (fileKey, type) => this.downloadResource(fileKey, type),
+        );
+        if (attachmentNote) cleanedText += attachmentNote;
       }
 
       // 记录收到的消息
@@ -429,9 +429,39 @@ export class LarkTransport implements FeishuTransport {
   }
 }
 
-/** 清理文件名：去掉路径分隔符等不安全字符，防止下载路径逃逸。 */
-function sanitizeFileName(name: string): string {
-  return name.replace(/[\\/:*?"<>|]/g, "_").slice(0, 120) || "attachment";
+/**
+ * 下载文件类附件（file/audio/video/media）到会话文件夹的 files/ 子目录
+ * （`{sessionDataDir}/{会话目录}/files/`），返回要追加到消息文本的附件说明（无附件时为空串）。
+ *
+ * 历史记录与附件同住一个会话文件夹，磁盘布局与会话隔离模型一一对应。
+ * 文件名带时间戳前缀，同一会话先后传同名文件不互相覆盖；单个下载失败只记 warn，不影响其余附件。
+ */
+export async function downloadFileAttachments(
+  sessionDataDir: string,
+  conversationId: string,
+  resources: ReadonlyArray<{ type: string; fileKey: string; fileName?: string }>,
+  download: (fileKey: string, type: string) => Promise<Buffer>,
+): Promise<string> {
+  const fileResources = resources.filter((r) => ["file", "audio", "video", "media"].includes(r.type) && r.fileKey);
+  if (fileResources.length === 0) return "";
+
+  const { writeFile, mkdir } = await import("node:fs/promises");
+  const targetDir = attachmentsDir(sessionDataDir, conversationId);
+  await mkdir(targetDir, { recursive: true });
+
+  let attachmentNote = "";
+  for (const resource of fileResources.slice(0, 5)) {
+    try {
+      const buffer = await download(resource.fileKey, resource.type);
+      const fileName = sanitizeFileName(resource.fileName || resource.fileKey);
+      const filePath = join(targetDir, `${Date.now()}-${fileName}`);
+      await writeFile(filePath, buffer);
+      attachmentNote += `\n[附件] ${fileName} 已保存到: ${filePath}`;
+    } catch (error) {
+      logger.warn(`[LarkTransport] 下载附件失败 ${resource.fileKey}: ${error instanceof Error ? error.message : error}`);
+    }
+  }
+  return attachmentNote;
 }
 
 /** 把资源下载接口的返回（wrapper/流/Buffer）收敛为 Buffer。 */

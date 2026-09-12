@@ -13,6 +13,7 @@ import { SkillUsageStore } from "./stats/skill-usage-store.ts";
 import { ScheduleService } from "./schedule/service.ts";
 import { PermissionPolicy } from "./permission/policy.ts";
 import { PermCommand } from "./feishu/commands.ts";
+import { LoginCommand, LogoutCommand, UserAuthService } from "./feishu/user-auth.ts";
 import { dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@larksuiteoapi/node-sdk";
@@ -46,6 +47,7 @@ export async function main(): Promise<void> {
   logger.info("[DataCleaner] 清理过期数据（保留 7 天）...");
   const stats = await cleaner.cleanup();
   logger.info(`[DataCleaner] 会话: ${stats.sessionsDeleted}/${stats.sessionsChecked} 已删除`);
+  logger.info(`[DataCleaner] 附件: ${stats.attachmentsDeleted}/${stats.attachmentsChecked} 已删除`);
   logger.info(`[DataCleaner] 图片: ${stats.imagesDeleted}/${stats.imagesChecked} 已删除`);
   logger.info(`[DataCleaner] 消息: ${stats.messagesCleaned}/${stats.messagesChecked} 已清理`);
 
@@ -53,8 +55,9 @@ export async function main(): Promise<void> {
   const cleanupTimer = setInterval(async () => {
     logger.info("[DataCleaner] 执行定期清理...");
     const dailyStats = await cleaner.cleanup();
-    if (dailyStats.sessionsDeleted > 0 || dailyStats.imagesDeleted > 0 || dailyStats.messagesCleaned > 0) {
+    if (dailyStats.sessionsDeleted > 0 || dailyStats.attachmentsDeleted > 0 || dailyStats.imagesDeleted > 0 || dailyStats.messagesCleaned > 0) {
       logger.info(`[DataCleaner] 会话: ${dailyStats.sessionsDeleted}/${dailyStats.sessionsChecked} 已删除`);
+      logger.info(`[DataCleaner] 附件: ${dailyStats.attachmentsDeleted}/${dailyStats.attachmentsChecked} 已删除`);
       logger.info(`[DataCleaner] 图片: ${dailyStats.imagesDeleted}/${dailyStats.imagesChecked} 已删除`);
       logger.info(`[DataCleaner] 消息: ${dailyStats.messagesCleaned}/${dailyStats.messagesChecked} 已清理`);
     }
@@ -91,6 +94,8 @@ export async function main(): Promise<void> {
 
   // runtime 先声明（transport 的 onModelSwitch 回调引用它）
   let runtime: FeishuPiRuntime;
+  // userAuth 先声明（transport 的管理员资料查询通道引用它的 token；实际实例在其后创建）
+  let userAuth: UserAuthService | undefined;
 
   const transport = new LarkTransport({
     appId: config.feishuAppId,
@@ -98,11 +103,22 @@ export async function main(): Promise<void> {
     botOpenId,
     client,
     imageCacheDir: join(config.sessionDir, "images"),
-    filesCacheDir: join(config.sessionDir, "files"),
+    sessionDataDir: config.sessionDir,
     adminOpenId,
     topicRootsFile: join(config.sessionDir, "topic-roots.json"),
+    // 管理员 /login 后其 user token 是用户资料查询的唯一通道（补英文名/部门，覆盖可用范围外用户）
+    adminTokenProvider: async () => (adminOpenId && userAuth ? userAuth.getUserAccessToken(adminOpenId) : undefined),
     // /model 切换时通知运行时热切换（持久化到 .env 仍在 transport 内完成）
     onModelSwitch: (name) => runtime?.setModelName(name),
+  });
+
+  // 用户飞书身份授权（Device Flow，RFC 8628）：/login 指令 + 按 openId 存取 user_access_token
+  userAuth = new UserAuthService({
+    appId: config.feishuAppId,
+    appSecret: config.feishuAppSecret,
+    scopes: config.userAuthScopes,
+    storeFile: join(config.dataDir, "user-tokens.json"),
+    updateCard: (messageId, card) => transport.updateCardById(messageId, card),
   });
 
   // 工具调用 Guard：统一权限策略（.agent/permissions.json）判定 + 管理员授权卡，非允许即 ask
@@ -239,8 +255,12 @@ ${trimmed}` }] },
       messages,
       client,
       enableCardKit: true,
-      // /perm 查看身份、双组策略与工具档位（仅管理员）
-      extraCommands: [new PermCommand(() => policy.describe())],
+      // /perm 查看身份、双组策略与工具档位（仅管理员）；/login /logout 用户飞书身份授权（Device Flow）
+      extraCommands: [
+        new PermCommand(() => policy.describe()),
+        new LoginCommand(userAuth),
+        new LogoutCommand(userAuth),
+      ],
     },
   );
   bridgeRef = bridge;
