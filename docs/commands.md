@@ -288,6 +288,14 @@ async delete(conversationId: string): Promise<void> {
 }
 ```
 
+### `/login` `/logout` - 用户飞书身份授权
+
+- `/login`：通过 Device Flow（RFC 8628）发起用户身份授权，回复指引卡（授权链接 + 确认码）。用户在浏览器完成授权后，后台轮询拿到 user_access_token，**原卡自动更新为结果**（`CommandResult.afterSend` 回传 message_id）。
+- token 按 openId 落盘 `data/user-tokens.json`；对外统一走 `getUserAccessToken(openId)`——access token 临期用 refresh token 静默换新，refresh 失效则清档并引导重新 `/login`。
+- `/logout`：清除本人登录记录。
+- scope 由环境变量 `FEISHU_USER_AUTH_SCOPES` 配置（需先在开发者后台为应用开通对应权限并发布版本）；留空时 `/login` 提示未配置。
+- 实现位置：`src/feishu/user-auth.ts`（端点与官方 lark-cli 行为一致，全程免 redirect_uri 与公网回调）
+
 ## 使用方式
 
 ### 1. 发送指令

@@ -2,19 +2,27 @@
 
 ## 目录结构
 
+统一会话文件夹布局：**一个会话一个文件夹**，历史与附件同住（ID 中的 `:` 等文件系统非法字符替换为 `_`）。
+
 ```
 data/
 ├── sessions/
-│   ├── conversations.json      # 会话路由表
-│   ├── messages.json           # 消息去重表
-│   ├── topic-roots.json        # 话题根消息表
-│   ├── images/                 # 图片缓存目录（按 imageKey 命名）
-│   ├── files/                  # 文件附件缓存目录
-│   └── 2026-08-30T...xxx.jsonl # Pi Agent 会话文件
+│   ├── conversations.json          # 会话路由表
+│   ├── messages.json               # 消息去重表
+│   ├── topic-roots.json            # 话题根消息表
+│   ├── images/                     # 图片缓存目录（按 imageKey 命名，平铺去重）
+│   ├── ou_xxx-chat_oc_xxx/         # 会话专属文件夹（私聊/普通群，按用户隔离）
+│   │   ├── 2026-09-12T….jsonl      #   Pi Agent 会话文件（/new 后的新一代同目录累积）
+│   │   └── files/                  #   该会话收到的文件附件
+│   │       └── 1757…-报表.xlsx
+│   └── topic_oc_xxx_om_yyy/        # 话题会话文件夹（话题内共享）
+│       ├── ….jsonl
+│       └── files/…
+├── user-tokens.json                # 用户飞书身份 token（/login，按 openId 一条）
 ├── stats/
-│   └── skill-usage.jsonl       # 技能使用事件流（长期留存，不清理）
+│   └── skill-usage.jsonl           # 技能使用事件流（长期留存，不清理）
 └── users/
-    └── {appId}_users.json      # 用户资料缓存（3 天过期）
+    └── {appId}_users.json          # 用户资料缓存（3 天过期）
 ```
 
 ## 文件说明
@@ -97,7 +105,7 @@ data/
 
 ### xxx.jsonl - Pi Agent 会话文件
 
-**作用：** 存储单个会话的完整对话历史
+**作用：** 存储单个会话的完整对话历史，位于该会话的专属文件夹内
 
 **格式：** JSONL（每行一个 JSON 对象）
 ```jsonl
@@ -114,6 +122,28 @@ data/
 **命名规则：**
 - 格式：`{ISO8601时间}_{随机ID}.jsonl`
 - 示例：`2026-08-30T09-39-04-975Z_abc123.jsonl`
+- 文件名由 Pi SDK 生成（不可自定义）；会话归属靠所在文件夹与 conversations.json 表达
+- `/new` 后的新一代 jsonl 落在同一会话文件夹，旧文件保留至过期清理
+
+### files/ - 会话文件附件目录
+
+**作用：** 存放该会话收到的 file/audio/video 附件
+
+**位置：** `{会话文件夹}/files/`，与该会话的历史 jsonl 同住
+
+**内容：**
+- 文件名格式：`{毫秒时间戳}-{消毒后的原始文件名}`（同名文件先后上传不互相覆盖）
+- Agent 可通过消息文本中的本地路径直接读取附件
+- ✅ 已纳入 DataCleaner 清理（按 mtime 保留 7 天）；清空后 files/ 与空壳会话文件夹自动移除
+
+### user-tokens.json - 用户飞书身份 token
+
+**作用：** 存储 `/login`（Device Flow）授权得到的用户 token，按 openId 一条
+
+**内容：**
+- 每条含 `accessToken` / `refreshToken` / 双过期时间 / `scope` / `updatedAt`
+- access token 临期由 `getUserAccessToken(openId)` 用 refresh token 静默换新；refresh 也失效则清档并引导重新 `/login`
+- 文件在 `data/` 下（已 gitignore）；实际可访问数据 = 应用 scope ∩ 用户本人可见范围
 
 ### images/ - 图片缓存目录
 
@@ -121,23 +151,15 @@ data/
 
 **内容：**
 - 文件名格式：`{imageKey}.{ext}`
-- 图片从飞书下载后保存在此
+- 图片从飞书下载后保存在此（按 imageKey 平铺去重，天然不按会话分）
 - 便于调试和事后查看
-
-### files/ - 文件附件缓存目录
-
-**作用：** 缓存用户发送的 file/audio/video 附件
-
-**内容：**
-- Agent 可通过消息文本中的本地路径直接读取附件
-- ⚠️ 当前不在 DataCleaner 清理范围内，长期运行会累积（已知缺口）
 
 ### ../users/{appId}_users.json - 用户资料缓存
 
-**作用：** 缓存用户中文名、英文名、部门 ID，避免每条消息都调用飞书 API
+**作用：** 缓存用户中文名、英文名、部门名，避免每条消息都调用飞书 API
 
 **内容：**
-- 键为用户 Open ID，条目含 `updatedAt`；有档案 3 天、空档案（三级查询未命中，仅 openId）1 天后自动重查刷新
+- 键为用户 Open ID，条目含 `updatedAt`；成功档案 3 天内命中缓存，查询失败不写缓存（下一条消息自动重试）
 - 文件名带 `appId` 前缀，避免多机器人混用
 
 ## 自动清理策略
@@ -145,7 +167,8 @@ data/
 **清理规则：**
 - **保留期限：** 7 天
 - **清理对象：**
-  - ✅ 会话文件 (.jsonl) - 按文件修改时间
+  - ✅ 会话文件（`{会话文件夹}/*.jsonl`，含根目录平铺的旧布局遗留）- 按文件修改时间
+  - ✅ 会话附件（`{会话文件夹}/files/`）- 按文件修改时间；清空后 files/ 与空壳会话文件夹自动移除
   - ✅ 图片缓存 - 按文件修改时间
   - ✅ 消息状态 - 按 updatedAt 时间戳
   - ✅ 卡住的消息（processing 状态超过 1 小时）
@@ -153,7 +176,7 @@ data/
   - ❌ conversations.json（残留映射由会话层容错兜底）
   - ❌ topic-roots.json
   - ❌ stats/skill-usage.jsonl（统计事件长期留存）
-  - ❌ files/ 附件缓存（已知缺口）
+  - ❌ user-tokens.json（不按期清理；refresh 失效时按用户清档）
 
 **触发时机：**
 - 启动时执行一次
@@ -168,9 +191,10 @@ data/
 - `conversations.json` - 首次运行时创建
 - `messages.json` - 首次运行时创建
 - `topic-roots.json` - 首次收到话题群消息时创建
-- `xxx.jsonl` - 每个新会话创建一个
+- `{会话文件夹}/xxx.jsonl` - 每个新会话创建一个（/new 后同文件夹再建新文件）
+- `{会话文件夹}/files/` - 首次收到文件附件时创建
 - `images/` - 首次收到图片时创建
-- `files/` - 首次收到文件附件时创建
+- `user-tokens.json` - 首次 /login 成功时创建
 - `data/users/{appId}_users.json` - 首次查询用户资料时创建
 
 ### ❌ 不应该手动放入的文件

@@ -4,7 +4,7 @@
 
 feishu-pi 是深度集成飞书人员身份、会话和权限的 Agent 应用平台。Pi 提供 Agent loop、模型适配、Session 和编码工具；本工程负责飞书消息、按人或群的会话管理，以及按身份的权限控制与定时任务。
 
-核心能力及当前状态：统一飞书上下文（已落地）、会话按人或话题隔离（已落地）、两档身份的权限管控（已落地：管理员/用户，策略文件统一配置）、工具调用审核与人工授权（已落地：策略 → 智能体综合判断 → 授权卡）、定时任务（已落地：cron 调度 + 结果推送）、技能使用统计（已落地）。租户组织关系、飞书业务资源权限暂不纳入当前范围。
+核心能力及当前状态：统一飞书上下文（已落地）、会话按人或话题隔离（已落地）、两档身份的权限管控（已落地：管理员/用户，策略文件统一配置）、工具调用审核与人工授权（已落地：策略 → 智能体综合判断 → 授权卡）、定时任务（已落地：cron 调度 + 结果推送）、技能使用统计（已落地）、用户飞书身份授权（已落地：Device Flow `/login` `/logout`，用户 token 按 openId 存储与静默续期）。租户组织关系、飞书业务资源权限暂不纳入当前范围。
 
 ## 选型边界
 
@@ -37,10 +37,11 @@ Agent 运行时（Pi AgentSession + 内置工具 + .agent 自定义工具 + 定�
 ```ts
 interface FeishuContext {
   userOpenId: string;      // 用户 Open ID
-  userName: string;        // 中文名 > 英文名 > Open ID
+  userName?: string;       // 中文名 > 英文名 > Open ID
   departmentNames?: string[]; // 部门中文名列表
   chatId: string;          // 会话 ID
   threadId?: string;       // 话题 ID
+  chatMode?: "p2p" | "group" | "topic"; // 会话模式（传输层查询并缓存）
   conversationId: string;  // 完整会话标识
   isAdmin?: boolean;       // 是否管理员
 }
@@ -63,7 +64,9 @@ interface FeishuContext {
 
 `card.action.trigger` 卡片回调路由：授权卡（`tool_approval` / `forward_approval`）转交 PermissionBroker；模型切换按钮校验管理员后写回 `.env` 并触发热切换。
 
-用户资料查询与缓存（`LarkCli`，`src/feishu/lark-cli.ts`）：优先 contact API，降级到群成员列表分页查找，最后 spawn 外部 `lark-cli contact +search-user` 补充部门/英文名；结果缓存到 `data/users/{appId}_users.json`。三级查询全部失败时降级资料（仅 openId，字段允许为空）**同样入库**，避免每条消息都执行完整查询；缓存 TTL 双档：空档案 1 天、有档案 3 天，过期重查失败时保留既有资料不降级。
+用户资料查询与缓存（`LarkCli`，`src/feishu/lark-cli.ts`——类名为历史遗留，与外部 lark-cli 工具无关）：**唯一通道为管理员身份**——FEISHU_ADMIN 通过 `/login`（Device Flow）授权的 user token 调用 contact API（获取中文名/英文名/department_ids，再经部门批量接口换部门名）。数据范围 = 管理员的**组织架构可见范围**（管理员默认全组织可见），与应用通讯录权限范围无关，应用可用范围外的外部成员同样可查。查询失败返回**不落盘**的最小档案（下一条消息自动重试）；成功档案缓存 3 天到 `data/users/{appId}_users.json`。前置：`.env` 配置 `FEISHU_USER_AUTH_SCOPES`（含 contact 查询 scope）并由管理员完成 `/login`。历史版本曾 spawn 外部 lark-cli、曾依赖机器人通讯录权限，均已移除。
+
+> **数据权限的三层模型**：① API 权限（scope，开发者后台开通）决定"接口能不能调"，两种 token 都需要；② 应用身份（tenant token）的数据范围 = 应用的**通讯录权限范围**（开发者后台数据权限配置）；③ 用户身份（user_access_token）的数据范围 = 该用户的**组织架构可见范围**（管理后台配置），与应用通讯录范围无关——管理员默认全组织可见。
 
 ## 会话层
 
@@ -129,7 +132,7 @@ interface FeishuContext {
 
 `FeishuPiRuntime`（`src/runtime/feishu-pi-runtime.ts`）通过 Pi 公开 SDK 创建 `AgentSession`：
 
-1. `SessionManager.open/create` 恢复或新建 Pi 会话（文件为 `data/sessions/*.jsonl`）；
+1. `SessionManager.open/create` 恢复或新建 Pi 会话。一个会话对应磁盘上一个专属文件夹 `data/sessions/{会话 ID}/`（ID 中文件系统非法字符替换为 `_`）：新建会话的 sessionDir 指向该文件夹，续聊传入同目录——Pi 内部 /new、分支产生的新 jsonl 也落在会话文件夹内，附件则在其 `files/` 子目录；
 2. `getModel`（`@earendil-works/pi-ai/compat`）按 provider/name/baseUrl 解析模型，支持 API 中转站；
 3. `DefaultResourceLoader` 加载 `.agent/` 资源（技能全量开放，不做权限过滤）；
 4. 自定义工具与内置工具按所属组策略的 `tools` 名单注册；
@@ -144,7 +147,7 @@ interface FeishuContext {
 `FeishuAgentBridge`（`src/feishu/agent-bridge.ts`）管理单次回复的完整生命周期：
 
 ```text
-收到消息 → MessageStore.claim 去重 → 命中指令走指令流程（/model /perm /help /new /stop /detail）
+收到消息 → MessageStore.claim 去重 → 命中指令走指令流程（/model /perm /login /logout /help /new /stop /detail）
   → 用户消息加随机表情（处理中标记）
   → 创建 CardKit 卡片，正文显示 spinner 思考动画（200ms/帧，随机样式）
   → 订阅事件流：assistant_text 增量推卡；工具调用显示动画行
@@ -152,7 +155,9 @@ interface FeishuContext {
   → complete / fail，移除表情
 ```
 
-`CardKitStream`（`src/feishu/cardkit-stream.ts`）实现 CardKit Schema 2.0 官方流式流程：创建 streaming_mode 卡片实体 → PUT 全量文本（800ms 节流 + 写队列串行化）→ PATCH 关闭流式 → 写统计元素。处理了官方 10 分钟自动关流后的重开重试；工具行等临时文本不进入最终内容。`CardKitReply` 在正文超过 10000 字符时于代码围栏外的完整块边界分新卡续写；CardKit 异常时降级普通文本消息。
+`CardKitStream`（`src/feishu/cardkit-stream.ts`）实现 CardKit Schema 2.0 官方流式流程：创建 streaming_mode 卡片实体 → PUT 全量文本（800ms 节流 + 写队列串行化）→ PATCH 关闭流式 → 写统计元素。处理了官方 10 分钟自动关流后的重开重试；工具行等临时文本不进入最终内容。`CardKitReply` 在正文超过 10000 字符时于代码围栏外的完整块边界分新卡续写（分卡与首卡同回复形态）。CardKit 未启用或初始化失败直接报错（无文本回退），错误经日志与失败卡提示用户。
+
+回复形态按会话模式判定（`resolveReplyInThread`，`src/feishu/cardkit-reply.ts`）：话题群一律以话题形式回复（`reply_in_thread: true`，**含话题根消息**——根消息自身没有 threadId，若按"有无 threadId"判定，飞书会为回复另开一个新话题）；私聊与普通群普通回复，消息本身在线程内则回线程内。指令卡在话题群同样回帖到原话题。
 
 详细/精简模式（`/detail`，按会话记忆）：精简模式工具调用过程临时显示后清除；详细模式永久保留在正文中，便于审查。精简模式下授权卡确认后自动撤回，详细模式保留结果卡。
 
@@ -174,25 +179,37 @@ interface FeishuContext {
 
 Agent 处理失败时，Bridge 将卡片更新为失败提示并记录日志；消息状态落 `messages.json` 供去重与卡住检测。
 
+## 用户身份授权
+
+`UserAuthService`（`src/feishu/user-auth.ts`）实现 OAuth 2.0 Device Authorization Grant（RFC 8628），让聊天用户把"飞书用户身份"授权给机器人，用于应用身份做不到的"我的视角"能力（搜人、个人日历/文档等）：
+
+> **身份分界**：用户资料查询使用**管理员**的 user token（管理员 `/login` 一次即可，数据范围 = 其组织架构可见范围）；而某个用户的 user token 仅用于以该用户本人身份执行操作，按 openId 隔离，不替代他人授权。两种 user token 各司其职，应用通讯录权限范围对它们都不生效。
+
+- **`/login`**：向 `accounts.feishu.cn/oauth/v1/device_authorization` 发起授权，回复指引卡（授权链接 + 确认码）；后台按 RFC 8628 轮询 `open-apis/authen/v2/oauth/token`——pending 继续、slow_down 退避（+5s）、denied/expired 终止；结果经 `CommandResult.afterSend` 回传的 message_id 原地更新到指引卡，不阻塞指令回复。
+- **token 生命周期**：按 openId 落盘 `data/user-tokens.json`，device_code 与发起者绑定（不接收"代他人授权"）；对外统一走 `getUserAccessToken(openId)`——access token 临期（<30s）用 refresh token 静默换新，refresh 也失效则清档并引导重新 `/login`。`/logout` 清除本人记录。
+- **scope** 由 `FEISHU_USER_AUTH_SCOPES` 配置（需先在开发者后台为应用开通并发布版本）；实际可访问数据 = 应用 scope ∩ 用户本人可见范围，且不绕过 Guard 的组策略闸门。
+- 全程免 redirect_uri 与公网回调；HTTP 用全局 fetch 直连（规避 SDK axios 在 Node ESM 下的 https 兼容问题，与 dsh-lark-link 的实践一致）。发起端点未见于公开文档，与官方 lark-cli 行为核实一致，升级 SDK/CLI 后建议回归一次 `/login`。
+
 ## 配置与持久化
 
 服务从环境变量读取全部配置（`.env`，`loadConfig`），`npm run config` 起本地 Web 配置页（仅绑定 127.0.0.1:3456）。配置分组：飞书凭据（`FEISHU_APP_ID/SECRET`）、负责人（`FEISHU_ADMIN`）、模型（`FEISHU_PI_MODEL_*`）、智能体审核（`FEISHU_GUARD_*`，可选）、授权超时（`FEISHU_APPROVAL_TIMEOUT_MS`）。工具权限规则在 `.agent/permissions.json`，不在 env。
 
-`data/` 目录：
+`data/` 目录（统一会话文件夹布局：一个会话一个文件夹，历史与附件同住）：
 
 | 路径 | 内容 | 清理策略 |
 |------|------|---------|
-| `data/sessions/*.jsonl` | Pi 会话文件（原生格式） | 保留 7 天 |
+| `data/sessions/{会话 ID}/` | 会话专属文件夹：Pi 会话 jsonl（`/new` 后的新一代同目录累积） | jsonl 按 mtime 保留 7 天 |
+| `data/sessions/{会话 ID}/files/` | 该会话收到的文件附件（时间戳-原始文件名） | 按 mtime 保留 7 天；清空后的 files/ 与空壳会话文件夹自动移除 |
 | `data/sessions/conversations.json` | conversationId → sessionFile 映射 | 不主动清理；指向已删除文件时由会话层容错（打开失败即新建会话） |
 | `data/sessions/messages.json` | 消息处理状态（去重） | 保留 7 天；processing 超 1 小时视为卡住清理 |
 | `data/sessions/topic-roots.json` | 话题根消息 ID | — |
-| `data/sessions/images/` | 图片附件缓存 | 保留 7 天 |
-| `data/sessions/files/` | 文件附件缓存 | 当前不在清理范围（见已知缺口） |
+| `data/sessions/images/` | 图片附件缓存（按 imageKey 平铺去重） | 保留 7 天 |
+| `data/user-tokens.json` | 用户飞书身份 token（/login） | 不按期清理；refresh 失效时按用户清档 |
 | `data/stats/skill-usage.jsonl` | 技能使用事件流（JSONL，只增不删） | 不清理，长期留存 |
 | `data/schedules.json` | 定时任务表（cron + 指令 + 目标会话） | 不自动清理；删除靠对话管理或手动编辑 |
 | `data/users/{appId}_users.json` | 用户资料缓存 | 空 1 天 / 有档案 3 天过期刷新 |
 
-`DataCleaner` 启动时执行一次，之后每 24 小时清理。`.agent/` 目录存放用户定义的 Skills（Markdown）、Tools（TypeScript）和权限策略 `permissions.json`。
+`DataCleaner` 启动时执行一次，之后每 24 小时清理（扫描会话文件夹内的 jsonl 与附件，并回收空目录；根目录平铺的旧布局 jsonl 同样纳入清理）。`.agent/` 目录存放用户定义的 Skills（Markdown）、Tools（TypeScript）和权限策略 `permissions.json`。
 
 ## 安全边界
 
@@ -205,8 +222,8 @@ Agent 处理失败时，Bridge 将卡片更新为失败提示并记录日志；�
 
 ## 当前范围
 
-已实现：飞书 WS 长连接（底层 WSClient + EventDispatcher）、消息去重与卡住恢复、按用户/话题隔离的会话管理与增量持久化、Pi Session 复用与重启恢复、统一权限策略（common/owner/user，Skills 全量开放、工具/命令/读写范围按组过滤与判定）、ToolGuard（策略 → 智能体综合判断 → 授权卡）、CardKit 2.0 流式卡片、图片与文件附件、机器人指令（/model /perm /help /new /stop /detail）、模型热切换、统计小字、详细/精简模式、技能使用统计（事件流 + 飞书查询 + 本地可视化页面 + 月度明细）、定时任务（cron 调度 + 持久化恢复 + 结果推送）、优雅退出（SIGINT/SIGTERM/SIGBREAK）、数据自动清理、TypeScript 类型检查与 Vitest 测试。
+已实现：飞书 WS 长连接（底层 WSClient + EventDispatcher）、消息去重与卡住恢复、按用户/话题隔离的会话管理与增量持久化、Pi Session 复用与重启恢复、统一权限策略（common/owner/user，Skills 全量开放、工具/命令/读写范围按组过滤与判定）、ToolGuard（策略 → 智能体综合判断 → 授权卡）、CardKit 2.0 流式卡片、图片与文件附件（统一会话文件夹存储 + 附件过期清理）、机器人指令（/model /perm /login /logout /help /new /stop /detail）、用户飞书身份授权（Device Flow + 静默刷新）、话题群回复形态修正（一律回原话题）、模型热切换、统计小字、详细/精简模式、技能使用统计（事件流 + 飞书查询 + 本地可视化页面 + 月度明细）、定时任务（cron 调度 + 持久化恢复 + 结果推送）、优雅退出（SIGINT/SIGTERM/SIGBREAK）、数据自动清理、TypeScript 类型检查与 Vitest 测试。
 
-未实现：长期记忆注入、飞书业务工具（文档/多维表格/日历/审批）、模型侧用户身份注入与技能分支、状态卡片样式扩展。已知缺口：`data/sessions/files/` 文件缓存不在 DataCleaner 清理范围内，长期运行会累积。
+未实现：长期记忆注入、飞书业务工具（文档/多维表格/日历/审批，用户身份 token 层已就绪可复用）、模型侧用户身份注入与技能分支、状态卡片样式扩展、扫码一键建应用部署引导（候选，见路线图）。
 
 详见 [开发路线](../ROADMAP.md)。
