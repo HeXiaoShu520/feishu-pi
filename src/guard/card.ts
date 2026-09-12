@@ -17,7 +17,7 @@ export interface PermissionCardParams {
 }
 
 /** 提取工具调用的一句话摘要（command/path 等关键字段，单行截断）。 */
-function summarizeArgs(toolName: string, args: unknown): string {
+function summarizeArgs(args: unknown): string {
   const record = (typeof args === "object" && args !== null ? args : {}) as Record<string, unknown>;
   const first = ["command", "cmd", "path", "file_path", "filePath", "url", "pattern"].map((k) => record[k]).find((v) => typeof v === "string" && v) as string | undefined;
   const detail = first ?? (Object.keys(record).length > 0 ? JSON.stringify(redact(record)).replace(/\s+/g, " ") : "");
@@ -28,7 +28,7 @@ function summarizeArgs(toolName: string, args: unknown): string {
 export function buildPermissionCard(params: PermissionCardParams): object {
   const { toolName, args, approvalId, token } = params;
 
-  const summary = summarizeArgs(toolName, args);
+  const summary = summarizeArgs(args);
   const button = (text: string, type: string, value: Record<string, unknown>) => ({
     tag: "button",
     width: "fill",

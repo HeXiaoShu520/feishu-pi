@@ -29,6 +29,8 @@ export interface CleanupStats {
 
 export class DataCleaner {
   private readonly sessionDir: string;
+  /** 保留天数（默认 7 天） */
+  private readonly retentionDays: number;
   private readonly retentionMs: number;
   private readonly dryRun: boolean;
 
@@ -38,8 +40,6 @@ export class DataCleaner {
     this.retentionMs = this.retentionDays * 24 * 60 * 60 * 1000;
     this.dryRun = options.dryRun ?? false;
   }
-
-  private retentionDays: number;
 
   async cleanup(): Promise<CleanupStats> {
     const stats: CleanupStats = {

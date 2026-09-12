@@ -1,4 +1,4 @@
-import { createAgentSession, SessionManager, type AgentSession, DefaultResourceLoader } from "@earendil-works/pi-coding-agent";
+import { createAgentSession, SessionManager, type AgentSession, DefaultResourceLoader, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { getModel, type ImageContent } from "@earendil-works/pi-ai/compat";
 import type { FeishuPiConfig, FeishuPiEvent, FeishuPiPrompt, FeishuPiSession, FeishuPiTool } from "./types.ts";
 import type { FeishuContext } from "../context/types.ts";
@@ -8,6 +8,9 @@ import { logger, colors } from "../utils/logger.ts";
 import { matchSkillRead } from "../stats/skill-usage-store.ts";
 import type { SkillUsageStore } from "../stats/skill-usage-store.ts";
 import type { GroupPolicy } from "../permission/policy.ts";
+
+/** .agent/tools/ 里的脚本可在导出对象上附带 risk: "high"（强制走授权卡） */
+type RiskyToolDefinition = ToolDefinition & { risk?: "high" };
 
 class SessionWrapper implements FeishuPiSession {
   private readonly raw: AgentSession;
@@ -84,10 +87,6 @@ export class FeishuPiRuntime {
   }
 
   /**
-   * 打印系统启动时可用的资源（管理员视角）
-   * 用于启动日志，让用户知道加载了哪些 Skills 和 Tools
-   */
-  /**
    * 运行时切换模型：立即对新会话生效（已创建的会话沿用旧模型直到清空/重建）。
    * 持久化由调用方负责（transport 写 .env）。
    */
@@ -162,12 +161,12 @@ export class FeishuPiRuntime {
       description: def.description,
       parameters: def.parameters,
       execute: def.execute.bind(def) as FeishuPiTool["execute"],
-      risk: (def as any).risk,
+      risk: (def as RiskyToolDefinition).risk,
     }));
 
     // 自定义工具可标记 risk: "high"：标记后不走策略放行，仍走授权卡
     const riskyTools = new Set(
-      customTools.filter((tool) => (tool as any).risk === "high").map((tool) => tool.name),
+      customTools.filter((tool) => tool.risk === "high").map((tool) => tool.name),
     );
 
     // 内置工具：负责人全量注册；用户组注册 bash + read（范围与命令约束在漏斗按组策略执行）。

@@ -99,6 +99,10 @@ export class FeishuAgentBridge {
       onError: (err) => logger.error("[CardKit]", err),
     });
 
+    // 动画定时器句柄提级声明：无论 prompt 成功或抛错，finally 都要清掉，避免句柄泄漏
+    let animationTimer: NodeJS.Timeout | undefined;
+    let toolTimer: NodeJS.Timeout | undefined;
+
     try {
       // 创建随机 spinner 实例
       const spinner = new Spinner();
@@ -112,7 +116,7 @@ export class FeishuAgentBridge {
 
       // 启动动画定时器（真实内容到来前用 replace 循环刷新动画帧）
       let animationUpdating = false;
-      const animationTimer = setInterval(() => {
+      animationTimer = setInterval(() => {
         if (!hasRealContent && !animationUpdating) {
           animationUpdating = true;
           reply.replace(spinner.next()).catch(() => {}).finally(() => {
@@ -126,7 +130,7 @@ export class FeishuAgentBridge {
       let toolFrameIndex = 0;
       let activeToolName = "";
       let toolAnimationUpdating = false;
-      const toolTimer = setInterval(() => {
+      toolTimer = setInterval(() => {
         if (hasRealContent && activeToolName && !toolAnimationUpdating) {
           toolAnimationUpdating = true;
           const frame = TOOL_FRAMES[toolFrameIndex++ % TOOL_FRAMES.length];
@@ -206,7 +210,7 @@ export class FeishuAgentBridge {
         const tokens = stats.tokens ?? {};
         const formatTokens = (value: number) => `${(value / 1000).toFixed(1)}K`;
         // 本次新增 token = 当前上下文 - prompt 前基线
-        const deltaTokens = Math.max(0, (tokens.total || 0) - ((statsBefore as any)?.tokens?.total || 0));
+        const deltaTokens = Math.max(0, (tokens.total || 0) - (statsBefore?.tokens?.total || 0));
         const cost = typeof stats.cost === "number" ? `$${stats.cost.toFixed(4)}` : "";
         const elapsed = `${((Date.now() - requestStartedAt) / 1000).toFixed(1)}s`;
         // ctx：当前上下文占用百分比（模型窗口口径，区别于上面的累计计费 token）
@@ -231,6 +235,9 @@ export class FeishuAgentBridge {
       await reply.close(`处理失败：${errorMessage}`).catch((closeErr) => logger.error("[Bridge] 关闭回复卡失败:", closeErr));
       throw error;
     } finally {
+      // 动画定时器兜底清理（prompt 抛错时走这里；已清理过的句柄重复 clear 是无害的）
+      clearInterval(animationTimer);
+      clearInterval(toolTimer);
       // 移除 reaction
       await this.reactionController?.stop(message.messageId);
     }
@@ -308,10 +315,9 @@ const TOOL_CALL_MAX_CHARS = 300;
 
 /**
  * 格式化一次工具调用的展示文本，把关键参数带出来：
- * bash 显示命令本身，read/write/edit/grep 显示目标路径，skill 读取显示技能文件，
- * 其余显示脱敏后的参数 JSON（单行、截断）。
+ * bash 显示命令本身，read/write/edit/grep 显示目标路径，
+ * 其余回退展示整包参数 JSON（单行、截断）。
  */
-/** 格式化一次工具调用的展示文本；细节见函数内分支。 */
 function formatToolCall(toolName: string, args: unknown): string {
   const record = (typeof args === "object" && args !== null ? args : {}) as Record<string, unknown>;
   const firstString = (...keys: string[]): string | undefined => {

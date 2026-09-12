@@ -1,4 +1,4 @@
-import type { FeishuPiPrompt, FeishuPiSession } from "./types.ts";
+import type { FeishuPiPrompt, FeishuPiSession, SessionStats } from "./types.ts";
 import type { FeishuPiRuntime } from "./feishu-pi-runtime.ts";
 import type { ConversationStore } from "./conversation-store.ts";
 import type { FeishuContext } from "../context/types.ts";
@@ -41,9 +41,9 @@ export class ConversationManager {
 
   /** 从持久化映射恢复 Pi Session，失败时创建新 Session。 */
   private async initializeState(conversationId: string, context?: FeishuContext): Promise<ConversationState> {
-    // 从 conversationId 提取 userId
-    // 格式: userId-chat:chatId 或 userId-chatId:thread:threadId
-    const userId = conversationId.split("-")[0];
+    // 从上下文取用户身份（权限组判定依据）；无上下文时按 conversationId 前缀反推
+    // （仅对按用户隔离的 `{openId}-chat:...` 格式有效；topic: 会话必须依赖 context）
+    const userId = context?.userOpenId ?? conversationId.split("-")[0];
 
     const sessionFile = await this.store?.get(conversationId);
     let session = sessionFile ? await this.runtime.createSession(sessionFile, userId, context).catch(() => undefined) : undefined;
@@ -96,7 +96,7 @@ export class ConversationManager {
   }
 
   /** 获取指定会话当前的真实 Session 统计（不存在会创建会话）。 */
-  async getStats(conversationId: string, context?: FeishuContext): Promise<any> {
+  async getStats(conversationId: string, context?: FeishuContext): Promise<SessionStats | undefined> {
     const state = await this.getState(conversationId, context);
     return state.session.getStats?.();
   }

@@ -44,6 +44,9 @@ export class LarkTransport implements FeishuTransport {
   private readonly appId: string;
   private readonly appSecret: string;
   private readonly botOpenId?: string;
+  private readonly source: string;
+  private readonly handshakeTimeoutMs: number;
+  private readonly pingTimeout: number;
   private readonly larkCli: LarkCli;
   private readonly imageProcessor?: LarkImageProcessor;
   private readonly adminOpenId?: string;
@@ -65,6 +68,9 @@ export class LarkTransport implements FeishuTransport {
     this.appId = config.appId;
     this.appSecret = config.appSecret;
     this.botOpenId = config.botOpenId;
+    this.source = config.source ?? "feishu-pi";
+    this.handshakeTimeoutMs = config.handshakeTimeoutMs ?? 15_000;
+    this.pingTimeout = config.pingTimeout ?? 30;
     this.adminOpenId = config.adminOpenId;
     this.onModelSwitch = config.onModelSwitch;
     this.client = config.client;
@@ -114,9 +120,9 @@ export class LarkTransport implements FeishuTransport {
     this.wsClient = new WSClient({
       appId: this.appId,
       appSecret: this.appSecret,
-      source: "feishu-pi",
-      handshakeTimeoutMs: 15_000,
-      wsConfig: { pingTimeout: 30 },
+      source: this.source,
+      handshakeTimeoutMs: this.handshakeTimeoutMs,
+      wsConfig: { pingTimeout: this.pingTimeout },
       onReconnecting: () => logger.warn("[LarkTransport] 飞书 WebSocket 正在重连"),
       onReconnected: () => logger.info("[LarkTransport] 飞书 WebSocket 已恢复"),
       onError: (error: unknown) => logger.error("[LarkTransport] 飞书 WebSocket 错误", error),

@@ -1,6 +1,6 @@
 import type { Client } from "@larksuiteoapi/node-sdk";
 import type { FeishuInboundMessage } from "./types.ts";
-import type { GroupFields } from "../permission/policy.ts";
+import type { GroupFields, PermissionPolicy } from "../permission/policy.ts";
 import { logger } from "../utils/logger.ts";
 import { loadConfig } from "../config.ts";
 
@@ -84,9 +84,11 @@ export class ModelCommand implements CommandHandler {
               logger.info(`[ModelCommand] 成功从 ${modelsUrl} 获取 ${models.length} 个模型`);
               break;
             }
-          } catch (err: any) {
-            if (err?.status === 404 || err?.status === 405) {
-              lastError = `HTTP ${err.status}`;
+          } catch (err) {
+            // fetch 抛出的异常可能带 HTTP status（如端点不存在），404/405 换下一个候选
+            const status = (err as { status?: number } | undefined)?.status;
+            if (status === 404 || status === 405) {
+              lastError = `HTTP ${status}`;
               continue;
             }
             throw err;
@@ -265,19 +267,16 @@ export class DetailCommand implements CommandHandler {
   }
 }
 
+/** /perm 展示用的策略概览：各组配置与生效范围（PermissionPolicy.describe 的返回） */
+type PolicyOverview = Awaited<ReturnType<PermissionPolicy["describe"]>>;
+
 /**
  * /perm - 查看权限配置（仅管理员）
  */
 export class PermCommand implements CommandHandler {
-  private readonly listPolicy: () => Promise<{
-    groups: Record<string, GroupFields & { effective: Required<Omit<GroupFields, "tools">> & { tools: string[] } }>;
-  }>;
+  private readonly listPolicy: () => Promise<PolicyOverview>;
 
-  constructor(
-    listPolicy: () => Promise<{
-      groups: Record<string, GroupFields & { effective: Required<Omit<GroupFields, "tools">> & { tools: string[] } }>;
-    }>,
-  ) {
+  constructor(listPolicy: () => Promise<PolicyOverview>) {
     this.listPolicy = listPolicy;
   }
 

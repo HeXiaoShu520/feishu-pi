@@ -1,6 +1,5 @@
 import "dotenv/config";
-import "./config-server.ts"; // 启动配置服务器
-import { registerSkillStatsRoutes } from "./config-server.ts";
+import { registerSkillStatsRoutes } from "./config-server.ts"; // 启动配置服务器（模块加载即监听 127.0.0.1:3456）
 import { ConversationManager } from "./runtime/conversation-manager.ts";
 import { FeishuPiRuntime } from "./runtime/feishu-pi-runtime.ts";
 import { FeishuAgentBridge } from "./feishu/agent-bridge.ts";
@@ -22,6 +21,9 @@ import { PermissionBroker } from "./guard/broker.ts";
 import { ToolGuard } from "./guard/tool-guard.ts";
 import { PolicyJudge } from "./guard/judge.ts";
 import { buildNoticeCard } from "./guard/card.ts";
+
+/** 授权请求失效（服务重启/已处理）时就地更新的提示卡文案。 */
+const APPROVAL_STALE_NOTICE = "⚠️ 该授权请求已失效（服务已重启或已处理），请重新发起任务。";
 
 /** 启动轻量飞书 Agent 服务。 */
 export async function main(): Promise<void> {
@@ -145,7 +147,7 @@ export async function main(): Promise<void> {
       } else {
         logger.warn(`[Main] 转发请求被拒绝: ${result.detail}（点击者 ${action.operatorOpenId}）`);
         // 服务重启等导致请求失效：就地更新点击的卡片，给点击者明确提示
-        await transport.updateCardById(action.messageId, buildNoticeCard("⚠️ 该授权请求已失效（服务已重启或已处理），请重新发起任务。")).catch(() => {});
+        await transport.updateCardById(action.messageId, buildNoticeCard(APPROVAL_STALE_NOTICE)).catch(() => {});
       }
       return;
     }
@@ -164,7 +166,7 @@ export async function main(): Promise<void> {
       logger.warn(`[Main] 授权回调被拒绝: ${result.detail}（点击者 ${action.operatorOpenId}）`);
       // 失效点击就地更新卡片提示（服务重启后旧授权卡会命中这里）
       if (result.detail.includes("不存在")) {
-        await transport.updateCardById(action.messageId, buildNoticeCard("⚠️ 该授权请求已失效（服务已重启或已处理），请重新发起任务。")).catch(() => {});
+        await transport.updateCardById(action.messageId, buildNoticeCard(APPROVAL_STALE_NOTICE)).catch(() => {});
       }
     }
   });
@@ -178,6 +180,7 @@ export async function main(): Promise<void> {
   registerSkillStatsRoutes(usageStore);
 
   // 定时任务：持久化（data/schedules.json）+ cron 调度；触发时以创建者身份跑智能体并推送结果卡片
+  // 注意：runTask 闭包引用下方才声明的 conversations（前向引用），仅在任务触发（启动完成后）才会执行
   const scheduleService = new ScheduleService({
     storeFile: join(dataDir, "schedules.json"),
     runTask: async (task) => {
@@ -277,9 +280,9 @@ ${trimmed}` }] },
   process.on("SIGINT", () => gracefulShutdown("SIGINT"));
   process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));
 
-  // Windows 特有：监听 Ctrl+Break
+  // Windows 特有：监听 Ctrl+Break（SIGBREAK 在 Node 类型定义中跨平台存在）
   if (process.platform === "win32") {
-    process.on("SIGBREAK" as any, () => gracefulShutdown("SIGBREAK"));
+    process.on("SIGBREAK", () => gracefulShutdown("SIGBREAK"));
   }
 }
 

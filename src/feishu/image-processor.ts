@@ -3,6 +3,13 @@
  * 支持下载图片并转换为 Pi 可用的格式
  */
 
+/** 飞书 SDK 图片下载响应的最小结构（不同 SDK 版本形态不同，按能力探测） */
+interface LarkImageResponse {
+  data?: Buffer | Uint8Array;
+  writeFile?: (path: string) => Promise<void>;
+  getReadableStream?: () => NodeJS.ReadableStream;
+}
+
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { writeFileSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
@@ -31,8 +38,9 @@ export class LarkImageProcessor implements FeishuImageProcessor {
     if (this.cacheDir) {
       try {
         mkdirSync(this.cacheDir, { recursive: true });
-      } catch {
-        // ignore
+      } catch (err) {
+        // 缓存目录创建失败不阻断启动，仅丢失本地缓存能力
+        logger.warn("[LarkImageProcessor] 创建图片缓存目录失败", err);
       }
     }
   }
@@ -45,7 +53,7 @@ export class LarkImageProcessor implements FeishuImageProcessor {
       });
 
       // 获取图片数据
-      const imageData = await this.getImageData(response);
+      const imageData = await this.getImageData(response as LarkImageResponse);
       if (!imageData) return undefined;
 
       // 可选：保存到本地缓存
@@ -80,8 +88,8 @@ export class LarkImageProcessor implements FeishuImageProcessor {
       .filter((img): img is ProcessedImage => img !== undefined);
   }
 
-  /** 从飞书 SDK 响应中提取图片数据 */
-  private async getImageData(response: any): Promise<Buffer | undefined> {
+  /** 从飞书 SDK 响应中提取图片数据（Buffer / writeFile / 可读流逐级探测） */
+  private async getImageData(response: LarkImageResponse): Promise<Buffer | undefined> {
     try {
       // 飞书 SDK 可能返回不同格式的数据
       if (response.data) {

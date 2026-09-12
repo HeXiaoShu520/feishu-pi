@@ -36,11 +36,11 @@ export async function resolveAdminOpenId(
     try {
       const cacheFilePath = join(dataDir, `${appId}_users.json`);
       const content = await readFile(cacheFilePath, "utf8");
-      const cache = JSON.parse(content);
+      const cache = JSON.parse(content) as Record<string, { name?: string; englishName?: string }>;
 
       // 遍历缓存，匹配姓名或英文名
       for (const [openId, profile] of Object.entries(cache)) {
-        const { name, englishName } = profile as any;
+        const { name, englishName } = profile;
         if (name === identifier || englishName === identifier) {
           logger.info(`[AdminResolver] 从缓存解析 ${identifier} -> ${openId}`);
           return openId;

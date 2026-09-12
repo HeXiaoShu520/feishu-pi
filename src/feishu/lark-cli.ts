@@ -1,6 +1,6 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "../utils/logger.ts";
 
@@ -235,7 +235,7 @@ export class LarkCli {
 
   /** 保存缓存到文件 */
   private async saveCache(): Promise<void> {
-    await mkdir(join(this.cacheFilePath, ".."), { recursive: true });
+    await mkdir(dirname(this.cacheFilePath), { recursive: true });
     await writeFile(this.cacheFilePath, `${JSON.stringify(this.cache, null, 2)}\n`, "utf8");
   }
 

@@ -22,10 +22,10 @@ export const colors = {
 };
 
 export const logger = {
-  info: (...args: any[]) => console.info(`${colors.gray}[${timestamp()}]${colors.reset}`, ...args),
-  warn: (...args: any[]) => console.warn(`${colors.gray}[${timestamp()}]${colors.reset} ${colors.yellow}[warn]${colors.reset}`, ...args),
-  error: (...args: any[]) => console.error(`${colors.gray}[${timestamp()}]${colors.reset} ${colors.red}[error]${colors.reset}`, ...args),
-  log: (...args: any[]) => console.log(`${colors.gray}[${timestamp()}]${colors.reset}`, ...args),
+  info: (...args: unknown[]) => console.info(`${colors.gray}[${timestamp()}]${colors.reset}`, ...args),
+  warn: (...args: unknown[]) => console.warn(`${colors.gray}[${timestamp()}]${colors.reset} ${colors.yellow}[warn]${colors.reset}`, ...args),
+  error: (...args: unknown[]) => console.error(`${colors.gray}[${timestamp()}]${colors.reset} ${colors.red}[error]${colors.reset}`, ...args),
+  log: (...args: unknown[]) => console.log(`${colors.gray}[${timestamp()}]${colors.reset}`, ...args),
 
   // 用户输入（蓝色）
   userInput: (userName: string, message: string) => {

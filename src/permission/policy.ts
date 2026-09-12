@@ -222,21 +222,25 @@ function ungroupedDefaults(): Required<Omit<GroupFields, "tools">> & { tools: st
 /** 规则条目正则：Bash(...)、Read(...)、Write(...)、Tools(...) */
 const PREFIX_ENTRY_RE = /^(?<type>[A-Za-z]+)\((?<pattern>.*)\)$/;
 
+/** 解析扁平规则数组：按前导词把条目分流到 bash/read/write/tools 字段，非法条目跳过。 */
+function parseRuleEntries(entries: unknown[], out: GroupFields): void {
+  for (const entry of entries) {
+    if (typeof entry !== "string") continue;
+    const match = entry.match(PREFIX_ENTRY_RE);
+    if (!match) continue;
+    const type = match.groups!.type.toLowerCase();
+    const pattern = match.groups!.pattern;
+    if (!["bash", "read", "write", "tools"].includes(type)) continue;
+    (out[type as keyof GroupFields] ??= []).push(pattern);
+  }
+}
+
 function sanitize(fields: unknown): GroupFields {
   const out: GroupFields = {};
 
   // 新格式：组的值直接是数组
   if (Array.isArray(fields)) {
-    for (const entry of fields) {
-      if (typeof entry !== "string") continue;
-      const match = entry.match(PREFIX_ENTRY_RE);
-      if (!match) continue;
-      const type = match.groups!.type.toLowerCase();
-      const pattern = match.groups!.pattern;
-      if (!["bash", "read", "write", "tools"].includes(type)) continue;
-      if (!out[type as keyof GroupFields]) out[type as keyof GroupFields] = [];
-      (out[type as keyof GroupFields] as string[]).push(pattern);
-    }
+    parseRuleEntries(fields, out);
     return out;
   }
 
@@ -246,16 +250,7 @@ function sanitize(fields: unknown): GroupFields {
 
   // 兼容 { allow: [...] } 过渡格式
   if (Array.isArray(obj.allow)) {
-    for (const entry of obj.allow) {
-      if (typeof entry !== "string") continue;
-      const match = entry.match(PREFIX_ENTRY_RE);
-      if (!match) continue;
-      const type = match.groups!.type.toLowerCase();
-      const pattern = match.groups!.pattern;
-      if (!["bash", "read", "write", "tools"].includes(type)) continue;
-      if (!out[type as keyof GroupFields]) out[type as keyof GroupFields] = [];
-      (out[type as keyof GroupFields] as string[]).push(pattern);
-    }
+    parseRuleEntries(obj.allow, out);
     return out;
   }
 
