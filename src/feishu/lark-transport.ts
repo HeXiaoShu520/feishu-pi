@@ -239,6 +239,7 @@ export class LarkTransport implements FeishuTransport {
           departmentNames: profile.departmentNames,
           chatId,
           threadId,
+          chatMode,
           conversationId,
           isAdmin,
         },

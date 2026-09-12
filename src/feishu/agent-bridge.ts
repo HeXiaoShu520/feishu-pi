@@ -1,7 +1,7 @@
 import { ConversationManager } from "../runtime/conversation-manager.ts";
 import type { FeishuPiSession } from "../runtime/types.ts";
 import type { FeishuInboundMessage, FeishuEventHandler, FeishuTransport } from "./types.ts";
-import { CardKitReply } from "./cardkit-reply.ts";
+import { CardKitReply, resolveReplyInThread } from "./cardkit-reply.ts";
 import { MessageStore } from "./message-store.ts";
 import { formatLogText } from "./log-utils.ts";
 import { ReactionController } from "./reaction-controller.ts";
@@ -95,7 +95,7 @@ export class FeishuAgentBridge {
       client: this.client,
       chatId: message.chatId,
       messageId: message.messageId,
-      threadId: message.context.threadId,
+      replyInThread: resolveReplyInThread(message.context.chatMode, message.context.threadId),
       onError: (err) => logger.error("[CardKit]", err),
     });
 
@@ -289,9 +289,20 @@ export class FeishuAgentBridge {
     }
   }
 
-  /** 发送指令卡片回复。 */
+  /** 发送指令卡片回复；话题群内以话题形式回帖到原话题（直接发消息会开出新话题）。 */
   private async sendCommandCard(message: FeishuInboundMessage, card: object): Promise<void> {
     if (!this.client) return;
+    if (message.context.chatMode === "topic") {
+      await this.client.im.message.reply({
+        path: { message_id: message.messageId },
+        data: {
+          msg_type: "interactive",
+          content: JSON.stringify(card),
+          reply_in_thread: true,
+        },
+      });
+      return;
+    }
     await this.client.request({
       method: "POST",
       url: "/open-apis/im/v1/messages",

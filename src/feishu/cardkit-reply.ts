@@ -16,10 +16,28 @@ export interface CardKitReplyOptions {
   client: Client;
   chatId: string;
   messageId?: string;
-  threadId?: string;
+  /** 是否以话题形式回复（由会话模式决定，见 resolveReplyInThread） */
+  replyInThread?: boolean;
   onError?: (err: unknown) => void;
   /** 单张卡片的正文字符上限，超过后分新卡（默认 10000，保证可读性） */
   maxCardChars?: number;
+}
+
+/**
+ * 决定回复是否以话题（thread）形式发出。
+ *
+ * 飞书 reply 接口的语义：reply_in_thread 仅在话题群生效——
+ * - true：回复进入被回复消息所在的话题（被回复消息是话题根时同样进入该话题）；
+ * - false：在话题群里会以回复内容为根**开出一个新话题**。
+ *
+ * 因此不能用「消息有没有 threadId」来判定：话题群的话题根消息（用户新开话题的第一条）
+ * 恰好没有 threadId，按 threadId 判定会让机器人的回答脱离用户的话题、另开新话题。
+ * 正确规则：
+ * - 话题群：一律 true（含话题根）；
+ * - 私聊/普通群：跟随消息自身所在线程——消息在线程内（有 threadId）则回线程内，否则普通回复。
+ */
+export function resolveReplyInThread(chatMode: "p2p" | "group" | "topic" | undefined, threadId?: string): boolean {
+  return chatMode === "topic" || !!threadId;
 }
 
 /**
@@ -46,7 +64,7 @@ export class CardKitReply implements FeishuReply {
   private readonly client: Client;
   private readonly chatId: string;
   private readonly messageId?: string;
-  private readonly threadId?: string;
+  private readonly replyInThread: boolean;
   private readonly onError?: (err: unknown) => void;
   private readonly maxCardChars: number;
 
@@ -63,7 +81,7 @@ export class CardKitReply implements FeishuReply {
     this.client = options.client;
     this.chatId = options.chatId;
     this.messageId = options.messageId;
-    this.threadId = options.threadId;
+    this.replyInThread = options.replyInThread ?? false;
     this.onError = options.onError;
     this.maxCardChars = options.maxCardChars ?? 10000;
   }
@@ -174,7 +192,7 @@ export class CardKitReply implements FeishuReply {
         data: {
           msg_type: "interactive",
           content: JSON.stringify({ type: "card", data: { card_id: cardId } }),
-          reply_in_thread: !!this.threadId,
+          reply_in_thread: this.replyInThread,
         },
       });
     } else {
