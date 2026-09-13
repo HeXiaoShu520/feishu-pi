@@ -18,9 +18,11 @@ import { logger } from "../utils/logger.ts";
  *   - Tools(工具名)  — 该组可调用的自定义工具，精确名称或 "*"（全部）
  *
  * 组成员在 .env 中通过 FEISHU_GROUP_<组名>=成员1,成员2,... 配置。
- * 保留组名：admin——管理员组，FEISHU_ADMIN 或 FEISHU_GROUP_ADMIN 自动属于；未配置的字段取全量缺省。
+ * 保留组名：
+ *   - common——所有人默认拥有的基础权限（每个用户自动叠加，无需归属）；
+ *   - admin——管理员组，FEISHU_ADMIN 或 FEISHU_GROUP_ADMIN 自动属于；未配置的字段取全量缺省。
  *
- * 生效范围 = 所属各组并集。组文件 mtime 热重载，新会话生效。
+ * 生效范围 = common ∪ 所属各组并集。组文件 mtime 热重载，新会话生效。
  * 名单之外的调用一律交授权卡（非允许即 ask）；read 范围外交直接拦截（能力问题不问人）。
  * 文件缺失或解析失败时按保守默认处理（仅技能目录可读、无工具、无命令）。
  */
@@ -59,6 +61,8 @@ export class PermissionPolicy {
   private readonly cwd: string;
 
   private groups: Record<string, GroupFields> = {};
+  /** common 默认层：所有人自动叠加的基础权限 */
+  private common: GroupFields = {};
   private groupMembership: Record<string, string[]>;
   private loadedMtimeMs = -1;
   private warned = false;
@@ -95,30 +99,37 @@ export class PermissionPolicy {
     return [...groups];
   }
 
-  /** 合并编译多组策略（各组并集；无 admin 时保守缺省）。 */
-  async forGroups(groups: string[]): Promise<GroupPolicy> {
-    await this.ensureLoaded();
-    const cwd = this.cwd;
-    const isAdmin = groups.includes("admin");
+  /** 单组字段：admin 组叠加全量缺省，其余组叠加保守缺省 */
+  private fieldsFor(name: string): Required<Omit<GroupFields, "tools">> & { tools: string[] } {
+    if (name === "admin") return { ...adminDefaults(), ...stripUndefined(this.groups.admin ?? {}) };
+    return { ...ungroupedDefaults(), ...stripUndefined(this.groups[name] ?? {}) };
+  }
 
-    const fieldsFor = (name: string): Required<Omit<GroupFields, "tools">> & { tools: string[] } => {
-      if (name === "admin") return { ...adminDefaults(), ...stripUndefined(this.groups.admin ?? {}) };
-      return { ...ungroupedDefaults(), ...stripUndefined(this.groups[name] ?? {}) };
-    };
-
-    // 逐字段并集：所属各组
+  /** 逐字段并集；read 空 → 技能目录（保守缺省），bash/write/tools 空保持空（保守） */
+  private mergeFields(sources: GroupFields[]): Required<Omit<GroupFields, "tools">> & { tools: string[] } {
     const keys = ["bash", "read", "write", "tools"] as const;
     const merged: Record<(typeof keys)[number], string[]> = {
       bash: [], read: [], write: [], tools: [],
     };
-    const sources: GroupFields[] = groups.map((g) => fieldsFor(g));
     for (const key of keys) {
       const set = new Set<string>();
       for (const fields of sources) for (const item of fields[key] ?? []) set.add(item);
       merged[key] = [...set];
     }
-    // read 空 → 技能目录（保守缺省）；bash/write/tools 空保持空（保守）
     if (merged.read.length === 0) merged.read = [...UNGROUPED_READ];
+    return merged;
+  }
+
+  /** 合并编译多组策略（common ∪ 各组并集；无 admin 时保守缺省）。 */
+  async forGroups(groups: string[]): Promise<GroupPolicy> {
+    await this.ensureLoaded();
+    const cwd = this.cwd;
+    const isAdmin = groups.includes("admin");
+
+    // 合并顺序：common（人人默认）→ 所属各组（admin 组另有全量缺省）
+    const sources: GroupFields[] = [this.common];
+    for (const g of groups) sources.push(this.fieldsFor(g));
+    const merged = this.mergeFields(sources);
 
     const bashAll = merged.bash.includes("*");
     const bashRules = merged.bash.filter((r) => r !== "*").map((r) =>
@@ -149,13 +160,12 @@ export class PermissionPolicy {
     groups: Record<string, GroupFields & { effective: Required<Omit<GroupFields, "tools">> & { tools: string[] } }>;
   }> {
     await this.ensureLoaded();
-    const names = new Set<string>(["admin", ...Object.keys(this.groups)]);
+    const names = new Set<string>(["admin", "common", ...Object.keys(this.groups)]);
     const out: Record<string, GroupFields & { effective: Required<Omit<GroupFields, "tools">> & { tools: string[] } }> = {};
     for (const name of names) {
-      out[name] = {
-        ...(this.groups[name] ?? {}),
-        effective: (await this.forGroups([name])).describe(),
-      };
+      const own = name === "common" ? this.common : this.groups[name] ?? {};
+      const sources = name === "common" ? [this.common] : [this.common, this.fieldsFor(name)];
+      out[name] = { ...own, effective: this.mergeFields(sources) };
     }
     return { groups: out };
   }
@@ -167,6 +177,7 @@ export class PermissionPolicy {
       mtimeMs = (await stat(this.filePath)).mtimeMs;
     } catch {
       this.groups = {};
+      this.common = {};
       this.loadedMtimeMs = -1;
       return;
     }
@@ -175,8 +186,13 @@ export class PermissionPolicy {
     try {
       const raw = JSON.parse(await readFile(this.filePath, "utf8")) as Record<string, unknown>;
       this.groups = {};
+      this.common = {};
       for (const [name, fields] of Object.entries(raw)) {
         if (name.startsWith("_")) continue;  // _ 开头视为注释
+        if (name === "common") {
+          this.common = sanitize(fields);  // 保留组名：所有人默认叠加
+          continue;
+        }
         this.groups[name] = sanitize(fields);
       }
       this.loadedMtimeMs = mtimeMs;
@@ -187,6 +203,7 @@ export class PermissionPolicy {
         logger.warn(`[Policy] 策略文件解析失败，按保守默认处理: ${error instanceof Error ? error.message : String(error)}`);
       }
       this.groups = {};
+      this.common = {};
       this.loadedMtimeMs = -1;
     }
   }

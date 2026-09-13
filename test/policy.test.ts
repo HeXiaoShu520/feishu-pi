@@ -116,3 +116,34 @@ describe("PermissionPolicy 多组统一策略", () => {
     expect(d.groups.group1.effective.tools).toEqual(["query_skill_usage"]);
   });
 });
+
+  it("common 默认层：所有人自动叠加，组在其上追加；admin 并集不受影响", async () => {
+    const { file } = await writePolicy({
+      common: ["Read(.agent/skills/**)", "Tools(query_skill_usage)"],
+      admin: { bash: ["*"], read: ["**"], write: ["**"], tools: ["*"] },
+      group1: { read: ["docs/**"] },
+    });
+    const policy = new PermissionPolicy(file, { groupMembership: { group1: ["李雷"] } });
+
+    // 无组用户：只有 common（读技能目录 + 指定工具）
+    const none = await policy.forGroups([]);
+    expect(none.readAllowed(".agent/skills/x.md")).toBe(true);
+    expect(none.toolsAllowed("query_skill_usage")).toBe(true);
+    expect(none.readAllowed("docs/guide.md")).toBe(false);
+    expect(none.bashAllowed("npm run test")).toBe(false);
+
+    // group1：common ∪ 自身（docs 可读来自自身规则）
+    const g1 = await policy.forGroups(["group1"]);
+    expect(g1.readAllowed(".agent/skills/x.md")).toBe(true);
+    expect(g1.readAllowed("docs/guide.md")).toBe(true);
+    expect(g1.toolsAllowed("query_skill_usage")).toBe(true);
+
+    // admin：common ∪ admin 缺省全量，能力不变
+    const admin = await policy.forGroups(["admin"]);
+    expect(admin.readAllowed("src/main.ts")).toBe(true);
+    expect(admin.toolsAllowed("任意工具")).toBe(true);
+
+    // describe 中包含 common 条目
+    const d = await policy.describe();
+    expect(d.groups.common.effective.read).toContain(".agent/skills/**");
+  });
