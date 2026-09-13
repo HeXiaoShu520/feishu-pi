@@ -127,18 +127,6 @@ export class CardKitReply implements FeishuReply {
     await this.stream.updateStats(text);
   }
 
-  /** 在正文后附加临时文本（精简模式下展示工具调用，结束后清除） */
-  async showTransient(text: string): Promise<void> {
-    if (this.closed || !this.stream) return;
-    await this.stream.showTransient(text);
-  }
-
-  /** 清除临时文本 */
-  async clearTransient(): Promise<void> {
-    if (this.closed || !this.stream) return;
-    await this.stream.clearTransient();
-  }
-
   /** 关闭回复；statsText 可选，正文渲染完成后写入小字 */
   async close(text: string, statsText?: string): Promise<void> {
     if (this.closed) return;

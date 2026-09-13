@@ -1,4 +1,4 @@
-#! {"name":"schedule_manager","description":"管理定时任务：查看列表、创建、删除、启用/停用、立即执行；任务持久化在 data/schedules.json","parameters":{"type":"object","properties":{"action":{"type":"string","description":"操作类型：list/add/remove/toggle/run","enum":["list","add","remove","toggle","run"]},"cron":{"type":"string","description":"创建时：cron 表达式（5段，如 0 9 * * *）"},"prompt":{"type":"string","description":"创建时：任务执行时的完整指令描述"},"name":{"type":"string","description":"创建时：任务名（可选，默认取 prompt 前20字）"},"chatId":{"type":"string","description":"创建时：执行会话 ID"},"createdBy":{"type":"string","description":"创建时：创建者 Open ID"},"id":{"type":"string","description":"删除/切换/执行时：任务 ID"},"enabled":{"type":"boolean","description":"切换时：是否启用"}},"required":["action"]}}
+#! {"name":"schedule_manager","description":"管理定时任务：查看列表、创建、删除、启用/停用、立即执行；任务持久化在 data/schedules.json","parameters":{"type":"object","properties":{"action":{"type":"string","description":"操作类型：list/add/remove/toggle/run","enum":["list","add","remove","toggle","run"]},"cron":{"type":"string","description":"创建时：cron 表达式（5段，如 0 9 * * *）"},"prompt":{"type":"string","description":"创建时：任务执行时的完整指令。必须自包含——执行时 AI 只能看到这句话，看不到创建时的对话。需写明：具体做什么、对象/范围、输出格式与篇幅。应把当前对话中与任务相关的上下文（城市、对象、偏好等）固化进去"},"name":{"type":"string","description":"创建时：任务名（可选，默认取 prompt 前20字）"},"chatId":{"type":"string","description":"创建时：执行会话 ID"},"createdBy":{"type":"string","description":"创建时：创建者 Open ID"},"id":{"type":"string","description":"删除/切换/执行时：任务 ID"},"enabled":{"type":"boolean","description":"切换时：是否启用"}},"required":["action"]}}
 import sys
 import json
 import os
@@ -87,6 +87,13 @@ def action_add(params):
     prompt = params.get("prompt", "").strip()
     if not prompt:
         return {"content": [{"type": "text", "text": "❌ 缺少任务指令 (prompt)"}]}
+
+    # 自包含性校验：执行时 AI 只能看到这句话，过短意味着上下文会丢失
+    if len(prompt) < 15:
+        return {"content": [{"type": "text", "text":
+            "❌ 任务指令过于简略（当前仅 %d 字）。执行时 AI 只能看到这句话，看不到创建时的对话，"
+            "请写明：具体做什么、对象/范围、输出格式与篇幅。"
+            "示例：查询北京今天的天气，用不超过三句话总结温度、降水和穿衣建议" % len(prompt)}]}
 
     name = params.get("name", "").strip() or prompt[:20]
     chat_id = params.get("chatId", "").strip()

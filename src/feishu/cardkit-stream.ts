@@ -34,8 +34,6 @@ export class CardKitStream {
   private sequence = 0;
   private lastPushAt = 0;
   private accumulator = "";
-  /** 临时文本（如精简模式的工具行）：由 pushUpdate 统一附加渲染，避免被并发 patch 冲掉产生闪烁 */
-  private transient = "";
   private disposed = false;
   private inFlight = false;
   private writeChain: Promise<void> = Promise.resolve();
@@ -106,31 +104,12 @@ export class CardKitStream {
     await this.enqueueWrite(() => this.pushUpdate(text));
   }
 
-  /** 在正文后附加临时文本（不进入累加器；patch 推送时自动保留，清除后正文恢复） */
-  async showTransient(text: string): Promise<void> {
-    if (this.disposed || !this.cardId) return;
-    await this.enqueueWrite(async () => {
-      this.transient = text;
-      await this.pushUpdate(this.accumulator);
-    });
-  }
-
-  /** 清除临时文本，正文恢复为累加器内容 */
-  async clearTransient(): Promise<void> {
-    if (this.disposed || !this.cardId) return;
-    await this.enqueueWrite(async () => {
-      this.transient = "";
-      await this.pushUpdate(this.accumulator);
-    });
-  }
-
   /** 关闭流式模式；statsText 在正文渲染完成后写入小字；renderWaitMsOverride 可覆盖渲染等待（分卡收尾时用短等待） */
   async finalize(fullText: string, statsText?: string, renderWaitMsOverride?: number): Promise<void> {
     if (this.disposed || !this.cardId) return;
 
     try {
-      // 0. 最终内容必须覆盖所有尚未完成的流式更新；临时文本（工具行）不进入最终内容
-      this.transient = "";
+      // 0. 最终内容必须覆盖所有尚未完成的流式更新
       this.accumulator = fullText;
       await this.enqueueWrite(() => this.pushUpdate(fullText));
 
@@ -170,7 +149,7 @@ export class CardKitStream {
 
     this.inFlight = true;
     try {
-      await this.putContent(fullText + this.transient);
+      await this.putContent(fullText);
       this.lastPushAt = Date.now();
     } catch (err) {
       // 官方约 10 分钟会关闭卡片流式模式，PUT 会失败：报错误并重新开启流式后重试一次
@@ -178,7 +157,7 @@ export class CardKitStream {
       logger.error(`[CardKit] 流式更新失败（卡片流式模式可能已被官方关闭），尝试重新开启: ${err instanceof Error ? err.message : err}`);
       try {
         await this.patchSettings(true);
-        await this.putContent(fullText + this.transient);
+        await this.putContent(fullText);
         logger.warn(`[CardKit] 已重新开启流式模式，恢复更新成功`);
         this.lastPushAt = Date.now();
       } catch (retryErr) {

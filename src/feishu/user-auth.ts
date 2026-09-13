@@ -32,6 +32,15 @@ export type PostForm = (
   headers?: Record<string, string>,
 ) => Promise<Record<string, unknown>>;
 
+/** 用 access token 反查实际授权者身份（GET authen/v1/user_info）；失败返回 undefined。 */
+async function defaultGetIdentity(accessToken: string): Promise<{ openId?: string; name?: string } | undefined> {
+  const res = await fetch("https://open.feishu.cn/open-apis/authen/v1/user_info", {
+    headers: { Authorization: `Bearer ${accessToken}` },
+  });
+  const body = (await res.json().catch(() => ({}))) as { data?: { open_id?: string; name?: string } };
+  return body.data?.open_id ? { openId: body.data.open_id, name: body.data.name } : undefined;
+}
+
 async function defaultPostForm(
   url: string,
   form: Record<string, string>,
@@ -47,7 +56,6 @@ async function defaultPostForm(
 
 /** 持久化的用户 token（data/user-tokens.json，按 openId 一条） */
 export interface StoredUserToken {
-  openId: string;
   accessToken: string;
   refreshToken: string;
   /** access_token 过期时刻（ms） */
@@ -65,9 +73,9 @@ class UserTokenStore extends JsonMapStore<StoredUserToken> {
     return this.records.get(openId);
   }
 
-  async put(token: StoredUserToken): Promise<void> {
+  async put(openId: string, token: StoredUserToken): Promise<void> {
     await this.ensureLoaded();
-    this.records.set(token.openId, token);
+    this.records.set(openId, token);
     await this.persist();
   }
 
@@ -88,7 +96,9 @@ export interface UserAuthOptions {
   /** FEISHU_ADMIN 的 openId：其登录 token 用于用户资料查询通道 */
   adminOpenId?: string;
   /** 向会话发送授权卡（增量按需授权时使用）；提供后 ensureScopes 增量授权可用 */
-  sendCard?: (chatId: string, card: object) => Promise<string | undefined>;
+  sendCard?: (openId: string, card: object) => Promise<string | undefined>;
+  /** 测试注入：用 access token 反查实际授权者（open_id/姓名）；默认 GET authen/v1/user_info */
+  getIdentity?: (accessToken: string) => Promise<{ openId?: string; name?: string } | undefined>;
   /** 轮询基准间隔（秒）；发起响应自带 interval 时优先用响应值 */
   pollIntervalSec?: number;
   /** 以下均为测试注入：HTTP 实现、时钟与睡眠 */
@@ -112,6 +122,7 @@ const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v)
 export class UserAuthService {
   private readonly store: UserTokenStore;
   private readonly postForm: PostForm;
+  private readonly getIdentity: (accessToken: string) => Promise<{ openId?: string; name?: string } | undefined>;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   /** 每个用户进行中的授权；同一用户重复 /login 时去重提示，避免叠开轮询 */
@@ -122,6 +133,7 @@ export class UserAuthService {
     this.options = options;
     this.store = new UserTokenStore(options.storeFile);
     this.postForm = options.postForm ?? defaultPostForm;
+    this.getIdentity = options.getIdentity ?? defaultGetIdentity;
     this.now = options.now ?? (() => Date.now());
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
@@ -132,6 +144,10 @@ export class UserAuthService {
    */
   async startLogin(message: FeishuInboundMessage): Promise<CommandResult> {
     const openId = message.context.userOpenId;
+    // 仅私聊可用：群聊中授权链接可能被他人代点，存在身份冒用风险
+    if (message.context.chatMode !== "p2p") {
+      return { card: markdownCard("❌ 用户身份授权仅支持在**私聊**中进行（群聊中授权链接可能被他人代点）。请私聊机器人发送 /login。") };
+    }
     if (this.pending.has(openId)) {
       return { card: markdownCard("⏳ 你已有一个进行中的授权，请先在浏览器完成，或稍后再试。") };
     }
@@ -213,7 +229,6 @@ export class UserAuthService {
     }
     const refreshTtlSec = num(res.refresh_token_expires_in) || num(res.refresh_expires_in);
     const updated: StoredUserToken = {
-      openId,
       accessToken,
       refreshToken: str(res.refresh_token) || token.refreshToken,
       expiresAt: this.now() + (num(res.expires_in) || 7200) * 1000,
@@ -221,7 +236,7 @@ export class UserAuthService {
       scope: str(res.scope) || token.scope,
       updatedAt: this.now(),
     };
-    await this.store.put(updated);
+    await this.store.put(openId, updated);
     return updated.accessToken;
   }
 
@@ -231,7 +246,7 @@ export class UserAuthService {
    * undefined——用户在卡片上同意后 token 更新，调用方下次调用即生效。
    * 这就是"用到啥再申请啥"：能力层只需声明本次需要的 scope，无需用户预先登录。
    */
-  async ensureScopes(openId: string, chatId: string, needed: string[]): Promise<string | undefined> {
+  async ensureScopes(openId: string, needed: string[]): Promise<string | undefined> {
     if (needed.length === 0) return this.getUserAccessToken(openId);
     const token = await this.store.get(openId);
     const current = token?.scope.split(/\s+/).filter(Boolean) ?? [];
@@ -272,7 +287,7 @@ export class UserAuthService {
     void (async () => {
       try {
         const messageId = this.options.sendCard
-          ? await this.options.sendCard(chatId, markdownCard(lines.join("\n")))
+          ? await this.options.sendCard(openId, markdownCard(lines.join("\n")))
           : undefined;
         await this.pollUntilDone(openId, entry, messageId, this.now() + expiresInMs, intervalMs);
       } catch (error) {
@@ -306,8 +321,14 @@ export class UserAuthService {
 
       const accessToken = str(res.access_token);
       if (accessToken) {
+        // 核实实际授权者：谁点同意，token 就绑定谁的 open_id——
+        // 每个人 /login 得到的都是"操作自己飞书"的能力；链接被代点也各归各账，不会冒记
+        const identity = await this.getIdentity(accessToken).catch(() => undefined);
+        const owner = identity?.openId || openId;
+        if (owner !== openId) {
+          logger.warn(`[UserAuth] 本次授权实际完成者为 ${identity?.name || owner}（${owner}），与发起人 ${openId} 不同，按实际账号绑定`);
+        }
         const token: StoredUserToken = {
-          openId,
           accessToken,
           refreshToken: str(res.refresh_token),
           expiresAt: this.now() + (num(res.expires_in) || 7200) * 1000,
@@ -315,9 +336,10 @@ export class UserAuthService {
           scope: str(res.scope) || this.options.scopes.join(" "),
           updatedAt: this.now(),
         };
-        await this.store.put(token);
-        logger.info(`[UserAuth] 用户 ${openId} 授权成功（scope: ${token.scope || "默认"}）`);
-        await this.finishCard(messageId, markdownCard(`✅ 授权成功，用户身份已生效（scope：${token.scope || "默认"}）。`));
+        await this.store.put(owner, token);
+        logger.info(`[UserAuth] 用户 ${owner} 授权成功（scope: ${token.scope || "默认"}）`);
+        const bound = identity?.name ? `，已绑定账号：${identity.name}` : "";
+        await this.finishCard(messageId, markdownCard(`✅ 授权成功${bound}（scope：${token.scope || "默认"}）。`));
         return;
       }
 

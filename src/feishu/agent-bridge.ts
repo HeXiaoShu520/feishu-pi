@@ -107,9 +107,54 @@ export class FeishuAgentBridge {
       // 创建随机 spinner 实例
       const spinner = new Spinner();
       let hasRealContent = false;
+      let textEvents = 0;
+      let lastTextLength = -1;
       let session: FeishuPiSession | undefined;
-      // 详细模式下追加到正文尾部的工具调用记录
-      let toolLog = "";
+
+      // parts 模型：正文与工具摘要各为一段。精简模式滚动回收（旧工具段/旧正文置空），
+      // 终态只保留最后一个工具段之后的结论；详细模式全量保留。
+      const parts: Array<{ kind: "text" | "tool"; text: string }> = [];
+      const toolPartIndices: number[] = [];
+
+      const render = () => reply.replace(parts.map((p) => p.text).join(""));
+
+      /** 追加正文：同一 assistant 消息的增量并入当前段；新消息段出现时精简模式回收旧内容 */
+      const appendText = (text: string): Promise<void> => {
+        const last = parts[parts.length - 1];
+        const extendsCurrent = last?.kind === "text" && text.startsWith(last.text);
+        if (extendsCurrent) {
+          const delta = text.slice(last.text.length);
+          last.text = text;
+          return delta ? reply.update(delta) : Promise.resolve();
+        }
+        // 新正文段：精简模式回收（旧工具段 + 旧正文全部置空，只留新段）
+        const compact = this.detailMode.get(message.chatId) !== true;
+        if (compact) for (const p of parts) p.text = "";
+        parts.push({ kind: "text", text });
+        return compact ? render() : reply.update(text);
+      };
+
+      /** 追加工具摘要段：工具段只留当前一个（新工具出现，上一个就地置空） */
+      const appendTool = (toolLine: string): Promise<void> => {
+        const compact = this.detailMode.get(message.chatId) !== true;
+        if (compact) {
+          const lastTool = toolPartIndices[toolPartIndices.length - 1];
+          if (lastTool !== undefined) parts[lastTool].text = "";
+        }
+        parts.push({ kind: "tool", text: toolLine });
+        toolPartIndices.push(parts.length - 1);
+        return compact ? render() : reply.update(toolLine);
+      };
+
+      /** 终态组装：详细=全量保留；精简=最后一个工具段之后的正文（无则退回全部非工具段），不丢已见内容 */
+      const composeFinal = (): string => {
+        if (this.detailMode.get(message.chatId) === true) return parts.map((p) => p.text).join("");
+        if (toolPartIndices.length > 0) {
+          const tail = parts.slice(Math.max(...toolPartIndices) + 1).map((p) => p.text).join("");
+          if (tail.trim().length > 0) return tail;
+        }
+        return parts.filter((p) => p.kind !== "tool").map((p) => p.text).join("");
+      };
 
       // 立即显示首帧（0ms 延迟）
       await reply.replace(spinner.next());
@@ -150,7 +195,6 @@ export class FeishuAgentBridge {
         if (startedRealContent) return;
         startedRealContent = true;
         hasRealContent = true;
-        latestText = "";
         clearInterval(animationTimer);
         await reply.replace("");
       };
@@ -164,35 +208,19 @@ export class FeishuAgentBridge {
         async (event) => {
           await this.onEvent?.(event, message);
           if (event.type === "assistant_text") {
-            // 收到第一个真实内容时：停止动画、清空累积器，从头推送真实内容
+            textEvents += 1;
+            lastTextLength = event.text.length;
             if (!hasRealContent) await startRealContent();
-
-            const prevText = latestText;
-            latestText = event.text;
-            // 只传增量给 update
-            const delta = event.text.slice(prevText.length);
-            if (delta) await reply.update(delta);
+            await appendText(event.text);
           }
-          // 工具事件：正文写入（详细模式保留 / 精简模式临时显示），小字位置同步显示动画。
+          // 工具事件：追加工具摘要段（精简模式只留当前一个），小字位置同步显示动画。
           if (event.type === "tool_started") {
             activeToolName = event.toolName;
             if (!hasRealContent) await startRealContent();
-            const toolLine = `\n\n> ⚙ ${formatToolCall(event.toolName, event.args)}`;
-            if (this.detailMode.get(message.chatId)) {
-              // 详细模式：工具调用永久保留在正文
-              toolLog += toolLine;
-              await reply.update(toolLine);
-            } else {
-              // 精简模式：临时显示，结束后清除
-              await reply.showTransient(toolLine);
-            }
+            await appendTool(`\n\n> ⚙ ${formatToolCall(event.toolName, event.args)}`);
           }
           if (event.type === "tool_finished") {
             activeToolName = "";
-            if (!this.detailMode.get(message.chatId)) {
-              // 精简模式：去掉工具调用文字，只保留正文
-              await reply.clearTransient();
-            }
             // 清空小字，等待下一次工具调用或最终统计
             await reply.updateStats(" ");
           }
@@ -219,15 +247,18 @@ export class FeishuAgentBridge {
         statsLine = [session.getModelName?.() || "模型未知", `${formatTokens(tokens.total || 0)}（新增 ${formatTokens(deltaTokens)}）`, ctx, cost, elapsed, sessionAlias(stats.sessionId)].filter(Boolean).join(" · ");
       }
 
-      // logger.log(`[Debug] finalize with latestText="${latestText}"`);
-      // 详细模式：最终内容需要包含工具调用记录
-      await reply.close(this.detailMode.get(message.chatId) ? latestText + toolLog : latestText, statsLine);
+      // 终态：详细=全量；精简=最后一个工具段之后的结论段
+      const finalText = composeFinal();
+      await reply.close(finalText, statsLine);
 
       // 记录最终响应（含耗时；空文本单独特警，便于发现模型无输出/被拦截的情况）
-      const replyPreview: string = formatLogText(latestText) || "";
+      const replyPreview: string = formatLogText(finalText) || "";
       const elapsedSec = ((Date.now() - requestStartedAt) / 1000).toFixed(1);
       if (!replyPreview) {
-        logger.warn(`[Bridge] 模型未返回文本内容（耗时 ${elapsedSec}s），请检查模型响应或工具拦截情况`);
+        logger.warn(
+          `[Bridge] 模型未返回文本内容（文本事件 ${textEvents} 次，末次长度 ${lastTextLength}，耗时 ${elapsedSec}s）` +
+            "——请复现一次并把这条日志发给维护者定位",
+        );
       }
       logger.aiResponse(userName || "未知用户", `响应完成(${elapsedSec}s): ${replyPreview}`);
 

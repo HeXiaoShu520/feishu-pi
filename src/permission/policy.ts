@@ -91,7 +91,7 @@ export class PermissionPolicy {
     if (userName) identifiers.add(userName);
     const profile = await this.loadProfile(userId);
     if (profile?.name) identifiers.add(profile.name);
-    if (profile?.englishName) identifiers.add(profile.englishName);
+    if (profile?.en_name) identifiers.add(profile.en_name);
 
     for (const [name, members] of Object.entries(this.groupMembership)) {
       if (members.some((member) => identifiers.has(member))) groups.add(name);
@@ -118,6 +118,11 @@ export class PermissionPolicy {
     }
     if (merged.read.length === 0) merged.read = [...UNGROUPED_READ];
     return merged;
+  }
+
+  /** 启动预加载：上电即读取策略文件（避免首条消息才触发加载日志）。 */
+  async preload(): Promise<void> {
+    await this.ensureLoaded();
   }
 
   /** 合并编译多组策略（common ∪ 各组并集；无 admin 时保守缺省）。 */
@@ -209,15 +214,15 @@ export class PermissionPolicy {
   }
 
   /** 用户缓存（openId → 中文名/英文名），mtime 缓存，供成员名匹配。 */
-  private profileCache = new Map<string, { name?: string; englishName?: string }>();
+  private profileCache = new Map<string, { name?: string; en_name?: string }>();
   private profileMtimeMs = -1;
 
-  private async loadProfile(openId: string): Promise<{ name?: string; englishName?: string } | undefined> {
+  private async loadProfile(openId: string): Promise<{ name?: string; en_name?: string } | undefined> {
     if (!this.usersFile) return undefined;
     try {
       const mtimeMs = (await stat(this.usersFile)).mtimeMs;
       if (mtimeMs !== this.profileMtimeMs) {
-        const parsed = JSON.parse(await readFile(this.usersFile, "utf8")) as Record<string, { name?: string; englishName?: string }>;
+        const parsed = JSON.parse(await readFile(this.usersFile, "utf8")) as Record<string, { name?: string; en_name?: string }>;
         this.profileCache = new Map(Object.entries(parsed));
         this.profileMtimeMs = mtimeMs;
       }

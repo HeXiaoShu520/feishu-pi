@@ -11,6 +11,8 @@ function makeService(opts: {
   postForm: ReturnType<typeof vi.fn>;
   updateCard: (messageId: string, card: object) => Promise<void>;
   sendCard?: (chatId: string, card: object) => Promise<string | undefined>;
+  /** 实际授权者身份（默认=发起人本人） */
+  identityOpenId?: string;
 }) {
   const clock = { value: 1_000_000 };
   const service = new UserAuthService({
@@ -21,6 +23,7 @@ function makeService(opts: {
     updateCard: opts.updateCard,
     sendCard: opts.sendCard,
     postForm: opts.postForm,
+    getIdentity: async () => ({ openId: opts.identityOpenId ?? "ou_test", name: "测试用户" }),
     now: () => clock.value,
     sleep: async (ms: number) => {
       clock.value += ms;
@@ -33,7 +36,7 @@ function message(openId = "ou_test"): FeishuInboundMessage {
   return {
     messageId: "om_test",
     chatId: "oc_test",
-    context: { userOpenId: openId, chatId: "oc_test", conversationId: `${openId}-chat:oc_test` },
+    context: { userOpenId: openId, chatId: "oc_test", chatMode: "p2p", conversationId: `${openId}-chat:oc_test` },
     text: "/login",
   } as FeishuInboundMessage;
 }
@@ -115,6 +118,16 @@ describe("UserAuthService（Device Flow）", () => {
     expect(JSON.stringify(updates[0].card)).toContain("拒绝");
     expect(await service.getUserAccessToken("ou_test")).toBeUndefined();
   });
+  it("群聊中 /login → 拒绝并提示转私聊（授权卡不进群）", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "uauth-"));
+    const postForm = vi.fn();
+    const { service } = makeService({ storeFile: join(dir, "user-tokens.json"), postForm, updateCard: async () => {} });
+    const msg = message();
+    msg.context.chatMode = "group";
+    const result = await service.startLogin(msg);
+    expect(JSON.stringify(result.card)).toContain("私聊");
+    expect(postForm).not.toHaveBeenCalled();
+  });
 });
 
 describe("UserAuthService 增量授权（ensureScopes）", () => {
@@ -140,7 +153,7 @@ describe("UserAuthService 增量授权（ensureScopes）", () => {
     const sendCard = vi.fn();
     const { service } = makeService({ storeFile, postForm, updateCard: async () => {}, sendCard });
 
-    const token = await service.ensureScopes("ou_test", "oc_x", ["s1"]);
+    const token = await service.ensureScopes("ou_test", ["s1"]);
     expect(token).toBe("uat_old");
     expect(postForm).not.toHaveBeenCalled();
     expect(sendCard).not.toHaveBeenCalled();
@@ -180,7 +193,7 @@ describe("UserAuthService 增量授权（ensureScopes）", () => {
     });
 
     // 缺 s2：立即返回 undefined（本次调用拿不到），同时自动发卡并后台轮询
-    const token = await service.ensureScopes("ou_test", "oc_x", ["s2"]);
+    const token = await service.ensureScopes("ou_test", ["s2"]);
     expect(token).toBeUndefined();
     expect(sentCards).toHaveLength(1);
     await vi.waitFor(() => expect(updates).toHaveLength(1));
@@ -194,6 +207,32 @@ describe("UserAuthService 增量授权（ensureScopes）", () => {
     expect(JSON.stringify(updates[0])).toContain("✅");
   });
 });
+
+
+  it("链接被他人代点 → token 绑定实际授权账号（人人可绑定自己的飞书）", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "uauth-"));
+    const updates: object[] = [];
+    const postForm = vi.fn()
+      .mockResolvedValueOnce(BEGIN_OK)
+      .mockResolvedValueOnce(TOKEN_OK);
+    const { service } = makeService({
+      storeFile: join(dir, "user-tokens.json"),
+      postForm,
+      updateCard: async (_messageId, card) => {
+        updates.push(card);
+      },
+      identityOpenId: "ou_B",
+    });
+
+    // 发起人是 ou_A，但实际由 ou_B 在浏览器点同意 → token 落到 ou_B 名下
+    const result = await service.startLogin(message("ou_A"));
+    result.afterSend?.("om_card");
+    await vi.waitFor(() => expect(updates).toHaveLength(1));
+
+    expect(JSON.stringify(updates[0])).toContain("已绑定账号");
+    expect(await service.getUserAccessToken("ou_B")).toBe("uat_1");
+    expect(await service.getUserAccessToken("ou_A")).toBeUndefined();
+  });
 
 describe("getUserAccessToken 刷新", () => {
   it("近过期自动刷新（表单编码）；刷新失败清档返回 undefined", async () => {

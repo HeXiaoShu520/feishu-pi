@@ -104,6 +104,7 @@ export class LarkTransport implements FeishuTransport {
       "im.chat.member.bot.added_v1": async () => {},
       "im.message.reaction.created_v1": async () => {},
       "im.message.reaction.deleted_v1": async () => {},
+      "im.message.message_read_v1": async () => {},
       // 普通消息：normalize 归一化（content/resources/mentions），交给 handler 后台处理
       "im.message.receive_v1": async (raw: Record<string, unknown>) => {
         try {
@@ -170,7 +171,7 @@ export class LarkTransport implements FeishuTransport {
       // 会话模式先行：决定用户资料的查询通道（私聊 contact API / 群聊群成员名单）与 conversationId 归属
       const chatMode = await this.getChatModeCached(chatId);
       const profile = await this.larkCli.getUserProfile(message.senderId, chatId);
-      const displayName = profile.name || profile.englishName || profile.openId;
+      const displayName = profile.name || profile.en_name || message.senderId;
 
       // 构造 conversationId：
       // - 话题群：同一话题内所有用户共享一个会话；首条消息没有 threadId，
@@ -190,7 +191,7 @@ export class LarkTransport implements FeishuTransport {
         }
         conversationId = `topic:${chatId}:${rootId}`;
       } else {
-        conversationId = `${profile.openId}-${threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`}`;
+        conversationId = `${message.senderId}-${threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`}`;
       }
 
       // 处理图片附件（含 post 富文本里的图片：SDK 会把它们放进 resources）
@@ -231,16 +232,17 @@ export class LarkTransport implements FeishuTransport {
       logger.userInput(displayName, `: ${imageInfo}${formatLogText(cleanedText)}`);
 
       // 判断是否为管理员
-      const isAdmin = this.adminOpenId ? profile.openId === this.adminOpenId : false;
+      const isAdmin = this.adminOpenId ? message.senderId === this.adminOpenId : false;
 
       // fire-and-forget：后台处理，失败仅记日志
       void this.handler?.({
         messageId: message.messageId,
         chatId,
         context: {
-          userOpenId: profile.openId,
+          userOpenId: message.senderId,
           userName: displayName,
-          departmentNames: profile.departmentNames,
+          en_name: profile.en_name || undefined,
+          department_name: profile.department_name,
           chatId,
           threadId,
           chatMode,

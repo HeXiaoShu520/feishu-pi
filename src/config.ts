@@ -45,7 +45,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     sessionDir: `${process.cwd()}/data/sessions`,
     dataDir: `${process.cwd()}/data`,
     // 用户身份授权 scope（Device Flow）：默认内置"用户资料查询"所需最小集合；FEISHU_USER_AUTH_SCOPES 可覆盖
-    userAuthScopes: parsedUserAuthScopes.length > 0 ? parsedUserAuthScopes : ["contact:user.base:readonly", "contact:department.base:readonly"],
+    userAuthScopes: parsedUserAuthScopes.length > 0 ? parsedUserAuthScopes : ["contact:contact.base:readonly", "contact:user.base:readonly", "contact:user.department:readonly", "contact:user.department_path:readonly", "contact:department.base:readonly"],
     modelProvider: env.FEISHU_PI_MODEL_PROVIDER ?? "anthropic",
     modelName: env.FEISHU_PI_MODEL_NAME ?? "claude-sonnet-4-6",
     modelBaseUrl: env.FEISHU_PI_MODEL_BASE_URL,

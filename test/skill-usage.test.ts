@@ -64,7 +64,7 @@ describe("SkillUsageStore", () => {
     const file = join(dir, "skill-usage.jsonl");
     const usersFile = join(dir, "users.json");
     await writeFile(usersFile, JSON.stringify({
-      ou_en: { openId: "ou_en", name: "张三", englishName: "John" },
+      ou_en: { openId: "ou_en", name: "张三", en_name: "John" },
       ou_zh: { openId: "ou_zh", name: "李四" },
       ou_bare: { openId: "ou_bare" },
     }), "utf8");

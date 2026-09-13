@@ -26,7 +26,7 @@ export interface SkillUsageEvent {
 interface UserCacheRecord {
   openId: string;
   name?: string;
-  englishName?: string;
+  en_name?: string;
 }
 
 /** 允许的技能目录前缀（相对 cwd，统一正斜杠后前缀匹配），与 restricted-read 保持一致 */
@@ -126,7 +126,7 @@ export class SkillUsageStore {
   async resolveDisplayName(openId: string): Promise<string> {
     await this.ensureUsers();
     const record = this.usersCache.get(openId);
-    return record?.englishName || record?.name || openId;
+    return record?.en_name || record?.name || openId;
   }
 
   /** 全量用户展示名映射（供统计页面批量解析，避免逐条查询）。 */
@@ -134,7 +134,7 @@ export class SkillUsageStore {
     await this.ensureUsers();
     const result: Record<string, string> = {};
     for (const [openId, record] of this.usersCache) {
-      result[openId] = record.englishName || record.name || openId;
+      result[openId] = record.en_name || record.name || openId;
     }
     return result;
   }

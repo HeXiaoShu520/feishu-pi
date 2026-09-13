@@ -34,16 +34,29 @@ describe("LarkCli 用户资料查询（管理员通道 + 外部用户群名单�
       adminGet: async (path) => {
         if (path.includes("/users/")) {
           userCalls += 1;
-          return { user: { name: "外部成员", en_name: "Guest", department_ids: ["od_dept1"] } };
+          return {
+            user: {
+              name: "外部成员",
+              en_name: "Guest",
+              department_path: [
+                {
+                  department_id: "od_dept1",
+                  department_name: { name: "平台组" },
+                  department_path: { name: "公司/技术部/平台组" },
+                },
+              ],
+            },
+          };
         }
-        return { items: [{ department_id: "od_dept1", name: "技术部" }] };
+        return {};
       },
     });
 
     const profile = await larkCli.getUserProfile("ou_guest", "oc_group");
     expect(profile.name).toBe("外部成员");
-    expect(profile.englishName).toBe("Guest");
-    expect(profile.departmentNames).toEqual(["技术部"]);
+    expect(profile.en_name).toBe("Guest");
+    // department_path.name（完整路径）优先于 department_name（直属部门名）
+    expect(profile.department_name).toEqual(["公司/技术部/平台组"]);
     expect(userCalls).toBe(1);
 
     const again = await larkCli.getUserProfile("ou_guest", "oc_group");
@@ -91,14 +104,13 @@ describe("LarkCli 用户资料查询（管理员通道 + 外部用户群名单�
 
     // 第一次：全部未命中 → 冷却档案落盘（仅 openId）
     const first = await larkCli.getUserProfile("ou_new", "oc_group");
-    expect(first.openId).toBe("ou_new");
-    expect(first.name).toBeUndefined();
+    expect(first.name).toBe("");
     const raw = JSON.parse(await readFile(storeFile, "utf8"));
-    expect(raw.ou_new.openId).toBe("ou_new");
+    expect(raw.ou_new.name).toBe("");
 
     // 冷却期内（<1 天）：直接命中缓存，不再打接口
     const second = await larkCli.getUserProfile("ou_new", "oc_group");
-    expect(second.name).toBeUndefined();
+    expect(second.name).toBe("");
     expect(adminGetCalls).toBe(1);
     expect(rosterCalls).toBe(1);
   });
@@ -108,7 +120,7 @@ describe("LarkCli 用户资料查询（管理员通道 + 外部用户群名单�
     const storeFile = join(dir, "cli_test_users.json");
     const tenDaysAgo = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000).toISOString();
     await writeFile(storeFile, JSON.stringify({
-      ou_known: { openId: "ou_known", name: "张三", englishName: "John", departmentNames: ["技术部"], updatedAt: tenDaysAgo },
+      ou_known: { openId: "ou_known", name: "张三", en_name: "John", department_name: ["技术部"], updatedAt: tenDaysAgo },
     }), "utf8");
 
     let fail = true;
@@ -121,9 +133,15 @@ describe("LarkCli 用户资料查询（管理员通道 + 外部用户群名单�
         adminGet: async (path: string) => {
           if (fail) throw new Error("接口异常");
           if (path.includes("/users/")) {
-            return { user: { name: "张三", en_name: "John", department_ids: ["od_dept1"] } };
+            return {
+              user: {
+                name: "张三",
+                en_name: "John",
+                department_path: [{ department_name: { name: "技术部" }, department_path: { name: "公司/技术部" } }],
+              },
+            };
           }
-          return { items: [{ department_id: "od_dept1", name: "技术部" }] };
+          return {};
         },
       },
     );
@@ -131,18 +149,38 @@ describe("LarkCli 用户资料查询（管理员通道 + 外部用户群名单�
     // 过期重查失败：保留旧资料，进入冷却（时间戳刷新）
     const kept = await larkCli.getUserProfile("ou_known", "oc_group");
     expect(kept.name).toBe("张三");
-    expect(kept.englishName).toBe("John");
+    expect(kept.en_name).toBe("John");
     const raw1 = JSON.parse(await readFile(storeFile, "utf8"));
     expect(raw1.ou_known.updatedAt).not.toBe(tenDaysAgo);
     expect(raw1.ou_known.name).toBe("张三");
 
-    // 模拟冷却期满（时间戳拨回 10 天前）+ 接口恢复 → 重查成功刷新
+    // 模拟冷却期满（磁盘档案时间戳拨回 10 天前，新实例重新加载磁盘）+ 接口恢复 → 重查成功刷新
     const aged = JSON.parse(await readFile(storeFile, "utf8"));
     aged.ou_known.updatedAt = tenDaysAgo;
     await writeFile(storeFile, JSON.stringify(aged, null, 2), "utf8");
     fail = false;
-    const refreshed = await larkCli.getUserProfile("ou_known", "oc_group");
-    expect(refreshed.englishName).toBe("John");
-    expect(refreshed.departmentNames).toEqual(["技术部"]);
+    const larkCli2 = new LarkCli(
+      { im: { chatMembers: { get: async () => ({ data: { items: [] } }) } } } as unknown as ConstructorParameters<typeof LarkCli>[0],
+      "cli_test",
+      dir,
+      {
+        adminTokenProvider: async () => "admin_uat",
+        adminGet: async (path: string) => {
+          if (path.includes("/users/")) {
+            return {
+              user: {
+                name: "张三",
+                en_name: "John",
+                department_path: [{ department_name: { name: "技术部" }, department_path: { name: "公司/技术部" } }],
+              },
+            };
+          }
+          return {};
+        },
+      },
+    );
+    const refreshed = await larkCli2.getUserProfile("ou_known", "oc_group");
+    expect(refreshed.en_name).toBe("John");
+    expect(refreshed.department_name).toEqual(["公司/技术部"]);
   });
 });

@@ -27,6 +27,7 @@ import { buildNoticeCard } from "./guard/card.ts";
 const APPROVAL_STALE_NOTICE = "⚠️ 该授权请求已失效（服务已重启或已处理），请重新发起任务。";
 
 /** 启动轻量飞书 Agent 服务。 */
+
 export async function main(): Promise<void> {
   const config = loadConfig();
   const messages = new MessageStore(join(config.sessionDir, "messages.json"));
@@ -84,12 +85,12 @@ export async function main(): Promise<void> {
     logger.warn("[Main] 获取 Bot Open ID 失败:", err);
   }
 
-  // 解析管理员 Open ID（可选，优先从缓存查找）
+  // 解析管理员 Open ID（名字/邮箱/缓存；失败则管理员通道暂不可用，不影响其他功能）
   const adminOpenId = await resolveAdminOpenId(client, config.feishuAdmin, config.feishuAppId);
   if (adminOpenId) {
     logger.info(`[Main] 管理员 Open ID: ${adminOpenId}`);
   } else {
-    logger.info(`[Main] 未配置管理员`);
+    logger.info("[Main] 管理员未解析：用户资料查询将仅用群名单兜底");
   }
 
   // runtime 先声明（transport 的 onModelSwitch 回调引用它）
@@ -117,7 +118,7 @@ export async function main(): Promise<void> {
     appId: config.feishuAppId,
     appSecret: config.feishuAppSecret,
     scopes: config.userAuthScopes,
-    adminOpenId: adminOpenId || undefined,
+    adminOpenId: adminOpenId,
     storeFile: join(config.dataDir, "user-tokens.json"),
     updateCard: (messageId, card) => transport.updateCardById(messageId, card),
     // 增量授权：能力需要新 scope 时自动向该会话发授权卡
@@ -245,6 +246,9 @@ ${trimmed}` }] },
     skillUsageStore: usageStore,
     scheduleService,
   });
+
+  // 上电预加载：权限策略 + Skills + 自定义工具在首条消息前全部就绪
+  await runtime.preload();
 
   // 启动时打印可用的 Skills 和 Tools（管理员视角）
   await runtime.printAvailableResources();

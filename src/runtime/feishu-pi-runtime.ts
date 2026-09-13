@@ -78,6 +78,16 @@ class SessionWrapper implements FeishuPiSession {
  * 能力边界在工具注册层的组过滤与 ToolGuard）。资源加载直接使用 Pi 的基础实现。
  */
 
+/**
+ * 精简模式的配套规则（注入系统提示）：卡片只保留"最后一次工具调用之后"的正文作为最终答复，
+ * 因此要求模型每次工具调用后输出完整独立的结论——这是使用侧保证，否则终态不可读。
+ */
+const NL = String.fromCharCode(10);
+const FINAL_REPLY_RULE = [
+  "【答复规则】你在工具调用过程中输出的文字只是过程展示；最后一次工具调用之后你输出的内容，才是用户最终看到的完整答复。",
+  "因此每次工具调用结束后，必须输出一段完整、独立、可直接阅读的结论：包含结论与必要细节，不要只输出片段，也不要依赖或延续工具调用之前的文字。",
+].join(NL);
+
 export class FeishuPiRuntime {
   private readonly config: FeishuPiConfig;
   private readonly tools: FeishuPiTool[];
@@ -107,7 +117,7 @@ export class FeishuPiRuntime {
     const loader = new DefaultResourceLoader({
       cwd: this.config.cwd,
       agentDir: `${this.config.cwd}/.agent`,
-      systemPrompt: this.config.systemPrompt,
+      systemPrompt: [this.config.systemPrompt, FINAL_REPLY_RULE.trim()].filter(Boolean).join(NL),
     });
     await loader.reload();
     return loader;
@@ -124,7 +134,12 @@ export class FeishuPiRuntime {
     if (skills.length > 0) {
       logger.info(`[Runtime] 已加载 ${colors.bright}${colors.magenta}${skills.length}${colors.reset} 个 Skills（对所有人开放）:`);
       skills.forEach((skill) => {
-        logger.info(`  ${colors.magenta}✆${colors.reset} ${colors.cyan}${skill.name}${colors.reset}: ${skill.description}`);
+        // 每行（含名字）最多显示 200 个可见字符，超长描述截断
+        const head = `  ✆ ${skill.name}: `;
+        const desc = String(skill.description ?? "").replace(/\s+/g, " ").trim();
+        const maxDesc = Math.max(0, 200 - head.length);
+        const shown = desc.length > maxDesc ? `${desc.slice(0, maxDesc)}…` : desc;
+        logger.info(`  ${colors.magenta}✆${colors.reset} ${colors.cyan}${skill.name}${colors.reset}: ${shown}`);
       });
     } else {
       logger.warn(`[Runtime] 未找到任何 Skills`);
@@ -156,6 +171,15 @@ export class FeishuPiRuntime {
         throw error;
       });
     return this.customToolsOnce;
+  }
+
+  /** 上电预加载：权限策略 + Skills + 自定义工具在启动时全部就绪，首条消息零初始化日志。 */
+  async preload(): Promise<void> {
+    await Promise.all([
+      this.loadBaseLoaderOnce(),
+      this.loadCustomToolsOnce(),
+      this.config.permissionPolicy.preload(),
+    ]);
   }
 
   async createSession(sessionFile: string | undefined, userId: string, context?: FeishuContext): Promise<FeishuPiSession> {

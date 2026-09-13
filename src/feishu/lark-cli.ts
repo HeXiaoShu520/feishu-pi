@@ -4,11 +4,12 @@ import { dirname, join } from "node:path";
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "../utils/logger.ts";
 
+const str = (v: unknown): string => (typeof v === "string" ? v : "");
+
 export interface LarkUserProfile {
-  openId: string;
-  name?: string;           // 中文名
-  englishName?: string;    // 英文名
-  departmentNames?: string[]; // 部门中文名列表（仅历史缓存可能保留；新查询不再获取，需部门数据时应为应用开通通讯录部门权限后经 contact API 查询）
+  name: string;            // 中文名（查不到为空串）
+  en_name: string;     // 英文名（查不到为空串）
+  department_name: string[]; // 部门名列表（查不到为空数组；需管理员开通部门权限后经管理员通道获取）
   /** 信息查询或更新时间（ISO 8601） */
   updatedAt: string;
 }
@@ -16,8 +17,8 @@ export interface LarkUserProfile {
 /** 单次查询通道的返回：命中的资料字段（各通道按能力尽量填充） */
 interface ProfileName {
   name?: string;
-  englishName?: string;
-  departmentNames?: string[];
+  en_name?: string;
+  department_name?: string[];
 }
 
 /** 管理员身份查询的可注入 HTTP GET：v3 响应的 data 层已拆包返回 */
@@ -49,7 +50,7 @@ const SPARSE_CACHE_EXPIRY_DAYS = 1;
 
 /** 空档案判定：无名字、无英文名、无部门（仅 openId） */
 function isSparseProfile(profile: LarkUserProfile): boolean {
-  return !profile.name && !profile.englishName && !profile.departmentNames?.length;
+  return !profile.name && !profile.en_name && !profile.department_name?.length;
 }
 
 /** 所有用户资料的缓存结构（以 openId 为键） */
@@ -116,10 +117,9 @@ export class LarkCli {
     if (!resolved) {
       const prev = this.cache[openId];
       const profile: LarkUserProfile = {
-        openId,
-        name: prev?.name,
-        englishName: prev?.englishName,
-        departmentNames: prev?.departmentNames,
+        name: prev?.name ?? "",
+        en_name: prev?.en_name ?? "",
+        department_name: prev?.department_name ?? [],
         updatedAt: now.toISOString(),
       };
       this.cache[openId] = profile;
@@ -129,10 +129,9 @@ export class LarkCli {
     }
 
     const profile: LarkUserProfile = {
-      openId,
-      name: resolved.name,
-      englishName: resolved.englishName,
-      departmentNames: resolved.departmentNames,
+      name: resolved.name ?? "",
+      en_name: resolved.en_name ?? "",
+      department_name: resolved.department_name ?? [],
       updatedAt: now.toISOString(),
     };
 
@@ -140,11 +139,11 @@ export class LarkCli {
     this.cache[openId] = profile;
     await this.saveCache();
 
-    // 【重要】每次新用户入库都打印
-    const displayName = profile.name || profile.englishName || profile.openId;
-    const englishInfo = profile.englishName ? `, 英文名: ${profile.englishName}` : "";
-    const deptInfo = profile.departmentNames?.length ? `, 部门: ${profile.departmentNames.join(" / ")}` : "";
-    logger.info(`[LarkCli] 🆕 新用户入库[${via}]: ${displayName} (${profile.openId})${englishInfo}${deptInfo}`);
+    // 【重要】每次新用户入库都打印（openId 即缓存键，不在内容/日志中重复）
+    const displayName = profile.name || profile.en_name;
+    const englishInfo = profile.en_name ? `, 英文名: ${profile.en_name}` : "";
+    const deptInfo = profile.department_name?.length ? `, 部门: ${profile.department_name.join(" / ")}` : "";
+    logger.info(`[LarkCli] 🆕 新用户入库[${via}]: ${displayName}${englishInfo}${deptInfo}`);
 
     return profile;
   }
@@ -165,34 +164,49 @@ export class LarkCli {
       }
 
       const userRes = await this.adminGet(`/open-apis/contact/v3/users/${openId}?user_id_type=open_id`, token);
-      const user = userRes.user as { name?: string; en_name?: string; department_ids?: string[] } | undefined;
+      const user = userRes.user as {
+        name?: string;
+        en_name?: string;
+        department_ids?: string[];
+        /** user token 调用时返回：完整部门路径（含部门名，需 contact:user.department_path:readonly + 后台名片页设置） */
+        department_path?: Array<{ department_name?: { name?: string }; department_path?: { name?: string } }>;
+      } | undefined;
       if (!user && !userRes.name) {
-        logger.warn(`[LarkCli] 管理员通道未查到用户 ${openId}`);
+        const detail = str(userRes.msg) || str(userRes.error_description) || str(userRes.error) || "响应无 user 字段";
+        logger.warn(`[LarkCli] 管理员通道未查到用户 ${openId}：${detail}`);
+        logger.warn("[LarkCli] 该接口需要通讯录调用权限（contact:contact.base:readonly 等），请在开发者后台开通并发布版本，然后重新 /login");
         return undefined;
       }
 
       const name = (user?.name || (userRes.name as string | undefined)) ?? undefined;
-      const englishName = user?.en_name || undefined;
-      const departmentIds = Array.isArray(user?.department_ids) ? user.department_ids : [];
+      const en_name = user?.en_name || undefined;
 
-      let departmentNames: string[] | undefined;
-      if (departmentIds.length > 0) {
-        const query = encodeURIComponent(departmentIds.join(","));
-        const deptRes = await this.adminGet(`/open-apis/contact/v3/departments/batch?department_ids=${query}&user_id_type=open_id`, token);
-        const items = Array.isArray(deptRes.items) ? (deptRes.items as Array<{ name?: string }>) : [];
-        const names = items.map((d) => d.name).filter((n): n is string => Boolean(n));
-        if (names.length > 0) departmentNames = names;
+      // 部门字段诊断：scope 未开通/未发布版本时，响应里不会有 department_path / department_ids，
+      // 部门名会留空——这里显式提示，避免"为什么没有部门"无从排查
+      const hasDepartmentField = Array.isArray(user?.department_path) || Array.isArray(user?.department_ids);
+      if (!hasDepartmentField) {
+        logger.warn(
+          "[LarkCli] 响应未包含部门字段：请确认已开通并发布 contact:user.department:readonly / " +
+            "contact:user.department_path:readonly，且管理后台已开启名片页部门路径展示；未开通时部门名留空",
+        );
       }
 
-      logger.info(`[LarkCli] 管理员通道查询成功: 中文名=${name}, 英文名=${englishName ?? "无"}, 部门=${departmentNames?.join(" / ") ?? "无"}`);
-      return { name, englishName, departmentNames };
+      // 部门名：department_path.name（完整路径，包含直属部门）优先，缺失留空（不二次调部门接口）
+      const department_name = Array.isArray(user?.department_path)
+        ? user.department_path
+            .map((d) => d.department_path?.name || d.department_name?.name)
+            .filter((n): n is string => Boolean(n))
+        : undefined;
+
+      logger.info(`[LarkCli] 管理员通道查询成功: 中文名=${name}, 英文名=${en_name ?? "无"}, 部门=${department_name?.join(" / ") ?? "无"}`);
+      return { name, en_name, department_name };
     } catch (error) {
       logger.warn(`[LarkCli] 管理员通道查询 ${openId} 失败：${error instanceof Error ? error.message : String(error)}`);
       return undefined;
     }
   }
 
-  /** 加载缓存文件 */
+/** 加载缓存文件 */
   private async loadCache(): Promise<void> {
     if (this.cacheLoaded) return;
     try {

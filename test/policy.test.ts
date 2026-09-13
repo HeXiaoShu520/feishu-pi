@@ -19,7 +19,7 @@ describe("PermissionPolicy 多组统一策略", () => {
       group2: { read: [".agent/skills/**"] },
     });
     const usersFile = join(dir, "users.json");
-    await writeFile(usersFile, JSON.stringify({ ou_x: { openId: "ou_x", englishName: "John" } }), "utf8");
+    await writeFile(usersFile, JSON.stringify({ ou_x: { openId: "ou_x", en_name: "John" } }), "utf8");
 
     const policy = new PermissionPolicy(file, {
       adminId: "ou_admin",
