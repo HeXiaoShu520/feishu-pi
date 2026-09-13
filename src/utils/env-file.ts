@@ -22,7 +22,7 @@ export function parseEnvFile(content: string): Record<string, string> {
 export const MANAGED_KEYS = new Set([
   "FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_ADMIN", "FEISHU_RANDOM_EMOJIS",
   "FEISHU_PI_MODEL_PROVIDER", "FEISHU_PI_MODEL_NAME", "FEISHU_PI_MODEL_BASE_URL",
-  "FEISHU_PI_MODEL_API_KEY", "FEISHU_PI_SYSTEM_PROMPT",
+  "FEISHU_PI_MODEL_API_KEY", "FEISHU_PI_SYSTEM_PROMPT", "FEISHU_SHOW_MODEL_STATS",
 ]);
 
 /**
@@ -52,6 +52,10 @@ export function stringifyEnv(config: Record<string, string>, existing: Record<st
   lines.push("FEISHU_PI_MODEL_PROVIDER=" + provider);
   lines.push("FEISHU_PI_MODEL_NAME=" + (config.FEISHU_PI_MODEL_NAME || "claude-sonnet-4-6"));
   lines.push("FEISHU_PI_MODEL_BASE_URL=" + (config.FEISHU_PI_MODEL_BASE_URL || ""));
+  if (config.FEISHU_SHOW_MODEL_STATS) {
+    // 回复末尾模型统计小字开关（1 开 / 0 关）
+    lines.push("FEISHU_SHOW_MODEL_STATS=" + config.FEISHU_SHOW_MODEL_STATS);
+  }
   lines.push("");
 
   // API Key
@@ -80,4 +84,15 @@ export function stringifyEnv(config: Record<string, string>, existing: Record<st
   }
 
   return lines.join("\n") + "\n";
+}
+
+/**
+ * 把单个键值对写入 .env 内容：已有该键则原位替换，没有则追加到末尾。
+ * 纯字符串操作（文件读写由调用方完成），供运行期持久化单个配置（如 /model 切换）使用。
+ */
+export function upsertEnvLine(content: string, key: string, value: string): string {
+  const line = `${key}=${value}`;
+  const pattern = new RegExp(`^${key}=.*$`, "m");
+  if (pattern.test(content)) return content.replace(pattern, line);
+  return `${content.trimEnd()}\n${line}\n`;
 }
