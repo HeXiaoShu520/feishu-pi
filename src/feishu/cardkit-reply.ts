@@ -1,6 +1,5 @@
 /**
- * 基于 CardKit 流式卡片的回复实现
- * 失败时自动降级为普通文本消息
+ * 基于 CardKit 流式卡片的回复实现（只用 CardKit，不做文本降级）。
  *
  * 分卡策略：正文累积超过 maxCardChars 后，在完整块边界（段落空行且不在代码围栏内）
  * 切开——旧卡流式收尾，剩余内容开一张新卡继续，保证任何一块都不会从中间被隔断。
@@ -69,7 +68,6 @@ export class CardKitReply implements FeishuReply {
   private readonly maxCardChars: number;
 
   private stream?: CardKitStream;
-  private cardId?: string;
   private closed = false;
   private initialization?: Promise<void>;
   /** 当前卡片内容在全文中的起始偏移（分卡时推进） */
@@ -158,10 +156,10 @@ export class CardKitReply implements FeishuReply {
         onError: this.onError,
       });
 
-      this.cardId = await this.stream.create(initialText);
+      const cardId = await this.stream.create(initialText);
 
       // 发送引用该卡片的消息
-      await this.sendCardReference(this.cardId, this.messageId);
+      await this.sendCardReference(cardId, this.messageId);
     })();
 
     try {
@@ -220,7 +218,6 @@ export class CardKitReply implements FeishuReply {
       const newStream = new CardKitStream({ client: this.client, onError: this.onError });
       const newCardId = await newStream.create(tail);
       this.stream = newStream;
-      this.cardId = newCardId;
       this.offset += split;
       await this.sendCardReference(newCardId, this.messageId);
       logger.info(`[CardKit] 正文超限已分卡：前卡 ${head.length} 字符，新卡从第 ${this.offset} 字符继续`);

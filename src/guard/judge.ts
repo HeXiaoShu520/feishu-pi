@@ -23,6 +23,7 @@ export interface JudgeVerdict {
   reason: string;
 }
 
+/** 审核模型的系统提示：明确"白名单 + 授权卡"模型，只输出 JSON 判定。 */
 const SYSTEM_PROMPT = `你是一个 AI Agent 的权限审核器。系统采用"白名单 + 授权卡"的权限模型：
 每个身份组在策略文件中配置了授权范围（可调用的工具、可执行的命令、可读写的路径）。
 名单内的调用会直接放行；到你这里的调用是**名单未命中**的，你需要结合该组的授权意图综合判断。
@@ -47,11 +48,15 @@ export class PolicyJudge {
     this.options = options;
   }
 
-  /** 是否已配置审核接口；未配置时调用方应直接走授权卡。 */
+/** 是否已配置审核接口；未配置时调用方应直接走授权卡。 */
   get enabled(): boolean {
     return Boolean(this.options.baseUrl && this.options.models.length > 0);
   }
 
+  /**
+   * 综合判定一次策略外调用：全部模型 allow 才放行（安全交集），
+   * 任一 ask（或异常/超时/无法解析）即 ask 交授权卡。
+   */
   async judge(input: JudgeInput): Promise<JudgeVerdict> {
     if (!this.enabled) {
       return { decision: "ask", reason: "智能体审核未启用，需负责人确认" };
@@ -65,6 +70,10 @@ export class PolicyJudge {
     return { decision: "ask", reason: asks.map((v) => v.reason).join("；") };
   }
 
+  /**
+   * 单模型的审核调用：OpenAI 兼容 chat/completions，temperature 0 保证判定稳定。
+   * 任何异常（接口错误/超时/输出无法解析）一律按 ask 处理——审核失败宁可问人。
+   */
   private async judgeWithSingleModel(model: string, input: JudgeInput): Promise<JudgeVerdict> {
     const { baseUrl, apiKey, timeoutMs } = this.options;
     const controller = new AbortController();

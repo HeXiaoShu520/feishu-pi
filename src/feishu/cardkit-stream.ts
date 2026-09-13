@@ -67,7 +67,7 @@ export class CardKitStream {
         },
       });
 
-      const cardId = (res as any)?.data?.card_id;
+      const cardId = (res as { data?: { card_id?: string } } | undefined)?.data?.card_id;
       if (!cardId) {
         throw new Error(`Failed to get card_id from response: ${JSON.stringify(res)}`);
       }
@@ -183,14 +183,10 @@ export class CardKitStream {
     }).then(() => undefined);
   }
 
-  /** 更新独立的统计小字元素。 */
+  /** 更新独立的统计小字元素（工具执行期间的动画/状态文案）。 */
   async updateStats(text: string): Promise<void> {
     if (this.disposed || !this.cardId) return;
-    try {
-      await this.enqueueWrite(() => this.putStats(text));
-    } catch (err) {
-      this.onError?.(err);
-    }
+    await this.enqueueWrite(() => this.putStats(text));
   }
 
   /** 实际推送小字元素内容（内部复用）。 */

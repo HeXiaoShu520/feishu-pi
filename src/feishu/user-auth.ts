@@ -7,8 +7,8 @@
  *
  * 端点（与官方 lark-cli 行为一致）：
  * - 发起：POST https://accounts.feishu.cn/oauth/v1/device_authorization（表单编码）
- * - 轮询/刷新：POST https://open.feishu.cn/open-apis/authen/v2/oauth/token（JSON；
- *   authorization_pending / slow_down 等中间态以 HTTP 400 + RFC 风格 error JSON 返回）
+ * - 轮询/刷新：POST https://open.feishu.cn/open-apis/authen/v2/oauth/token（同为表单编码；
+ *   authorization_pending / slow_down 等中间态以 error 字段返回，随 HTTP 400）
  *
  * 安全模型：
  * - device_code 与发起用户的 openId 绑定，token 只落到该用户名下（不接收"代他人授权"）；

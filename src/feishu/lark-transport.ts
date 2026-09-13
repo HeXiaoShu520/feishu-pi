@@ -6,8 +6,18 @@ import { LarkImageProcessor } from "./image-processor.ts";
 import { formatLogText } from "./log-utils.ts";
 import { logger } from "../utils/logger.ts";
 import { attachmentsDir, sanitizeFileName } from "../utils/session-paths.ts";
+import { upsertEnvLine } from "../utils/env-file.ts";
+import { toBuffer } from "./resource-buffer.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+
+/** 卡片按钮回调的统一参数：按钮 value 载荷 + 回调来源（卡片消息与点击者） */
+export interface CardCallbackParams {
+  /** 按钮 behaviors.value 载荷（action/qid/token/decision 等，结构随卡片而定） */
+  value: Record<string, unknown>;
+  /** 回调来源：被点击的卡片消息 ID、所在会话与点击者 */
+  action: { messageId: string; chatId: string; operatorOpenId: string };
+}
 
 export interface LarkTransportConfig {
   appId: string;
@@ -59,8 +69,8 @@ export class LarkTransport implements FeishuTransport {
   private readonly onModelSwitch?: (modelName: string) => void;
   private readonly client: Client;
   private handler?: (message: FeishuInboundMessage) => Promise<void>;
-  private approvalHandler?: (params: { value: Record<string, unknown>; action: { messageId: string; chatId: string; operatorOpenId: string } }) => Promise<void>;
-  private askHandler?: (params: { value: Record<string, unknown>; action: { messageId: string; chatId: string; operatorOpenId: string } }) => Promise<void>;
+  private approvalHandler?: (params: CardCallbackParams) => Promise<void>;
+  private askHandler?: (params: CardCallbackParams) => Promise<void>;
   private connecting?: Promise<void>;
   /** 会话模式缓存（p2p/group/topic），话题群与普通群的会话隔离策略不同 */
   private readonly chatModeCache = new Map<string, "p2p" | "group" | "topic">();
@@ -180,20 +190,7 @@ export class LarkTransport implements FeishuTransport {
       //   收敛到同一会话；若根未确立前用户追加消息，从持久化中取回话题根，避免裂成新会话
       // - 其他会话（私聊/普通群）：按用户隔离
       const threadId = message.threadId;
-      let conversationId: string;
-      if (chatMode === "topic") {
-        let rootId = threadId;
-        if (rootId) {
-          await this.topicRoots?.clear(chatId); // threadId 出现，话题根已确立
-        } else {
-          const pending = await this.topicRoots?.get(chatId);
-          rootId = pending ?? message.messageId;
-          if (!pending) await this.topicRoots?.set(chatId, rootId); // 首条消息：登记自己为话题根
-        }
-        conversationId = `topic:${chatId}:${rootId}`;
-      } else {
-        conversationId = `${message.senderId}-${threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`}`;
-      }
+      const conversationId = await this.buildConversationId(chatId, chatMode, message.senderId, threadId, message.messageId);
 
       // 处理图片附件（含 post 富文本里的图片：SDK 会把它们放进 resources）
       let images;
@@ -208,13 +205,7 @@ export class LarkTransport implements FeishuTransport {
       }
 
       // 过滤消息中的 @ 机器人标记（normalize 已按占位符替换，这里兜底清洗）
-      let cleanedText = message.content;
-      if (this.botOpenId) {
-        cleanedText = cleanedText
-          .replace(new RegExp(`<at\\s+user_id="${this.botOpenId}"[^>]*>.*?</at>`, "gi"), "")
-          .replace(new RegExp(`@${this.botOpenId}\\s*`, "gi"), "")
-          .trim();
-      }
+      let cleanedText = stripBotMentions(message.content, this.botOpenId);
 
       // 下载文件类附件（file/audio/video/media），保存到会话文件夹并把路径写进消息文本，
       // Agent 可用 read/bash 直接访问
@@ -334,6 +325,28 @@ export class LarkTransport implements FeishuTransport {
     }
   }
 
+  /**
+   * 构造会话 ID（会话隔离的核心规则）：
+   * - 话题群：同一话题内所有用户共享一个会话；首条消息没有 threadId，
+   *   用该消息的 messageId 作为话题键并持久化——后续消息的 threadId 恰好就是这条根消息的 ID，
+   *   收敛到同一会话；若根未确立前用户追加消息，从持久化中取回话题根，避免裂成新会话。
+   * - 其他会话（私聊/普通群）：按用户隔离（同一线程内的消息再按线程细分）。
+   */
+  private async buildConversationId(chatId: string, chatMode: "p2p" | "group" | "topic", senderId: string, threadId: string | undefined, messageId: string): Promise<string> {
+    if (chatMode !== "topic") {
+      return `${senderId}-${threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`}`;
+    }
+    let rootId = threadId;
+    if (rootId) {
+      await this.topicRoots?.clear(chatId); // threadId 出现，话题根已确立
+    } else {
+      const pending = await this.topicRoots?.get(chatId);
+      rootId = pending ?? messageId;
+      if (!pending) await this.topicRoots?.set(chatId, rootId); // 首条消息：登记自己为话题根
+    }
+    return `topic:${chatId}:${rootId}`;
+  }
+
   /** 查询会话模式并缓存（话题群与普通群的会话隔离策略不同，模式极少变化）。 */
   private async getChatModeCached(chatId: string): Promise<"p2p" | "group" | "topic"> {
     const cached = this.chatModeCache.get(chatId);
@@ -354,10 +367,8 @@ export class LarkTransport implements FeishuTransport {
   private persistModelName(modelName: string): void {
     this.onModelSwitch?.(modelName);
     const envFile = join(process.cwd(), ".env");
-    const content = readFileSync(envFile, "utf-8");
-    const line = `FEISHU_PI_MODEL_NAME=${modelName}`;
-    const pattern = /^FEISHU_PI_MODEL_NAME=.*$/m;
-    writeFileSync(envFile, pattern.test(content) ? content.replace(pattern, line) : `${content.trimEnd()}\n${line}\n`, "utf-8");
+    const updated = upsertEnvLine(readFileSync(envFile, "utf-8"), "FEISHU_PI_MODEL_NAME", modelName);
+    writeFileSync(envFile, updated, "utf-8");
   }
 
   /**
@@ -385,13 +396,13 @@ export class LarkTransport implements FeishuTransport {
     }
   }
 
-  /** 下载消息资源（image/file）为 Buffer。 */
+  /** 下载消息资源（image/file）为 Buffer（响应形态差异由 resource-buffer 收敛）。 */
   private async downloadResource(fileKey: string, type: string): Promise<Buffer> {
     const res =
       type === "image"
         ? await this.client.im.v1.image.get({ path: { image_key: fileKey } })
         : await this.client.im.v1.file.get({ path: { file_key: fileKey } });
-    return bufferFromResponse(res as unknown);
+    return toBuffer(res);
   }
 
   /** 关闭飞书长连接。 */
@@ -404,12 +415,12 @@ export class LarkTransport implements FeishuTransport {
   }
 
   /** 注册授权卡片回调处理器（PermissionBroker 在服务端校验管理员身份）。 */
-  onApproval(handler: (params: { value: Record<string, unknown>; action: { messageId: string; chatId: string; operatorOpenId: string } }) => Promise<void>): void {
+  onApproval(handler: (params: CardCallbackParams) => Promise<void>): void {
     this.approvalHandler = handler;
   }
 
   /** 注册选项卡回调处理器（AskBroker 校验存在性/一次性 token/仅本人）。 */
-  onAskUser(handler: (params: { value: Record<string, unknown>; action: { messageId: string; chatId: string; operatorOpenId: string } }) => Promise<void>): void {
+  onAskUser(handler: (params: CardCallbackParams) => Promise<void>): void {
     this.askHandler = handler;
   }
 
@@ -485,22 +496,11 @@ export async function downloadFileAttachments(
   return attachmentNote;
 }
 
-/** 把资源下载接口的返回（wrapper/流/Buffer）收敛为 Buffer。 */
-function bufferFromResponse(res: unknown): Promise<Buffer> {
-  const collect = (stream: NodeJS.ReadableStream) =>
-    new Promise<Buffer>((resolve, reject) => {
-      const chunks: Buffer[] = [];
-      stream.on("data", (chunk: Buffer) => chunks.push(chunk));
-      stream.on("end", () => resolve(Buffer.concat(chunks)));
-      stream.on("error", reject);
-    });
-
-  const anyRes = res as { data?: unknown; getReadableStream?: () => NodeJS.ReadableStream } | Buffer | undefined;
-  if (Buffer.isBuffer(anyRes)) return Promise.resolve(anyRes);
-  if (anyRes && typeof anyRes === "object") {
-    if (typeof anyRes.getReadableStream === "function") return collect(anyRes.getReadableStream());
-    if (Buffer.isBuffer(anyRes.data)) return Promise.resolve(anyRes.data);
-    if (anyRes.data && typeof (anyRes.data as NodeJS.ReadableStream).on === "function") return collect(anyRes.data as NodeJS.ReadableStream);
-  }
-  return Promise.reject(new Error("无法识别的资源下载响应结构"));
+/** 过滤消息中的 @ 机器人标记（normalize 已按占位符替换，这里对残留标记兜底清洗）。 */
+export function stripBotMentions(text: string, botOpenId: string | undefined): string {
+  if (!botOpenId) return text.trim();
+  return text
+    .replace(new RegExp(`<at\\s+user_id="${botOpenId}"[^>]*>.*?</at>`, "gi"), "")
+    .replace(new RegExp(`@${botOpenId}\\s*`, "gi"), "")
+    .trim();
 }

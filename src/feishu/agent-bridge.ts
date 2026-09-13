@@ -8,9 +8,9 @@ import { ReactionController } from "./reaction-controller.ts";
 import { Spinner } from "./spinner.ts";
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "../utils/logger.ts";
-import { createDefaultRegistry, DetailCommand, type CommandRegistry, type CommandHandler } from "./commands.ts";
+import { createDefaultRegistry, DetailCommand, NewCommand, StopCommand, type CommandRegistry, type CommandHandler } from "./commands.ts";
 import { randomUUID } from "node:crypto";
-import { sessionAlias } from "./session-alias.ts";
+import { formatStatsLine, formatToolCall, ReplyParts } from "./reply-parts.ts";
 
 /** 将飞书消息转换为 Pi 会话，并把增量文本交给飞书传输层。 */
 export class FeishuAgentBridge {
@@ -19,7 +19,6 @@ export class FeishuAgentBridge {
   private readonly onEvent?: FeishuEventHandler;
   private readonly messages?: MessageStore;
   private readonly client?: Client;
-  private readonly enableCardKit: boolean;
   private readonly reactionController?: ReactionController;
   private readonly commandRegistry: CommandRegistry;
   /** 详细模式开关：key 为 chatId，true 表示工具调用保留在正文中 */
@@ -39,12 +38,13 @@ export class FeishuAgentBridge {
       onEvent?: FeishuEventHandler;
       messages?: MessageStore;
       client?: Client;
-      enableCardKit?: boolean;
       enableReaction?: boolean;
       /** 额外指令（如 /perm），注册在默认指令之后 */
       extraCommands?: CommandHandler[];
       /** 回复末尾是否显示模型统计小字（默认显示）；工具过程状态不受影响 */
       showModelStats?: boolean;
+      /** 模型信息提供器（/model 指令展示用）；返回运行中的实时值 */
+      modelInfo?: () => { baseUrl?: string; modelName: string; apiKey: string };
     },
   ) {
     this.conversations = conversations;
@@ -52,17 +52,19 @@ export class FeishuAgentBridge {
     this.onEvent = options?.onEvent;
     this.messages = options?.messages;
     this.client = options?.client;
-    this.enableCardKit = options?.enableCardKit ?? true;
     this.showModelStats = options?.showModelStats ?? true;
     this.reactionController = options?.client && (options?.enableReaction ?? true)
       ? new ReactionController(options.client)
       : undefined;
-    this.commandRegistry = createDefaultRegistry();
+    this.commandRegistry = createDefaultRegistry(options?.modelInfo);
     // /detail on|off 设置详细/精简模式，状态由 bridge 持有（按 chatId 记忆，默认精简）
     this.commandRegistry.register(new DetailCommand(
       (chatId: string, enabled: boolean) => this.detailMode.set(chatId, enabled),
       (chatId: string) => this.detailMode.get(chatId) === true,
     ));
+    // /new /stop 操作会话（清空/中断），实际逻辑由指令自身完成（见 commands.ts）
+    this.commandRegistry.register(new NewCommand((id) => this.conversations.clear(id)));
+    this.commandRegistry.register(new StopCommand((id) => this.conversations.abort(id)));
     for (const command of options?.extraCommands ?? []) {
       this.commandRegistry.register(command);
     }
@@ -78,7 +80,6 @@ export class FeishuAgentBridge {
     if (this.messages && !(await this.messages.claim(message.messageId))) return;
     const conversationId = message.context.conversationId;
     const userName = message.context.userName;
-    let latestText = "";
     const requestStartedAt = Date.now();
 
     // 检测是否为指令
@@ -91,9 +92,8 @@ export class FeishuAgentBridge {
     // 添加随机表情 reaction
     await this.reactionController?.start(message.messageId);
 
-    // 只用 CardKit，不降级
-    if (!this.client || !this.enableCardKit) {
-      throw new Error("CardKit 未启用或 client 未配置");
+    if (!this.client) {
+      throw new Error("client 未配置，无法创建 CardKit 回复");
     }
 
     const reply = new CardKitReply({
@@ -116,50 +116,11 @@ export class FeishuAgentBridge {
       let lastTextLength = -1;
       let session: FeishuPiSession | undefined;
 
-      // parts 模型：正文与工具摘要各为一段。精简模式滚动回收（旧工具段/旧正文置空），
-      // 终态只保留最后一个工具段之后的结论；详细模式全量保留。
-      const parts: Array<{ kind: "text" | "tool"; text: string }> = [];
-      const toolPartIndices: number[] = [];
-
-      const render = () => reply.replace(parts.map((p) => p.text).join(""));
-
-      /** 追加正文：同一 assistant 消息的增量并入当前段；新消息段出现时精简模式回收旧内容 */
-      const appendText = (text: string): Promise<void> => {
-        const last = parts[parts.length - 1];
-        const extendsCurrent = last?.kind === "text" && text.startsWith(last.text);
-        if (extendsCurrent) {
-          const delta = text.slice(last.text.length);
-          last.text = text;
-          return delta ? reply.update(delta) : Promise.resolve();
-        }
-        // 新正文段：精简模式回收（旧工具段 + 旧正文全部置空，只留新段）
-        const compact = this.detailMode.get(message.chatId) !== true;
-        if (compact) for (const p of parts) p.text = "";
-        parts.push({ kind: "text", text });
-        return compact ? render() : reply.update(text);
-      };
-
-      /** 追加工具摘要段：工具段只留当前一个（新工具出现，上一个就地置空） */
-      const appendTool = (toolLine: string): Promise<void> => {
-        const compact = this.detailMode.get(message.chatId) !== true;
-        if (compact) {
-          const lastTool = toolPartIndices[toolPartIndices.length - 1];
-          if (lastTool !== undefined) parts[lastTool].text = "";
-        }
-        parts.push({ kind: "tool", text: toolLine });
-        toolPartIndices.push(parts.length - 1);
-        return compact ? render() : reply.update(toolLine);
-      };
-
-      /** 终态组装：详细=全量保留；精简=最后一个工具段之后的正文（无则退回全部非工具段），不丢已见内容 */
-      const composeFinal = (): string => {
-        if (this.detailMode.get(message.chatId) === true) return parts.map((p) => p.text).join("");
-        if (toolPartIndices.length > 0) {
-          const tail = parts.slice(Math.max(...toolPartIndices) + 1).map((p) => p.text).join("");
-          if (tail.trim().length > 0) return tail;
-        }
-        return parts.filter((p) => p.kind !== "tool").map((p) => p.text).join("");
-      };
+      // parts 模型（见 reply-parts.ts）：精简模式滚动回收，终态只留最后工具段之后的结论
+      const replyParts = new ReplyParts(
+        { render: (text) => reply.replace(text), append: (text) => reply.update(text) },
+        () => this.detailMode.get(message.chatId) !== true,
+      );
 
       // 立即显示首帧（0ms 延迟）
       await reply.replace(spinner.next());
@@ -207,8 +168,8 @@ export class FeishuAgentBridge {
       session = await this.conversations.prompt(
         {
           conversationId,
-          prompt: { text: message.text, images: message.images, context: message.context },
-          context: message.context  // 传递完整的上下文
+          prompt: { text: message.text, images: message.images },
+          context: message.context, // 调用者身份（权限组判定、会话目录归属的依据）
         },
         async (event) => {
           await this.onEvent?.(event, message);
@@ -216,13 +177,13 @@ export class FeishuAgentBridge {
             textEvents += 1;
             lastTextLength = event.text.length;
             if (!hasRealContent) await startRealContent();
-            await appendText(event.text);
+            await replyParts.appendText(event.text);
           }
           // 工具事件：追加工具摘要段（精简模式只留当前一个），小字位置同步显示动画。
           if (event.type === "tool_started") {
             activeToolName = event.toolName;
             if (!hasRealContent) await startRealContent();
-            await appendTool(`\n\n> ⚙ ${formatToolCall(event.toolName, event.args)}`);
+            await replyParts.appendTool(`\n\n> ⚙ ${formatToolCall(event.toolName, event.args)}`);
           }
           if (event.type === "tool_finished") {
             activeToolName = "";
@@ -236,25 +197,21 @@ export class FeishuAgentBridge {
       clearInterval(animationTimer);
       clearInterval(toolTimer);
 
-      const stats = session?.getStats?.();
-      // 小字在 close 内部（正文渲染完成后）才写入；配置关闭时不生成终态统计，
+      // 终态统计小字在 close 内部（正文渲染完成后）才写入；配置关闭时不生成，
       // 工具过程状态（工具段 + 小字动画）不经过这里，照常显示
-      let statsLine: string | undefined;
-      if (stats && this.showModelStats) {
-        const tokens = stats.tokens ?? {};
-        const formatTokens = (value: number) => `${(value / 1000).toFixed(1)}K`;
-        // 本次新增 token = 当前上下文 - prompt 前基线
-        const deltaTokens = Math.max(0, (tokens.total || 0) - (statsBefore?.tokens?.total || 0));
-        const cost = typeof stats.cost === "number" ? `$${stats.cost.toFixed(4)}` : "";
-        const elapsed = `${((Date.now() - requestStartedAt) / 1000).toFixed(1)}s`;
-        // ctx：当前上下文占用百分比（模型窗口口径，区别于上面的累计计费 token）
-        const usage = session?.getContextUsage?.();
-        const ctx = usage?.percent != null ? `ctx ~${Math.round(usage.percent)}%` : "";
-        statsLine = [session.getModelName?.() || "模型未知", `${formatTokens(tokens.total || 0)}（新增 ${formatTokens(deltaTokens)}）`, ctx, cost, elapsed, sessionAlias(stats.sessionId)].filter(Boolean).join(" · ");
-      }
+      const usage = session?.getContextUsage?.();
+      const statsLine = this.showModelStats
+        ? formatStatsLine({
+            modelName: session?.getModelName?.(),
+            stats: session?.getStats?.(),
+            baselineTotalTokens: statsBefore?.tokens?.total ?? 0,
+            elapsedMs: Date.now() - requestStartedAt,
+            contextPercent: usage?.percent,
+          })
+        : undefined;
 
       // 终态：详细=全量；精简=最后一个工具段之后的结论段
-      const finalText = composeFinal();
+      const finalText = replyParts.composeFinal();
       await reply.close(finalText, statsLine);
 
       // 记录最终响应（含耗时；空文本单独特警，便于发现模型无输出/被拦截的情况）
@@ -368,46 +325,4 @@ export class FeishuAgentBridge {
 function extractMessageId(res: unknown): string | undefined {
   const id = (res as { data?: { message_id?: string } } | undefined)?.data?.message_id;
   return typeof id === "string" ? id : undefined;
-}
-
-/** 工具调用行展示的最大字符数（防止超长命令/路径刷屏）。 */
-const TOOL_CALL_MAX_CHARS = 300;
-
-/**
- * 格式化一次工具调用的展示文本，把关键参数带出来：
- * bash 显示命令本身，read/write/edit/grep 显示目标路径，
- * 其余回退展示整包参数 JSON（单行、截断）。
- */
-function formatToolCall(toolName: string, args: unknown): string {
-  const record = (typeof args === "object" && args !== null ? args : {}) as Record<string, unknown>;
-  const firstString = (...keys: string[]): string | undefined => {
-    for (const key of keys) {
-      if (typeof record[key] === "string" && record[key]) return record[key] as string;
-    }
-    return undefined;
-  };
-
-  let detail: string | undefined;
-  if (toolName === "bash" || toolName === "execute" || toolName === "run_command") {
-    detail = firstString("command", "cmd");
-  } else if (toolName === "write" || toolName === "edit" || toolName === "read" || toolName === "restricted_read") {
-    detail = firstString("path", "file_path", "filePath");
-  } else if (toolName === "grep" || toolName === "glob" || toolName === "find") {
-    detail = firstString("pattern", "path");
-  } else {
-    detail = firstString("path", "file_path", "filePath", "url", "name", "skill", "script");
-  }
-
-  // 兜底：无法从常用字段提取时，展示整包参数（单行截断）
-  if (!detail) {
-    try {
-      detail = JSON.stringify(args)?.replace(/\s+/g, " ");
-    } catch {
-      detail = undefined;
-    }
-  }
-  if (!detail) return `正在调用 **${toolName}** …`;
-  if (detail.length > TOOL_CALL_MAX_CHARS) detail = `${detail.slice(0, TOOL_CALL_MAX_CHARS)}…`;
-  const escaped = detail.replace(/\n/g, " ").replace(/`/g, "'");
-  return `正在调用 **${toolName}**：\`${escaped}\``;
 }

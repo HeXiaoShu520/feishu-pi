@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ScheduleService, ScheduleStore, type ScheduleTask } from "../src/schedule/service.ts";
@@ -32,6 +32,23 @@ describe("ScheduleStore 持久化", () => {
     expect(await reloaded.get("abc123")).toEqual(task);
     expect(await reloaded.remove("abc123")).toBe(true);
     expect(await reloaded.list()).toHaveLength(0);
+  });
+
+  it("兼容历史数组格式：旧版落盘的 [{id,...}] 自动迁移为键值结构", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "schedule-store-"));
+    const file = join(dir, "schedules.json");
+    const legacy = [{
+      id: "old1", name: "旧任务", cron: "0 8 * * *", prompt: "早安",
+      chatId: CHAT, createdBy: ADMIN, enabled: false, createdAt: "2026-01-01T00:00:00.000Z",
+    }];
+    await writeFile(file, JSON.stringify(legacy), "utf8");
+
+    const store = new ScheduleStore(file);
+    expect(await store.get("old1")).toMatchObject({ id: "old1" });
+    await store.put({ ...legacy[0], enabled: true });
+    // 迁移后落盘为新格式且保留原任务
+    const reloaded = new ScheduleStore(file);
+    expect((await reloaded.get("old1"))?.enabled).toBe(true);
   });
 });
 

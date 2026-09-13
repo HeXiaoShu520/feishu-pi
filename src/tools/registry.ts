@@ -1,5 +1,4 @@
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { FeishuPiTool } from "../runtime/types.ts";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { execFile, execFileSync } from "node:child_process";
 import { join, extname } from "node:path";
@@ -120,14 +119,14 @@ async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
                             : `工具执行失败(${error.code || "unknown"}): ${error.message}`,
                         },
                       ],
-                      details: {} as any,
+                      details: {},
                     });
                     return;
                   }
                   try {
                     resolve(JSON.parse(stdout));
                   } catch {
-                    resolve({ content: [{ type: "text" as const, text: stdout }], details: {} as any });
+                    resolve({ content: [{ type: "text" as const, text: stdout }], details: {} });
                   }
                 },
               );
@@ -139,8 +138,8 @@ async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
       } else {
         // ---- TS / JS 脚本工具 ----
         const module = await import(pathToFileURL(filePath).href);
-        const tool = module.default ||
-          Object.values(module).find((exp: any) => exp?.name && exp?.execute);
+        const tool = module.default ??
+          Object.values(module).find((exp) => (exp as ToolDefinition | undefined)?.name && (exp as ToolDefinition | undefined)?.execute);
 
         if (tool && typeof tool === "object" && "name" in tool && "execute" in tool) {
           tools.push(tool as ToolDefinition);
@@ -165,7 +164,6 @@ async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
 /**
  * 创建工具注册表（异步版本，加载 .agent/tools/ 下的用户自定义工具）
  */
-export async function createToolRegistryAsync(cwd: string, tools: FeishuPiTool[] = []): Promise<ToolDefinition[]> {
-  const customTools = await loadCustomTools(cwd);
-  return [...customTools, ...(tools as ToolDefinition[])];
+export async function createToolRegistryAsync(cwd: string): Promise<ToolDefinition[]> {
+  return loadCustomTools(cwd);
 }

@@ -1,8 +1,14 @@
+/**
+ * 机器人指令（/model /help /new /stop /detail /perm）。
+ *
+ * 设计：每个指令一个 CommandHandler 实现，依赖一律构造注入（会话操作、策略查询、
+ * 模型信息提供器），指令本身不读全局配置、不持有可变状态——便于单测与复用。
+ * 注册表按注册顺序匹配，bridge 在此基础上追加 /detail /perm /login 等注入式指令。
+ */
 import type { Client } from "@larksuiteoapi/node-sdk";
 import type { FeishuInboundMessage } from "./types.ts";
-import type { GroupFields, PermissionPolicy } from "../permission/policy.ts";
+import type { PermissionPolicy } from "../permission/policy.ts";
 import { logger } from "../utils/logger.ts";
-import { loadConfig } from "../config.ts";
 
 /** 指令处理器接口：match 判定是否命中，execute 返回要发送的卡片 */
 export interface CommandHandler {
@@ -15,10 +21,18 @@ export interface CommandHandler {
 export interface CommandResult {
   /** 卡片 JSON */
   card: object;
-  /** 是否需要回调处理（按钮点击） */
-  needsCallback?: boolean;
   /** 卡片发出后回调（含 message_id），用于需要稍后原地更新卡片的场景（如 /login 的授权轮询结果） */
   afterSend?: (messageId?: string) => void;
+}
+
+/** /model 指令展示与拉取模型列表所需的运行时信息（提供器返回实时值，支持热切换后仍正确）。 */
+export interface ModelInfo {
+  /** 模型中转站 Base URL（未配置则 /model 提示先配置） */
+  baseUrl?: string;
+  /** 当前使用的模型名 */
+  modelName: string;
+  /** 拉取模型列表用的 API Key（可为空：部分中转站允许无密钥访问） */
+  apiKey: string;
 }
 
 /** 构建一张只含单段 Markdown 的 CardKit 2.0 卡片（指令回复的标准形态）。 */
@@ -35,29 +49,35 @@ function errorCard(message: string): object {
 }
 
 /**
- * /model - 显示可用模型列表，点击按钮切换（实际切换由卡片回调处理）
+ * /model - 显示可用模型列表，点击按钮切换（实际切换由卡片回调处理）。
+ * 模型信息经构造注入的提供器获取，指令不直接读 .env / process.env。
  */
 export class ModelCommand implements CommandHandler {
+  private readonly getModelInfo: () => ModelInfo;
+
+  constructor(getModelInfo: () => ModelInfo) {
+    this.getModelInfo = getModelInfo;
+  }
+
   match(text: string): boolean {
     return text.trim() === "/model";
   }
 
   async execute(message: FeishuInboundMessage, _client: Client): Promise<CommandResult | null> {
     try {
-      const config = loadConfig();
+      const info = this.getModelInfo();
 
       // 必须配置中转站 URL
-      if (!config.modelBaseUrl) {
+      if (!info.baseUrl) {
         return { card: errorCard("未配置模型中转站 URL\n\n请在 .env 中配置:\nFEISHU_PI_MODEL_BASE_URL=https://your-proxy.com/v1") };
       }
 
-      const apiKey = process.env.FEISHU_PI_MODEL_API_KEY || "";
       let models: Array<{ model_id: string; name: string }> = [];
       let successBaseURL = "";
 
       try {
         // 生成候选 /models URL 列表并按顺序尝试（参考 cc-switch 的智能候选逻辑）
-        const candidates = this.buildModelUrlCandidates(config.modelBaseUrl);
+        const candidates = this.buildModelUrlCandidates(info.baseUrl);
         logger.info(`[ModelCommand] 尝试 ${candidates.length} 个候选端点`);
 
         let lastError: string | undefined;
@@ -67,7 +87,7 @@ export class ModelCommand implements CommandHandler {
 
             // 直接用 fetch，不通过 OpenAI SDK（支持无密钥访问）
             const headers: Record<string, string> = {};
-            if (apiKey) headers["Authorization"] = `Bearer ${apiKey}`;
+            if (info.apiKey) headers["Authorization"] = `Bearer ${info.apiKey}`;
             const response = await fetch(modelsUrl, { headers });
 
             if (!response.ok) {
@@ -110,8 +130,8 @@ export class ModelCommand implements CommandHandler {
         {
           tag: "markdown",
           content: message.context.isAdmin
-            ? `**可用模型列表**\n\n中转站: ${successBaseURL}\n当前: ${config.modelName}\n\n请选择要切换的模型：`
-            : `**可用模型列表**\n\n中转站: ${successBaseURL}\n当前: ${config.modelName}\n\n⚠️ 仅管理员可切换模型`,
+            ? `**可用模型列表**\n\n中转站: ${successBaseURL}\n当前: ${info.modelName}\n\n请选择要切换的模型：`
+            : `**可用模型列表**\n\n中转站: ${successBaseURL}\n当前: ${info.modelName}\n\n⚠️ 仅管理员可切换模型`,
         },
         ...models.map((model) => ({
           tag: "button",
@@ -129,7 +149,6 @@ export class ModelCommand implements CommandHandler {
           config: { update_multi: true },  // 允许多人看到相同的更新
           body: { elements },
         },
-        needsCallback: true,
       };
     } catch (err) {
       logger.error("[ModelCommand] 执行失败:", err);
@@ -212,24 +231,52 @@ export class HelpCommand implements CommandHandler {
 }
 
 /**
- * 简单文本指令：命中固定文本时回复固定文案。
- * /new、/stop 这类"实际逻辑由调用方（FeishuAgentBridge）执行、这里只回执"的指令共用此类。
+ * /new - 清空当前会话历史，开始新对话。
+ * 清空操作经构造注入（ConversationManager.clear）；话题内共享会话，禁止清空。
  */
-class SimpleCommand implements CommandHandler {
-  private readonly command: string;
-  private readonly reply: string;
+export class NewCommand implements CommandHandler {
+  private readonly clear: (conversationId: string) => Promise<void>;
 
-  constructor(command: string, reply: string) {
-    this.command = command;
-    this.reply = reply;
+  constructor(clear: (conversationId: string) => Promise<void>) {
+    this.clear = clear;
   }
 
   match(text: string): boolean {
-    return text.trim() === this.command;
+    return text.trim() === "/new";
   }
 
-  async execute(): Promise<CommandResult | null> {
-    return { card: markdownCard(this.reply) };
+  async execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
+    const conversationId = message.context.conversationId;
+    // 话题会话为所有人共享，不允许单人清空
+    if (conversationId.startsWith("topic:")) {
+      logger.info(`[Command] 话题内禁止 /new: ${conversationId}`);
+      return { card: markdownCard("❌ 话题内禁止使用 /new（话题会话为所有人共享），请在群聊或私聊中使用。") };
+    }
+    await this.clear(conversationId);
+    logger.info(`[Command] 已清空会话: ${conversationId}`);
+    return { card: markdownCard("✅ 已清空对话历史，开始新的对话。") };
+  }
+}
+
+/**
+ * /stop - 中断当前会话正在生成的响应。
+ * 中断操作经构造注入（ConversationManager.abort）。
+ */
+export class StopCommand implements CommandHandler {
+  private readonly abort: (conversationId: string) => Promise<void>;
+
+  constructor(abort: (conversationId: string) => Promise<void>) {
+    this.abort = abort;
+  }
+
+  match(text: string): boolean {
+    return text.trim() === "/stop";
+  }
+
+  async execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
+    await this.abort(message.context.conversationId);
+    logger.info(`[Command] 已中断会话: ${message.context.conversationId}`);
+    return { card: markdownCard("⏸️ 已停止当前响应。") };
   }
 }
 
@@ -337,12 +384,14 @@ export class CommandRegistry {
   }
 }
 
-/** 创建默认指令注册表（/new /stop 的实际逻辑在 FeishuAgentBridge.handleCommand 中） */
-export function createDefaultRegistry(): CommandRegistry {
+/**
+ * 创建默认指令注册表：/model /help。
+ * /new /stop 需要会话操作依赖，由 bridge 在注册时以 NewCommand/StopCommand 注入；
+ * /detail /perm /login /logout 等同样由 bridge/main 按需追加注册。
+ */
+export function createDefaultRegistry(modelInfo?: () => ModelInfo): CommandRegistry {
   const registry = new CommandRegistry();
-  registry.register(new ModelCommand());
+  if (modelInfo) registry.register(new ModelCommand(modelInfo));
   registry.register(new HelpCommand());
-  registry.register(new SimpleCommand("/new", "✅ 已清空对话历史，开始新的对话。"));
-  registry.register(new SimpleCommand("/stop", "⏸️ 已停止当前响应。"));
   return registry;
 }

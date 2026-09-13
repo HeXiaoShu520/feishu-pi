@@ -2,7 +2,6 @@
  * Runtime 层的类型定义：Pi 会话事件、提示词、配置与会话接口。
  */
 import type { AgentTool } from "@earendil-works/pi-agent-core";
-import type { FeishuContext } from "../context/types.ts";
 import type { SkillUsageStore } from "../stats/skill-usage-store.ts";
 import type { GroupPolicy, PermissionPolicy } from "../permission/policy.ts";
 import type { ScheduleService } from "../schedule/service.ts";
@@ -14,11 +13,10 @@ export type FeishuPiEvent =
   | { type: "tool_updated"; toolName: string }
   | { type: "tool_finished"; toolName: string; isError: boolean };
 
-/** 发给 Pi 会话的一条提示词 */
+/** 发给 Pi 会话的一条提示词（调用者身份经 ConversationMessage.context 单独传递） */
 export interface FeishuPiPrompt {
   text: string;
   images?: Array<{ data: Uint8Array; mimeType: string }>;
-  context?: FeishuContext;
 }
 
 /** Pi 会话统计的最小结构：卡片统计小字（token/费用/会话别名）只消费这些字段 */

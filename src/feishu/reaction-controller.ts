@@ -53,7 +53,11 @@ function randomEmoji(): string {
   return EMOJI_POOL[Math.floor(Math.random() * EMOJI_POOL.length)];
 }
 
-/** 管理单条消息的处理中 reaction 生命周期 */
+/**
+ * 管理单条消息的"处理中"reaction 生命周期（开始时加随机表情，结束后移除）。
+ * start/stop 可能乱序并发（消息极快处理完时 stop 先于加表情到达），
+ * 用 starting promise 与 stopRequested 标记协调：加上了就补删，还没加上就登记待删。
+ */
 export class ReactionController {
   private readonly reactions = new Map<string, ReactionState>();
   private readonly client: Client;
@@ -64,7 +68,7 @@ export class ReactionController {
     this.enabled = enabled;
   }
 
-  /** 尝试添加处理中 reaction */
+  /** 开始处理：为消息加一个随机表情（已有表情或正在加则直接等待完成）。 */
   async start(messageId: string): Promise<void> {
     if (!this.enabled) return;
     const current = this.reactions.get(messageId);
@@ -79,7 +83,7 @@ export class ReactionController {
     await state.starting;
   }
 
-  /** 清理处理中 reaction */
+  /** 处理结束：移除表情并清理状态（表情尚未加上时由 add 完成后补偿删除）。 */
   async stop(messageId: string): Promise<void> {
     const state = this.reactions.get(messageId);
     if (!state) return;

@@ -3,23 +3,15 @@
  * 提供多种 spinner 样式，每次随机选择一种并循环显示
  */
 
-/** Spinner 样式定义 */
-interface SpinnerStyle {
-  key: string;
-  frames: string[];
-  enabled: boolean;
-}
-
-/** 所有可用的 spinner 样式 */
-const SPINNER_STYLES: SpinnerStyle[] = [
-  { key: "braille", frames: ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], enabled: true },
-  { key: "halfcircle", frames: ["◐", "◓", "◑", "◒"], enabled: true },
-  { key: "quarter", frames: ["◴", "◷", "◶", "◵"], enabled: true },
-  { key: "cross", frames: ["⊢", "⊤", "⊣", "⊥"], enabled: true },
-  { key: "triangle", frames: ["▲", "▶", "▼", "◀"], enabled: true },
-  { key: "square", frames: ["▖", "▘", "▝", "▗"], enabled: true },
-  { key: "braille2", frames: ["⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"], enabled: true },
-  { key: "dots", frames: ["·", "··", "···"], enabled: false },
+/** 所有可用的 spinner 帧序列（等待动画时随机选一种循环播放） */
+const SPINNER_FRAMES: string[][] = [
+  ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"], // braille
+  ["◐", "◓", "◑", "◒"], // halfcircle
+  ["◴", "◷", "◶", "◵"], // quarter
+  ["⊢", "⊤", "⊣", "⊥"], // cross
+  ["▲", "▶", "▼", "◀"], // triangle
+  ["▖", "▘", "▝", "▗"], // square
+  ["⠁", "⠂", "⠄", "⡀", "⢀", "⠠", "⠐", "⠈"], // braille2
 ];
 
 /** 思考前缀池（随机选择） */
@@ -35,10 +27,9 @@ const THINKING_PREFIXES = [
   "等一下",
 ];
 
-/** 随机选择一个启用的 spinner 样式 */
-function randomSpinner(): SpinnerStyle {
-  const enabled = SPINNER_STYLES.filter((s) => s.enabled);
-  return enabled[Math.floor(Math.random() * enabled.length)];
+/** 随机选择一种帧序列 */
+function randomFrames(): string[] {
+  return SPINNER_FRAMES[Math.floor(Math.random() * SPINNER_FRAMES.length)];
 }
 
 /** 随机选择一个思考前缀 */
@@ -46,22 +37,21 @@ function randomPrefix(): string {
   return THINKING_PREFIXES[Math.floor(Math.random() * THINKING_PREFIXES.length)];
 }
 
-/** Spinner 实例 */
+/** Spinner 实例：构造时随机锁定一种帧序列与一个前缀，next() 依次吐帧。 */
 export class Spinner {
-  private readonly style: SpinnerStyle;
+  private readonly frames: string[];
   private readonly prefix: string;
   private frameIndex = 0;
 
   constructor() {
-    this.style = randomSpinner();
+    this.frames = randomFrames();
     this.prefix = randomPrefix();
   }
 
   /** 获取当前帧文本（前缀 + 符号） */
   next(): string {
-    const frame = this.style.frames[this.frameIndex % this.style.frames.length];
+    const frame = this.frames[this.frameIndex % this.frames.length];
     this.frameIndex++;
     return `${this.prefix} ${frame}`;
   }
-
 }

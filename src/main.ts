@@ -23,12 +23,27 @@ import { ToolGuard } from "./guard/tool-guard.ts";
 import { PolicyJudge } from "./guard/judge.ts";
 import { buildNoticeCard } from "./guard/card.ts";
 import { AskBroker, createAskUserTool } from "./feishu/ask-broker.ts";
+import type { CleanupStats } from "./runtime/data-cleaner.ts";
 
 /** 授权请求失效（服务重启/已处理）时就地更新的提示卡文案。 */
 const APPROVAL_STALE_NOTICE = "⚠️ 该授权请求已失效（服务已重启或已处理），请重新发起任务。";
 
+/** 打印一轮清理的统计（有删除动作才逐项输出，避免每日空转刷屏）。 */
+async function logCleanupStats(cleanup: Promise<CleanupStats>): Promise<void> {
+  const stats = await cleanup;
+  if (stats.sessionsDeleted === 0 && stats.attachmentsDeleted === 0 && stats.imagesDeleted === 0 && stats.messagesCleaned === 0) return;
+  logger.info(`[DataCleaner] 会话: ${stats.sessionsDeleted}/${stats.sessionsChecked} 已删除`);
+  logger.info(`[DataCleaner] 附件: ${stats.attachmentsDeleted}/${stats.attachmentsChecked} 已删除`);
+  logger.info(`[DataCleaner] 图片: ${stats.imagesDeleted}/${stats.imagesChecked} 已删除`);
+  logger.info(`[DataCleaner] 消息: ${stats.messagesCleaned}/${stats.messagesChecked} 已清理`);
+}
+
 /** 启动轻量飞书 Agent 服务。 */
 
+/**
+ * 服务组装根：按依赖顺序装配各模块（清理 → 飞书传输 → 授权 → 权限闸门 →
+ * 运行时 → 会话管理 → 桥接），并挂接卡片回调与定时任务。这里只做接线，不承载业务逻辑。
+ */
 export async function main(): Promise<void> {
   const config = loadConfig();
   const messages = new MessageStore(join(config.sessionDir, "messages.json"));
@@ -47,25 +62,16 @@ export async function main(): Promise<void> {
   }
 
   logger.info("[DataCleaner] 清理过期数据（保留 7 天）...");
-  const stats = await cleaner.cleanup();
-  logger.info(`[DataCleaner] 会话: ${stats.sessionsDeleted}/${stats.sessionsChecked} 已删除`);
-  logger.info(`[DataCleaner] 附件: ${stats.attachmentsDeleted}/${stats.attachmentsChecked} 已删除`);
-  logger.info(`[DataCleaner] 图片: ${stats.imagesDeleted}/${stats.imagesChecked} 已删除`);
-  logger.info(`[DataCleaner] 消息: ${stats.messagesCleaned}/${stats.messagesChecked} 已清理`);
+  await logCleanupStats(cleaner.cleanup());
 
   // 定期清理（每天一次）
   const cleanupTimer = setInterval(async () => {
     logger.info("[DataCleaner] 执行定期清理...");
-    const dailyStats = await cleaner.cleanup();
-    if (dailyStats.sessionsDeleted > 0 || dailyStats.attachmentsDeleted > 0 || dailyStats.imagesDeleted > 0 || dailyStats.messagesCleaned > 0) {
-      logger.info(`[DataCleaner] 会话: ${dailyStats.sessionsDeleted}/${dailyStats.sessionsChecked} 已删除`);
-      logger.info(`[DataCleaner] 附件: ${dailyStats.attachmentsDeleted}/${dailyStats.attachmentsChecked} 已删除`);
-      logger.info(`[DataCleaner] 图片: ${dailyStats.imagesDeleted}/${dailyStats.imagesChecked} 已删除`);
-      logger.info(`[DataCleaner] 消息: ${dailyStats.messagesCleaned}/${dailyStats.messagesChecked} 已清理`);
-    }
+    await logCleanupStats(cleaner.cleanup());
   }, 24 * 60 * 60 * 1000); // 24 小时
 
-  // 创建飞书 Client（用于图片下载和 CardKit）
+  // ---------- 飞书基础通道：Client（所有 API 调用）与 Bot 身份 ----------
+
   const client = new Client({
     appId: config.feishuAppId,
     appSecret: config.feishuAppSecret,
@@ -93,6 +99,8 @@ export async function main(): Promise<void> {
   } else {
     logger.info("[Main] 管理员未解析：用户资料查询将仅用群名单兜底");
   }
+
+  // ---------- 消息传输与用户授权 ----------
 
   // runtime 先声明（transport 的 onModelSwitch 回调引用它）
   let runtime: FeishuPiRuntime;
@@ -126,7 +134,8 @@ export async function main(): Promise<void> {
     sendCard: (chatId, card) => transport.sendCardToChat(chatId, card),
   });
 
-  // 工具调用 Guard：统一权限策略（.agent/permissions.json）判定 + 管理员授权卡，非允许即 ask
+  // ---------- 权限闸门：策略 → 智能体审核 → 管理员授权卡 ----------
+
   const policyFile = join(config.cwd, ".agent", "permissions.json");
   const policy = new PermissionPolicy(policyFile, {
     adminId: adminOpenId ?? "",
@@ -213,6 +222,8 @@ export async function main(): Promise<void> {
     }
   });
 
+  // ---------- 统计与定时任务 ----------
+
   // 技能使用统计：独立事件流（data/stats/，不参与 7 天清理），展示名解析复用用户缓存
   const dataDir = dirname(config.sessionDir);
   const usageStore = new SkillUsageStore(
@@ -236,7 +247,7 @@ export async function main(): Promise<void> {
       await conversations.prompt(
         {
           conversationId,
-          prompt: { text: task.prompt, context },
+          prompt: { text: task.prompt },
           context,
         },
         (event) => {
@@ -254,7 +265,9 @@ ${trimmed}` }] },
     },
   });
 
-  // 创建 runtime 配置（两档身份：负责人 = FEISHU_ADMIN，用户 = 其他人；能力全部由策略文件驱动）
+  // ---------- 运行时与会话桥接 ----------
+
+  // 两档身份：负责人 = FEISHU_ADMIN，用户 = 其他人；能力全部由策略文件驱动。
   // 第二个参数：项目内置交互工具（随会话注册，调用者身份由 runtime 派发时注入）
   runtime = new FeishuPiRuntime({
     cwd: config.cwd,
@@ -284,7 +297,6 @@ ${trimmed}` }] },
     {
       messages,
       client,
-      enableCardKit: true,
       // /perm 查看身份、双组策略与工具档位（仅管理员）；/login /logout 用户飞书身份授权（Device Flow）
       extraCommands: [
         new PermCommand(() => policy.describe()),
@@ -293,9 +305,17 @@ ${trimmed}` }] },
       ],
       // 回复末尾的模型统计小字开关（工具过程状态不受影响）
       showModelStats: config.showModelStats,
+      // /model 指令的运行时模型信息（config 对象即 runtime 热切换的同一引用，取到的是实时值）
+      modelInfo: () => ({
+        baseUrl: config.modelBaseUrl,
+        modelName: config.modelName,
+        apiKey: process.env.FEISHU_PI_MODEL_API_KEY ?? "",
+      }),
     },
   );
   bridgeRef = bridge;
+
+  // ---------- 启动 ----------
 
   bridge.start();
   await transport.connect();

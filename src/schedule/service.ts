@@ -1,8 +1,15 @@
+/**
+ * 定时任务服务：cron 调度（croner）+ 文件持久化 + 触发执行。
+ *
+ * 职责分界：本模块只管"何时触发、任务存档、状态记录"；触发后跑什么由 main 注入的
+ * runTask 决定（跑智能体并把结果卡片推回目标会话，复用既有会话链路与权限闸门）。
+ * 任务以创建者身份执行——权限判定发生在执行中的每一次工具调用（ToolGuard），
+ * 调度本身不做权限判断。
+ */
 import { Cron } from "croner";
 import { randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
 import { logger } from "../utils/logger.ts";
+import { JsonMapStore } from "../utils/json-store.ts";
 
 /** 一个定时任务 */
 export interface ScheduleTask {
@@ -25,67 +32,41 @@ export interface ScheduleTask {
 }
 
 /**
- * 定时任务持久化：JSON 文件（id → 任务），读写带串行队列与原子替换。
+ * 定时任务持久化：复用 JsonMapStore 的懒加载 + 串行原子写框架（id → 任务）。
+ * 历史版本曾以数组格式落盘，deserializeRecords 钩子负责自动迁移为键值结构。
  */
-export class ScheduleStore {
-  private readonly filePath: string;
-  private tasks = new Map<string, ScheduleTask>();
-  private loaded = false;
-  private queue: Promise<void> = Promise.resolve();
-
-  constructor(filePath: string) {
-    this.filePath = filePath;
-  }
-
+export class ScheduleStore extends JsonMapStore<ScheduleTask> {
+  /** 全部任务，按创建时间升序（展示顺序稳定）。 */
   async list(): Promise<ScheduleTask[]> {
     await this.ensureLoaded();
-    return [...this.tasks.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
+    return [...this.records.values()].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
   }
 
   async get(id: string): Promise<ScheduleTask | undefined> {
     await this.ensureLoaded();
-    return this.tasks.get(id);
+    return this.records.get(id);
   }
 
   async put(task: ScheduleTask): Promise<void> {
     await this.ensureLoaded();
-    this.tasks.set(task.id, task);
-    await this.flush();
+    this.records.set(task.id, task);
+    await this.persist();
   }
 
+  /** 删除任务；返回是否存在（供回执文案）。 */
   async remove(id: string): Promise<boolean> {
     await this.ensureLoaded();
-    const existed = this.tasks.delete(id);
-    if (existed) await this.flush();
+    const existed = this.records.delete(id);
+    if (existed) await this.persist();
     return existed;
   }
 
-  private async ensureLoaded(): Promise<void> {
-    if (this.loaded) return;
-    try {
-      const raw = JSON.parse(await readFile(this.filePath, "utf8")) as ScheduleTask[];
-      this.tasks = new Map(raw.map((t) => [t.id, t]));
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "ENOENT") {
-        logger.warn(`[Schedule] 任务文件读取失败，按空处理: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      this.tasks = new Map();
+  /** 兼容历史数组格式：[{id,...}] → Map；对象格式走默认解析。 */
+  protected override deserializeRecords(parsed: unknown): Map<string, ScheduleTask> {
+    if (Array.isArray(parsed)) {
+      return new Map(parsed.map((task) => [task.id, task]));
     }
-    this.loaded = true;
-  }
-
-  private async flush(): Promise<void> {
-    const write = this.queue.then(async () => {
-      await mkdir(dirname(this.filePath), { recursive: true });
-      const tmp = `${this.filePath}.tmp`;
-      await writeFile(tmp, `${JSON.stringify([...this.tasks.values()], null, 2)}\n`, "utf8");
-      const { rename } = await import("node:fs/promises");
-      await rename(tmp, this.filePath);
-    });
-    this.queue = write.catch((error) => {
-      logger.warn(`[Schedule] 任务文件写入失败: ${error instanceof Error ? error.message : String(error)}`);
-    });
-    await this.queue;
+    return super.deserializeRecords(parsed);
   }
 }
 
@@ -97,13 +78,13 @@ export interface ScheduleServiceOptions {
 }
 
 /**
- * 定时任务服务：cron 调度（croner）+ 持久化 + 触发执行。
- * - 任务持久化在文件中，服务重启后自动恢复调度；
- * - 触发时执行注入的 runTask（跑智能体 → 推卡片），失败记录 lastStatus 并在下次 /cron list 可见；
- * - 同一任务触发时若上一轮未结束，由会话队列串行，不并发。
+ * 定时任务调度器：启动时恢复全部在期任务的 cron，触发时执行注入的 runTask。
+ * - 同一任务触发时若上一轮未结束，由会话队列串行，不并发；
+ * - 执行结果（成功/失败）记入任务档案，供查询指令展示。
  */
 export class ScheduleService {
   private readonly store: ScheduleStore;
+  /** 运行中的 cron 任务（任务 id → croner 实例） */
   private readonly jobs = new Map<string, Cron>();
   private runTask?: (task: ScheduleTask) => Promise<void>;
   private started = false;
@@ -150,12 +131,14 @@ export class ScheduleService {
     return { task };
   }
 
+  /** 删除任务并撤下调度，返回回执文案。 */
   async removeTask(id: string): Promise<string> {
     this.unscheduleJob(id);
     const existed = await this.store.remove(id);
     return existed ? `已删除任务 ${id}` : `任务 ${id} 不存在`;
   }
 
+  /** 启用/停用任务：停用只撤调度不删档案，可随时再启用。 */
   async setEnabled(id: string, enabled: boolean): Promise<string> {
     const task = await this.store.get(id);
     if (!task) return `任务 ${id} 不存在`;
@@ -178,7 +161,7 @@ export class ScheduleService {
     return `已触发任务 ${id}（${task.name}），结果已推送到会话`;
   }
 
-  /** 校验 cron 表达式。 */
+  /** 借 croner 校验表达式合法性（构造成功即合法，立即释放）。 */
   private isValidCron(expr: string): boolean {
     try {
       new Cron(expr, () => {}).stop();
@@ -188,6 +171,7 @@ export class ScheduleService {
     }
   }
 
+  /** 上调度（已在跑的任务跳过；表达式失效只告警不影响其他任务）。 */
   private scheduleJob(task: ScheduleTask): void {
     if (this.jobs.has(task.id)) return;
     try {
@@ -203,13 +187,14 @@ export class ScheduleService {
     this.jobs.delete(id);
   }
 
+  /** cron 触发入口：重新读档案（任务可能已被删除/停用）。 */
   private async fire(id: string): Promise<void> {
     const task = await this.store.get(id);
     if (!task || !task.enabled) return;
     await this.execute(task);
   }
 
-  /** 执行一次任务：跑智能体、推结果卡片、记录状态。 */
+  /** 执行一次任务：跑智能体、推结果卡片、记录执行状态（成败都不抛出，不影响调度器）。 */
   private async execute(task: ScheduleTask): Promise<void> {
     const startedAt = Date.now();
     logger.info(`[Schedule] 触发任务 ${task.id}（${task.name}）`);
@@ -225,6 +210,7 @@ export class ScheduleService {
     }
   }
 
+  /** 回写最近一次执行结果（任务已被删除时静默跳过）。 */
   private async markResult(task: ScheduleTask, status: "ok" | "error", detail?: string): Promise<void> {
     const current = await this.store.get(task.id);
     if (!current) return;
@@ -234,4 +220,3 @@ export class ScheduleService {
     await this.store.put(current);
   }
 }
-

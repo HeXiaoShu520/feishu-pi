@@ -22,11 +22,12 @@ export abstract class JsonMapStore<V> {
     this.filePath = filePath;
   }
 
-  /** 删除一条记录并落盘。 */
-  protected async remove(key: string): Promise<void> {
+  /** 删除一条记录并落盘；返回删除前是否存在。 */
+  protected async remove(key: string): Promise<boolean> {
     await this.ensureLoaded();
-    if (!this.records.delete(key)) return;
-    await this.persist();
+    const existed = this.records.delete(key);
+    if (existed) await this.persist();
+    return existed;
   }
 
   /** 懒加载文件内容；ENOENT（首次运行无文件）按空映射处理。加载 promise 会缓存，避免并发重复读。 */
@@ -34,14 +35,19 @@ export abstract class JsonMapStore<V> {
     if (this.loaded) return;
     this.loadPromise ??= (async () => {
       try {
-        const parsed = JSON.parse(await readFile(this.filePath, "utf8")) as Record<string, V>;
-        this.records = new Map(Object.entries(parsed));
+        const parsed = JSON.parse(await readFile(this.filePath, "utf8")) as unknown;
+        this.records = this.deserializeRecords(parsed);
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
       this.loaded = true;
     })();
     await this.loadPromise;
+  }
+
+  /** 反序列化钩子：默认按"键 → 值"对象解析；子类可覆盖以兼容历史文件格式（如数组存储）。 */
+  protected deserializeRecords(parsed: unknown): Map<string, V> {
+    return new Map(Object.entries((parsed ?? {}) as Record<string, V>));
   }
 
   /** 串行原子写：先写临时文件再 rename 替换，避免写一半被读到。 */
