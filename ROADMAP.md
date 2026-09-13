@@ -65,7 +65,7 @@ feishu-pi 最终要成为一个飞书原生的轻量 Agent 后端：
 - [X] 获取并标准化用户 Open ID、英文名和部门；首次聊天保存到 `data/users/`。（唯一通道：管理员 `/login` 授权的 user token 调 contact API，数据范围 = 管理员组织架构可见范围；lark-cli 子进程依赖已移除）
 - [X] 定义所有技能共享的 `FeishuContext`。
 - [X] 按用户或群生成稳定的会话 ID。（私聊/普通群按用户隔离，话题群按话题共享，含话题根收敛）
-- [X] 定义人员、技能和工具的权限配置。（owner/user 两组 + common 通用层，规则在 `.agent/permissions.json`）
+- [X] 定义人员、技能和工具的权限配置。（admin 保留组 + 任意命名用户组，规则数组在 `.agent/permissions.json`，组成员在 `.env` 配置）
 - [X] 在技能和 Agent 工具调用前执行权限检查。（角色过滤在会话创建时执行，工具执行经 ToolGuard 审核）
 - [ ] 支持技能根据部门或身份选择不同子分支。（按身份过滤加载哪些技能已实现；`FeishuContext` 尚未注入模型提示词，技能内部分支待做）
 

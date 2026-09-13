@@ -47,7 +47,7 @@ interface FeishuContext {
 }
 ```
 
-`FeishuContext` 用于身份组判定（owner 成员按 openId/姓名匹配）、权限过滤、会话命名与日志，**尚未注入到模型提示词**（AI 在对话中感知不到调用者身份，「同一技能/工具内部按身份分支」待实现）。
+`FeishuContext` 用于身份组判定（组成员按 openId/姓名匹配）、权限过滤、会话命名与日志，**尚未注入到模型提示词**（AI 在对话中感知不到调用者身份，「同一技能/工具内部按身份分支」待实现）。
 
 ## 飞书传输层
 
@@ -64,7 +64,7 @@ interface FeishuContext {
 
 `card.action.trigger` 卡片回调路由：授权卡（`tool_approval` / `forward_approval`）转交 PermissionBroker；模型切换按钮校验管理员后写回 `.env` 并触发热切换。
 
-用户资料查询与缓存（`LarkCli`，`src/feishu/lark-cli.ts`——类名为历史遗留，与外部 lark-cli 工具无关）：**唯一通道为管理员身份**——FEISHU_ADMIN 通过 `/login`（Device Flow）授权的 user token 调用 contact API（获取中文名/英文名/department_ids，再经部门批量接口换部门名）。数据范围 = 管理员的**组织架构可见范围**（管理员默认全组织可见），与应用通讯录权限范围无关，应用可用范围外的外部成员同样可查。查询失败返回**不落盘**的最小档案（下一条消息自动重试）；成功档案缓存 3 天到 `data/users/{appId}_users.json`。前置：`.env` 配置 `FEISHU_USER_AUTH_SCOPES`（含 contact 查询 scope）并由管理员完成 `/login`。历史版本曾 spawn 外部 lark-cli、曾依赖机器人通讯录权限，均已移除。
+用户资料查询与缓存（`LarkCli`，`src/feishu/lark-cli.ts`——类名为历史遗留，与外部 lark-cli 工具无关）：**唯一通道为管理员身份**——FEISHU_ADMIN 通过 `/login`（Device Flow）授权的 user token 调用 contact API（获取中文名/英文名/department_ids，再经部门批量接口换部门名）。数据范围 = 管理员的**组织架构可见范围**（管理员默认全组织可见），与应用通讯录权限范围无关，应用可用范围外的外部成员同样可查。管理员通道未命中（**跨租户外部用户**不在本组织通讯录）→ 降级群成员名单（机器人身份，实时分页查找）取中文名。全部通道失败也落盘**冷却档案**（openId + 旧资料，冷却 1 天后自动重试，应对"刚入群名单未同步"等临时失败）；成功档案缓存 3 天到 `data/users/{appId}_users.json`。scope 已内置默认（contact 查询两项，无需配置环境变量）；前置：管理员完成 `/login`。历史版本曾 spawn 外部 lark-cli、曾依赖机器人通讯录权限，均已移除。
 
 > **数据权限的三层模型**：① API 权限（scope，开发者后台开通）决定"接口能不能调"，两种 token 都需要；② 应用身份（tenant token）的数据范围 = 应用的**通讯录权限范围**（开发者后台数据权限配置）；③ 用户身份（user_access_token）的数据范围 = 该用户的**组织架构可见范围**（管理后台配置），与应用通讯录范围无关——管理员默认全组织可见。
 
@@ -88,9 +88,9 @@ interface FeishuContext {
 
 ### 统一权限策略（一个文件，两个身份组）
 
-全部权限集中在 `.agent/permissions.json`（`src/permission/policy.ts` 解析）。两个身份组：owner（负责人，FEISHU_ADMIN 亦自动属于）与 user（其他所有人），每组字段：`members`（成员）、`tools`（可调用工具）、`bash`（可执行命令，`cmd:*` 前缀）、`read` / `write`（路径 glob）、`skills`（可见技能）。另有 `common` 通用层：所有人自动获得的能力（如读技能目录）。
+全部权限集中在 `.agent/permissions.json`（`src/permission/policy.ts` 解析）：保留组名 **common**（所有人默认拥有的基础权限，每个用户自动叠加）与 **admin**（FEISHU_ADMIN 或 FEISHU_GROUP_ADMIN 自动属于），加任意命名的用户组（group1、vip……）。每组为规则数组：`Read(路径glob)`、`Write(路径glob)`、`Tools(工具名)`、`Bash(命令前缀)`。组成员在 `.env` 中通过 `FEISHU_GROUP_<组名>` 配置。生效范围 = common ∪ 所属各组。
 
-生效范围 = common ∪ 所属组；组文件 mtime 热重载，新会话生效；策略文件缺失/写坏按保守默认处理（user 仅技能目录可读、无工具）。
+生效范围 = 命中组的规则并集；策略文件 mtime 热重载，新会话生效；策略文件缺失/写坏按保守默认处理（仅技能目录可读、无工具）。
 
 **工具与技能零改造**：说明书放在 `.agent/skills/*.md`，不含任何权限信息，约束全部由策略文件表达、由过滤层执行。
 
@@ -126,7 +126,7 @@ interface FeishuContext {
 
 ### 定时任务
 
-`ScheduleService`（`src/schedule/service.ts`，croner 调度）管理持久化的定时任务。负责人对 AI 说"每天早上 9 点给我播报 xxx"，AI 调用 `schedule_manager` 工具（仅 owner 组注册）解析为 cron + 指令并创建；到点后以**创建者身份**在独立会话（`{创建人}-schedule:{任务ID}`）中执行，输出以卡片推回创建时的会话；执行失败记录 lastStatus 并在列表可见。任务持久化在 `data/schedules.json`，重启自动恢复调度。
+`ScheduleService`（`src/schedule/service.ts`，croner 调度）管理持久化的定时任务：到点后以**创建者身份**在独立会话（`{创建人}-schedule:{任务ID}`）中执行，输出以卡片推回创建时的会话；执行失败记录 lastStatus 并在列表可见。任务持久化在 `data/schedules.json`，重启自动恢复调度；创建/修改当前通过编辑该文件完成（`addTask`/`removeTask` 接口已就绪，对话创建入口尚未接通）。
 
 ## Agent 运行时
 
@@ -181,18 +181,20 @@ Agent 处理失败时，Bridge 将卡片更新为失败提示并记录日志；�
 
 ## 用户身份授权
 
+> 完整机制与多用户并行登录方案见 [用户认证](user-auth.md)。
+
 `UserAuthService`（`src/feishu/user-auth.ts`）实现 OAuth 2.0 Device Authorization Grant（RFC 8628），让聊天用户把"飞书用户身份"授权给机器人，用于应用身份做不到的"我的视角"能力（搜人、个人日历/文档等）：
 
 > **身份分界**：用户资料查询使用**管理员**的 user token（管理员 `/login` 一次即可，数据范围 = 其组织架构可见范围）；而某个用户的 user token 仅用于以该用户本人身份执行操作，按 openId 隔离，不替代他人授权。两种 user token 各司其职，应用通讯录权限范围对它们都不生效。
 
 - **`/login`**：向 `accounts.feishu.cn/oauth/v1/device_authorization` 发起授权，回复指引卡（授权链接 + 确认码）；后台按 RFC 8628 轮询 `open-apis/authen/v2/oauth/token`——pending 继续、slow_down 退避（+5s）、denied/expired 终止；结果经 `CommandResult.afterSend` 回传的 message_id 原地更新到指引卡，不阻塞指令回复。
 - **token 生命周期**：按 openId 落盘 `data/user-tokens.json`，device_code 与发起者绑定（不接收"代他人授权"）；对外统一走 `getUserAccessToken(openId)`——access token 临期（<30s）用 refresh token 静默换新，refresh 也失效则清档并引导重新 `/login`。`/logout` 清除本人记录。
-- **scope** 由 `FEISHU_USER_AUTH_SCOPES` 配置（需先在开发者后台为应用开通并发布版本）；实际可访问数据 = 应用 scope ∩ 用户本人可见范围，且不绕过 Guard 的组策略闸门。
+- **scope 默认内置**（`contact:user.base:readonly` + `contact:department.base:readonly`，`FEISHU_USER_AUTH_SCOPES` 可覆盖），仍需在开发者后台为应用开通并发布版本；实际可访问数据 = 应用 scope ∩ 用户本人可见范围，且不绕过 Guard 的组策略闸门。
 - 全程免 redirect_uri 与公网回调；HTTP 用全局 fetch 直连（规避 SDK axios 在 Node ESM 下的 https 兼容问题，与 dsh-lark-link 的实践一致）。发起端点未见于公开文档，与官方 lark-cli 行为核实一致，升级 SDK/CLI 后建议回归一次 `/login`。
 
 ## 配置与持久化
 
-服务从环境变量读取全部配置（`.env`，`loadConfig`），`npm run config` 起本地 Web 配置页（仅绑定 127.0.0.1:3456）。配置分组：飞书凭据（`FEISHU_APP_ID/SECRET`）、负责人（`FEISHU_ADMIN`）、模型（`FEISHU_PI_MODEL_*`）、智能体审核（`FEISHU_GUARD_*`，可选）、授权超时（`FEISHU_APPROVAL_TIMEOUT_MS`）。工具权限规则在 `.agent/permissions.json`，不在 env。
+服务从环境变量读取全部配置（`.env`，`loadConfig`），`npm run config` 起本地 Web 配置页（仅绑定 127.0.0.1:3456）。配置分组：飞书凭据（`FEISHU_APP_ID/SECRET`）、负责人（`FEISHU_ADMIN`）、模型（`FEISHU_PI_MODEL_*`）、智能体审核（`FEISHU_GUARD_*`，可选）。工具权限规则在 `.agent/permissions.json`，不在 env。
 
 `data/` 目录（统一会话文件夹布局：一个会话一个文件夹，历史与附件同住）：
 

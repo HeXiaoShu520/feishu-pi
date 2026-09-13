@@ -2,7 +2,7 @@
 
 feishu-pi 是一个基于 [Pi](https://github.com/earendil-works/pi) 的飞书 Agent 应用平台。它深度集成飞书人员身份、会话和权限，为不同的人或群提供不同的 Agent 能力。
 
-架构与选型见 [架构设计](docs/architecture.md)，阶段计划见 [开发路线](ROADMAP.md)。
+架构与选型见 [架构设计](docs/architecture.md)，用户身份授权见 [用户认证](docs/user-auth.md)，阶段计划见 [开发路线](ROADMAP.md)。
 
 ## 核心特性
 
@@ -166,7 +166,7 @@ npm install
 
 **可选权限（用于用户身份授权）：**
 - 按需开通用户身份 scope（如联系人搜索、"我的"日历/文档等），并创建版本发布
-- 用户通过 `/login` 完成授权（Device Flow，无需配置重定向 URL 白名单）；scope 列表由环境变量 `FEISHU_USER_AUTH_SCOPES` 配置，留空 = 禁用 `/login`
+- 用户通过 `/login` 完成授权（Device Flow，无需配置重定向 URL 白名单）；scope 已内置默认（`contact:user.base:readonly` + `contact:department.base:readonly`），如需自定义用 `FEISHU_USER_AUTH_SCOPES` 覆盖
 
 > **两条身份通道，互不替代：** 查询用户的名字/部门等通讯录信息，**始终使用应用（机器人）自身身份**，与 `/login` 无关、不需要任何用户登录；`/login` 的 user token 只用于"以该用户本人身份"执行操作（他的视角、他的数据），且每个用户的 token 只存在他自己的 openId 名下，不用于替代他人。
 
@@ -181,10 +181,10 @@ npm install
 
 ### 2. 用户资料查询说明（管理员身份）
 
-用户资料（中文名、英文名、部门名）统一使用**管理员的用户身份**查询：管理员发一次 `/login`（Device Flow）完成授权后，机器人持其 user_access_token 调用 contact API。数据范围 = 管理员的**组织架构可见范围**（管理员默认全组织可见），**与应用的通讯录权限范围无关**；应用可用范围外的外部成员同样可查。
+用户资料（中文名、英文名、部门名）统一使用**管理员的用户身份**查询：管理员发一次 `/login`（Device Flow）完成授权后，机器人持其 user_access_token 调用 contact API。数据范围 = 管理员的**组织架构可见范围**（管理员默认全组织可见），**与应用的通讯录权限范围无关**；应用可用范围外的内部成员同样可查。管理员查不到的**跨租户外部用户**（不在本组织通讯录）→ 自动降级用**群成员名单**（机器人身份，分页实时查找）拿中文名。
 
-- 前置：`.env` 配置 `FEISHU_USER_AUTH_SCOPES=contact:user.base:readonly,contact:department.base:readonly`，并在开发者后台为应用开通这两个权限后发布版本；管理员发 `/login` 完成授权
-- 查询失败（管理员未登录/接口异常/查无此人）返回最小档案（仅 openId），**不写缓存**，下一条消息自动重试；成功档案缓存 3 天
+- 前置：开发者后台为应用开通这两个权限并发布版本（scope 已内置，无需配置环境变量）；管理员发 `/login` 完成授权
+- 查询失败（管理员未登录/接口异常/名单也没有）写入**冷却档案**（仅 openId，保留旧资料），1 天内不再重试，冷却期满自动重查；成功档案缓存 3 天
 - 无需为机器人开通任何通讯录权限，也无需任何外部 CLI 工具
 
 > ℹ️ 历史版本曾通过外部 `lark-cli` 命令行补充部门信息，该依赖已移除；部门数据现由 contact API + 部门权限获取。
@@ -458,6 +458,10 @@ call check_health() → ✅ 服务健康
 
 ```json
 {
+  "common": [
+    "Read(.agent/skills/**)",
+    "Tools(query_skill_usage)"
+  ],
   "admin": [
     "Read(**)",
     "Write(.agent/**)",
@@ -469,14 +473,14 @@ call check_health() → ✅ 服务健康
   ],
   "group1": [
     "Read(docs/**)",
-    "Read(.agent/skills/**)",
-    "Tools(query_skill_usage)",
     "Bash(npm run test:*)",
     "Bash(git diff:*)",
     "Bash(git log:*)"
   ]
 }
 ```
+
+`common` 为**默认层**：所有人（含管理员）自动叠加；admin 与各用户组在其上追加自己的规则，生效范围 = `common ∪ 所属组`。
 
 **规则前导词：**
 
@@ -555,12 +559,6 @@ Bash      → 命令命中组 bash 名单（精确/前缀/*）？在→放行
   "admin": ["Read(**)", "Write(.agent/**)", "Tools(*)", "Bash(git push:*)"],
   "group1": ["Read(.agent/skills/**)", "Tools(query_skill_usage)"]
 }
-```
-
-`.env`（授权超时）：
-
-```env
-FEISHU_APPROVAL_TIMEOUT_MS=300000
 ```
 
 > 智能体审核（`FEISHU_GUARD_*`）用于白名单未命中时的综合判断：以调用者所属组的策略为参考，判断调用是否符合授权意图——符合则免审放行，否则弹授权卡。未配置时直接弹卡（fail-safe）。
