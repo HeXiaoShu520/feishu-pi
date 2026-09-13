@@ -88,6 +88,16 @@ const FINAL_REPLY_RULE = [
   "因此每次工具调用结束后，必须输出一段完整、独立、可直接阅读的结论：包含结论与必要细节，不要只输出片段，也不要依赖或延续工具调用之前的文字。",
 ].join(NL);
 
+/**
+ * 密钥安全规则（注入系统提示，模型侧约束）：
+ * 不主动读取/输出密钥凭据；确需返回敏感值时必须加星号遮蔽。
+ * bash 指令另有执行前过滤兜底（src/guard/tool-guard.ts）。
+ */
+const SECRET_RULE = [
+  "【密钥安全规则】不要读取、引用或输出 .env、密钥/证书/私钥/凭据类敏感文件（如 *.key、*.pem、id_rsa、credentials 等）的内容。",
+  "如果某些时候任务确实需要返回密钥、令牌之类的敏感值，返回时一定要用星号遮蔽（只保留前几位，其余用 * 代替），不允许明文输出。",
+].join(NL);
+
 export class FeishuPiRuntime {
   private readonly config: FeishuPiConfig;
   private readonly tools: FeishuPiTool[];
@@ -117,7 +127,7 @@ export class FeishuPiRuntime {
     const loader = new DefaultResourceLoader({
       cwd: this.config.cwd,
       agentDir: `${this.config.cwd}/.agent`,
-      systemPrompt: [this.config.systemPrompt, FINAL_REPLY_RULE.trim()].filter(Boolean).join(NL),
+      systemPrompt: [this.config.systemPrompt, SECRET_RULE.trim(), FINAL_REPLY_RULE.trim()].filter(Boolean).join(NL),
     });
     await loader.reload();
     return loader;
@@ -212,6 +222,12 @@ export class FeishuPiRuntime {
     // 技能/自定义工具均上电加载一次（进程内缓存复用，修改后需重启生效）
     const baseResourceLoader = await this.loadBaseLoaderOnce();
     const customTools = await this.loadCustomToolsOnce();
+    // 项目内置交互工具（ask_user_question 等）：随会话注册，并把调用者身份注入参数，
+    // 工具执行时经 params._caller 拿到提问对象与会话（见 bindCallers）
+    const sessionTools = [
+      ...bindCallers(this.tools, { openId: userId, chatId: context?.chatId ?? "" }),
+      ...customTools,
+    ];
 
     // 自定义工具可标记 risk: "high"：标记后不走策略放行，仍走授权卡
     const riskyTools = new Set(
@@ -229,7 +245,7 @@ export class FeishuPiRuntime {
       sessionManager,
       model: this.config.modelBaseUrl ? { ...model, baseUrl: this.config.modelBaseUrl } : model,
       tools: builtinNames,
-      customTools,
+      customTools: sessionTools,
       resourceLoader: baseResourceLoader,
     });
 
@@ -271,7 +287,13 @@ export class FeishuPiRuntime {
       }
 
       // 自定义工具：先检查 tools 可见范围
-      if (ctx.toolCall.name !== "bash" && ctx.toolCall.name !== "write" && ctx.toolCall.name !== "edit") {
+      // （ask_user_question 是内置交互工具，只向提问对象本人发卡，所有人可用）
+      if (
+        ctx.toolCall.name !== "bash" &&
+        ctx.toolCall.name !== "write" &&
+        ctx.toolCall.name !== "edit" &&
+        ctx.toolCall.name !== "ask_user_question"
+      ) {
         if (!groupPolicy.toolsAllowed(ctx.toolCall.name)) {
           return { block: true, reason: `⛔ 工具 \"${ctx.toolCall.name}\" 不在你的可用范围内` };
         }
@@ -311,4 +333,20 @@ function extractReadPath(args: unknown): string | undefined {
     if (typeof record[key] === "string" && record[key]) return record[key] as string;
   }
   return undefined;
+}
+
+/**
+ * 项目内置工具绑定调用者身份：派发时在参数里注入 _caller（openId/chatId），
+ * 供 ask_user_question 这类交互工具定位"向谁提问、在哪个会话发卡"。
+ * _caller 不在工具 schema 中，模型不可见、不可伪造（由会话创建时的身份决定）。
+ */
+function bindCallers(tools: FeishuPiTool[], caller: { openId: string; chatId: string }): FeishuPiTool[] {
+  return tools.map((tool) => ({
+    ...tool,
+    execute: (...args: Parameters<FeishuPiTool["execute"]>) => {
+      const [toolCallId, params, signal, onUpdate] = args;
+      const record = (typeof params === "object" && params !== null ? params : {}) as Record<string, unknown>;
+      return tool.execute(toolCallId, { ...record, _caller: caller } as never, signal, onUpdate);
+    },
+  }));
 }
