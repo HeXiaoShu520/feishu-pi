@@ -117,8 +117,11 @@ export async function main(): Promise<void> {
     appId: config.feishuAppId,
     appSecret: config.feishuAppSecret,
     scopes: config.userAuthScopes,
+    adminOpenId: adminOpenId || undefined,
     storeFile: join(config.dataDir, "user-tokens.json"),
     updateCard: (messageId, card) => transport.updateCardById(messageId, card),
+    // 增量授权：能力需要新 scope 时自动向该会话发授权卡
+    sendCard: (chatId, card) => transport.sendCardToChat(chatId, card),
   });
 
   // 工具调用 Guard：统一权限策略（.agent/permissions.json）判定 + 管理员授权卡，非允许即 ask

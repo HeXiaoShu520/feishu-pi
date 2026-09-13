@@ -223,9 +223,13 @@ export class FeishuAgentBridge {
       // 详细模式：最终内容需要包含工具调用记录
       await reply.close(this.detailMode.get(message.chatId) ? latestText + toolLog : latestText, statsLine);
 
-      // 记录最终响应
+      // 记录最终响应（含耗时；空文本单独特警，便于发现模型无输出/被拦截的情况）
       const replyPreview: string = formatLogText(latestText) || "";
-      logger.aiResponse(userName || "未知用户", `响应完成: ${replyPreview}`);
+      const elapsedSec = ((Date.now() - requestStartedAt) / 1000).toFixed(1);
+      if (!replyPreview) {
+        logger.warn(`[Bridge] 模型未返回文本内容（耗时 ${elapsedSec}s），请检查模型响应或工具拦截情况`);
+      }
+      logger.aiResponse(userName || "未知用户", `响应完成(${elapsedSec}s): ${replyPreview}`);
 
       await this.messages?.complete(message.messageId);
     } catch (error) {

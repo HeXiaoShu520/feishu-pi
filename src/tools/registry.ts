@@ -61,16 +61,23 @@ function readPythonMeta(filePath: string): PythonToolMeta | null {
 
 // ---------- 加载器 ----------
 
+/** 上一次加载的自定义工具签名：用于"仅在首次/工具集变化时打日志" */
+let _lastToolSignature: string | null = null;
+
 /**
  * 加载 .agent/tools/ 下的自定义工具。
  * - .ts / .js 文件：通过 import() 动态加载，导出 name/execute 对
  * - .py 文件：通过第一行 #! {...} 元数据注册，执行时 spawn python 子进程
+ *
+ * 每个新会话都会重建工具集（支持热更新）；日志只在首次加载或工具集变化时打印，
+ * 避免每条消息都重复输出同样的加载明细。
  */
 async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
   const toolsDir = join(cwd, ".agent/tools");
   if (!existsSync(toolsDir)) return [];
 
   const tools: ToolDefinition[] = [];
+  const entries: Array<{ name: string; file: string }> = [];
   const files = readdirSync(toolsDir).filter((f) => {
     const ext = extname(f).toLowerCase();
     return ext === ".ts" || ext === ".js" || ext === ".py";
@@ -128,7 +135,7 @@ async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
             });
           },
         });
-        logger.info(`[Registry] 加载 Python 工具: ${meta.name} (${file})`);
+        entries.push({ name: meta.name, file });
       } else {
         // ---- TS / JS 脚本工具 ----
         const module = await import(pathToFileURL(filePath).href);
@@ -137,12 +144,19 @@ async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
 
         if (tool && typeof tool === "object" && "name" in tool && "execute" in tool) {
           tools.push(tool as ToolDefinition);
-          logger.info(`[Registry] 加载工具: ${(tool as ToolDefinition).name} (${file})`);
+          entries.push({ name: (tool as ToolDefinition).name, file });
         }
       }
     } catch (error) {
       logger.warn(`[Registry] 加载工具失败: ${file} ${error instanceof Error ? error.message : error}`);
     }
+  }
+
+  const signature = entries.map((e) => `${e.name}(${e.file})`).join(", ");
+  if (signature !== _lastToolSignature) {
+    const isFirst = _lastToolSignature === null;
+    _lastToolSignature = signature;
+    logger.info(`[Registry] ${isFirst ? "已加载" : "工具集变化，重新加载"}自定义工具: ${signature || "无"}`);
   }
 
   return tools;

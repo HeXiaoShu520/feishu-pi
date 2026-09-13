@@ -26,24 +26,21 @@ const TOKEN_URL = "https://open.feishu.cn/open-apis/authen/v2/oauth/token";
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
 
 /** HTTP POST（表单编码）的可注入实现。RFC 8628 的中间态错误随 HTTP 400 返回 body，原样交状态机判断。 */
-export type PostForm = (url: string, form: Record<string, string>) => Promise<Record<string, unknown>>;
-/** HTTP POST（JSON）的可注入实现，错误处理同上。 */
-export type PostJson = (url: string, body: Record<string, unknown>) => Promise<Record<string, unknown>>;
+export type PostForm = (
+  url: string,
+  form: Record<string, string>,
+  headers?: Record<string, string>,
+) => Promise<Record<string, unknown>>;
 
-async function defaultPostForm(url: string, form: Record<string, string>): Promise<Record<string, unknown>> {
+async function defaultPostForm(
+  url: string,
+  form: Record<string, string>,
+  headers: Record<string, string> = {},
+): Promise<Record<string, unknown>> {
   const res = await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    headers: { "Content-Type": "application/x-www-form-urlencoded", ...headers },
     body: new URLSearchParams(form).toString(),
-  });
-  return (await res.json().catch(() => ({}))) as Record<string, unknown>;
-}
-
-async function defaultPostJson(url: string, body: Record<string, unknown>): Promise<Record<string, unknown>> {
-  const res = await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
   });
   return (await res.json().catch(() => ({}))) as Record<string, unknown>;
 }
@@ -88,11 +85,14 @@ export interface UserAuthOptions {
   storeFile: string;
   /** 指引卡的原地更新（轮询结束后把"待授权"卡更新为结果卡） */
   updateCard: (messageId: string, card: object) => Promise<void>;
+  /** FEISHU_ADMIN 的 openId：其登录 token 用于用户资料查询通道 */
+  adminOpenId?: string;
+  /** 向会话发送授权卡（增量按需授权时使用）；提供后 ensureScopes 增量授权可用 */
+  sendCard?: (chatId: string, card: object) => Promise<string | undefined>;
   /** 轮询基准间隔（秒）；发起响应自带 interval 时优先用响应值 */
   pollIntervalSec?: number;
   /** 以下均为测试注入：HTTP 实现、时钟与睡眠 */
   postForm?: PostForm;
-  postJson?: PostJson;
   now?: () => number;
   sleep?: (ms: number) => Promise<void>;
 }
@@ -102,12 +102,16 @@ interface PendingLogin {
 }
 
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
+
+/** 官方要求：申请 scope 必须含 offline_access 才会签发 refresh_token（自动去重追加） */
+function withOfflineAccess(scopes: string[]): string {
+  return Array.from(new Set([...scopes, "offline_access"])).join(" ");
+}
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
 
 export class UserAuthService {
   private readonly store: UserTokenStore;
   private readonly postForm: PostForm;
-  private readonly postJson: PostJson;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   /** 每个用户进行中的授权；同一用户重复 /login 时去重提示，避免叠开轮询 */
@@ -118,7 +122,6 @@ export class UserAuthService {
     this.options = options;
     this.store = new UserTokenStore(options.storeFile);
     this.postForm = options.postForm ?? defaultPostForm;
-    this.postJson = options.postJson ?? defaultPostJson;
     this.now = options.now ?? (() => Date.now());
     this.sleep = options.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   }
@@ -132,20 +135,20 @@ export class UserAuthService {
     if (this.pending.has(openId)) {
       return { card: markdownCard("⏳ 你已有一个进行中的授权，请先在浏览器完成，或稍后再试。") };
     }
-    if (this.options.scopes.length === 0) {
-      return { card: markdownCard("❌ 未配置用户授权 scope（环境变量 FEISHU_USER_AUTH_SCOPES），无法发起授权。") };
-    }
     const existing = await this.store.get(openId);
     if (existing && existing.refreshExpiresAt - 60_000 > this.now()) {
       const validUntil = new Date(existing.refreshExpiresAt).toLocaleString("zh-CN");
       return { card: markdownCard(`✅ 你已登录（授权范围：${existing.scope || "默认"}，登录有效期至 ${validUntil}）。\n如需更换身份请先 /logout。`) };
     }
 
-    const begin = await this.postForm(DEVICE_AUTHORIZATION_URL, {
-      client_id: this.options.appId,
-      client_secret: this.options.appSecret,
-      scope: this.options.scopes.join(" "),
-    });
+    const begin = await this.postForm(
+      DEVICE_AUTHORIZATION_URL,
+      {
+        client_id: this.options.appId,
+        scope: withOfflineAccess(this.options.scopes),
+      },
+      { Authorization: `Basic ${Buffer.from(`${this.options.appId}:${this.options.appSecret}`).toString("base64")}` },
+    );
     const deviceCode = str(begin.device_code);
     if (!deviceCode) {
       const reason = str(begin.error_description) || str(begin.error) || JSON.stringify(begin).slice(0, 200);
@@ -163,6 +166,7 @@ export class UserAuthService {
     lines.push("", `⏱️ 约 ${Math.round(expiresInMs / 60_000)} 分钟内有效；授权完成后此卡片会自动更新结果。`);
 
     const entry: PendingLogin = { deviceCode };
+    // pending 在卡片真正发出后才登记（afterSend 内），发送失败不会把去重锁留在原地
     this.pending.set(openId, entry);
 
     return {
@@ -195,10 +199,11 @@ export class UserAuthService {
       return undefined;
     }
 
-    const res = await this.postJson(TOKEN_URL, {
+    const res = await this.postForm(TOKEN_URL, {
       grant_type: "refresh_token",
       refresh_token: token.refreshToken,
       client_id: this.options.appId,
+      client_secret: this.options.appSecret,
     });
     const accessToken = str(res.access_token);
     if (!accessToken) {
@@ -206,7 +211,7 @@ export class UserAuthService {
       logger.warn(`[UserAuth] 用户 ${openId} 刷新 token 失败（${str(res.error) || "未知错误"}），需要重新 /login`);
       return undefined;
     }
-    const refreshTtlSec = num(res.refresh_expires_in);
+    const refreshTtlSec = num(res.refresh_token_expires_in) || num(res.refresh_expires_in);
     const updated: StoredUserToken = {
       openId,
       accessToken,
@@ -218,6 +223,65 @@ export class UserAuthService {
     };
     await this.store.put(updated);
     return updated.accessToken;
+  }
+
+  /**
+   * 确保用户具备所需 scope（增量授权）：token 已含全部所需 → 返回 access token；
+   * 缺失 → 向当前会话**自动发起新一轮 Device Flow**（合并现有与新增 scope）并立即返回
+   * undefined——用户在卡片上同意后 token 更新，调用方下次调用即生效。
+   * 这就是"用到啥再申请啥"：能力层只需声明本次需要的 scope，无需用户预先登录。
+   */
+  async ensureScopes(openId: string, chatId: string, needed: string[]): Promise<string | undefined> {
+    if (needed.length === 0) return this.getUserAccessToken(openId);
+    const token = await this.store.get(openId);
+    const current = token?.scope.split(/\s+/).filter(Boolean) ?? [];
+    const missing = needed.filter((s) => !current.includes(s));
+    if (token && missing.length === 0) return this.getUserAccessToken(openId);
+
+    // 增量申请范围 = 现有 scope ∪ 新增 scope（避免已同意的权限被缩水）
+    const scopes = Array.from(new Set([...current, ...needed]));
+
+    if (this.pending.has(openId)) return undefined; // 已有进行中的授权
+    const begin = await this.postForm(
+      DEVICE_AUTHORIZATION_URL,
+      {
+        client_id: this.options.appId,
+        scope: withOfflineAccess(scopes),
+      },
+      { Authorization: `Basic ${Buffer.from(`${this.options.appId}:${this.options.appSecret}`).toString("base64")}` },
+    );
+    const deviceCode = str(begin.device_code);
+    if (!deviceCode) {
+      logger.warn(`[UserAuth] 增量授权发起失败：${str(begin.error_description) || str(begin.error) || "未知"}`);
+      return undefined;
+    }
+
+    const intervalMs = (num(begin.interval) || 5) * 1000;
+    const expiresInMs = (num(begin.expires_in) || 300) * 1000;
+    const link = str(begin.verification_uri_complete) || str(begin.verification_uri);
+    const userCode = str(begin.user_code);
+    const lines = ["🔐 **需要补充飞书授权**", ""];
+    if (link) lines.push(`请点击链接完成授权：[点此授权](${link})`);
+    if (userCode && !str(begin.verification_uri_complete)) lines.push(`或打开 ${str(begin.verification_uri)} 输入确认码：\`${userCode}\``);
+    lines.push("", `⏱️ 约 ${Math.round(expiresInMs / 60_000)} 分钟内有效；完成后此卡片自动更新。`);
+
+    const entry: PendingLogin = { deviceCode };
+    this.pending.set(openId, entry);
+
+    // 发卡后立即返回（不阻塞调用方）：后台轮询，同意后 token 入库，调用方下次调用即生效
+    void (async () => {
+      try {
+        const messageId = this.options.sendCard
+          ? await this.options.sendCard(chatId, markdownCard(lines.join("\n")))
+          : undefined;
+        await this.pollUntilDone(openId, entry, messageId, this.now() + expiresInMs, intervalMs);
+      } catch (error) {
+        logger.error("[UserAuth] 增量授权流程异常:", error);
+      } finally {
+        if (this.pending.get(openId) === entry) this.pending.delete(openId);
+      }
+    })();
+    return undefined;
   }
 
   /** 清除用户的登录记录。返回是否存在（供 /logout 回执）。 */
@@ -232,10 +296,12 @@ export class UserAuthService {
   private async pollUntilDone(openId: string, entry: PendingLogin, messageId: string | undefined, deadline: number, baseIntervalMs: number): Promise<void> {
     let waitMs = baseIntervalMs;
     while (this.now() < deadline) {
-      const res = await this.postJson(TOKEN_URL, {
+      await this.sleep(waitMs);
+      const res = await this.postForm(TOKEN_URL, {
         grant_type: DEVICE_CODE_GRANT,
         device_code: entry.deviceCode,
         client_id: this.options.appId,
+        client_secret: this.options.appSecret,
       });
 
       const accessToken = str(res.access_token);
@@ -245,7 +311,7 @@ export class UserAuthService {
           accessToken,
           refreshToken: str(res.refresh_token),
           expiresAt: this.now() + (num(res.expires_in) || 7200) * 1000,
-          refreshExpiresAt: this.now() + (num(res.refresh_expires_in) || 30 * 86_400) * 1000,
+          refreshExpiresAt: this.now() + (num(res.refresh_token_expires_in) || num(res.refresh_expires_in) || 30 * 86_400) * 1000,
           scope: str(res.scope) || this.options.scopes.join(" "),
           updatedAt: this.now(),
         };
@@ -273,7 +339,6 @@ export class UserAuthService {
           return;
         }
       }
-      await this.sleep(waitMs);
     }
     await this.finishCard(messageId, markdownCard("❌ 等待授权超时，请重新 /login。"));
   }

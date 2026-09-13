@@ -34,6 +34,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     if (!value) throw new Error(`Missing required environment variable: ${name}`);
     return value;
   };
+  // 用户身份授权（Device Flow）默认 scope：用户资料查询所需的最小集合
+  const parsedUserAuthScopes = (env.FEISHU_USER_AUTH_SCOPES ?? "").split(/[\s,]+/).map((s) => s.trim()).filter(Boolean);
+
   return {
     feishuAppId: required("FEISHU_APP_ID"),
     feishuAppSecret: required("FEISHU_APP_SECRET"),
@@ -41,8 +44,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     cwd: env.FEISHU_PI_CWD ?? process.cwd(),
     sessionDir: `${process.cwd()}/data/sessions`,
     dataDir: `${process.cwd()}/data`,
-    // 用户身份授权 scope（Device Flow）：空格或逗号分隔；留空 = /login 提示未配置
-    userAuthScopes: (env.FEISHU_USER_AUTH_SCOPES ?? "").split(/[\s,]+/).map((s) => s.trim()).filter(Boolean),
+    // 用户身份授权 scope（Device Flow）：默认内置"用户资料查询"所需最小集合；FEISHU_USER_AUTH_SCOPES 可覆盖
+    userAuthScopes: parsedUserAuthScopes.length > 0 ? parsedUserAuthScopes : ["contact:user.base:readonly", "contact:department.base:readonly"],
     modelProvider: env.FEISHU_PI_MODEL_PROVIDER ?? "anthropic",
     modelName: env.FEISHU_PI_MODEL_NAME ?? "claude-sonnet-4-6",
     modelBaseUrl: env.FEISHU_PI_MODEL_BASE_URL,

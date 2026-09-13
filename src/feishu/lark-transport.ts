@@ -85,7 +85,7 @@ export class LarkTransport implements FeishuTransport {
     if (config.topicRootsFile) {
       this.topicRoots = new TopicRootStore(config.topicRootsFile);
     }
-    this.larkCli = new LarkCli(config.appId, config.userProfileDir, {
+    this.larkCli = new LarkCli(config.client, config.appId, config.userProfileDir, {
       adminTokenProvider: config.adminTokenProvider,
     });
     this.imageProcessor = new LarkImageProcessor(config.client, {
@@ -100,6 +100,10 @@ export class LarkTransport implements FeishuTransport {
 
     const dispatcher = new EventDispatcher({});
     dispatcher.register({
+      // 未使用的事件注册空处理器：避免 SDK 对每个未订阅事件打 "no xxx handle" 无上下文警告
+      "im.chat.member.bot.added_v1": async () => {},
+      "im.message.reaction.created_v1": async () => {},
+      "im.message.reaction.deleted_v1": async () => {},
       // 普通消息：normalize 归一化（content/resources/mentions），交给 handler 后台处理
       "im.message.receive_v1": async (raw: Record<string, unknown>) => {
         try {
@@ -165,7 +169,7 @@ export class LarkTransport implements FeishuTransport {
     try {
       // 会话模式先行：决定用户资料的查询通道（私聊 contact API / 群聊群成员名单）与 conversationId 归属
       const chatMode = await this.getChatModeCached(chatId);
-      const profile = await this.larkCli.getUserProfile(message.senderId);
+      const profile = await this.larkCli.getUserProfile(message.senderId, chatId);
       const displayName = profile.name || profile.englishName || profile.openId;
 
       // 构造 conversationId：
@@ -224,7 +228,7 @@ export class LarkTransport implements FeishuTransport {
 
       // 记录收到的消息
       const imageInfo = imageCount > 0 ? `（含 ${imageCount} 张图片）` : "";
-      logger.userInput(displayName, `收到消息${imageInfo}: ${formatLogText(cleanedText)}`);
+      logger.userInput(displayName, `: ${imageInfo}${formatLogText(cleanedText)}`);
 
       // 判断是否为管理员
       const isAdmin = this.adminOpenId ? profile.openId === this.adminOpenId : false;
