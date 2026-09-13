@@ -1,6 +1,7 @@
 import { access, mkdir, readFile, writeFile } from "node:fs/promises";
 import { constants } from "node:fs";
 import { dirname, join } from "node:path";
+import type { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "../utils/logger.ts";
 
 export interface LarkUserProfile {
@@ -61,10 +62,12 @@ export class LarkCli {
   private readonly cacheFilePath: string;
   private cache: UserProfileCache = {};
   private cacheLoaded = false;
+  private readonly client: Client;
   private readonly adminTokenProvider?: () => Promise<string | undefined>;
   private readonly adminGet: AdminGet;
 
-  constructor(appId: string, dataDir = join(process.cwd(), "data", "users"), options?: LarkCliOptions) {
+  constructor(client: Client, appId: string, dataDir = join(process.cwd(), "data", "users"), options?: LarkCliOptions) {
+    this.client = client;
     this.cacheFilePath = join(dataDir, `${appId}_users.json`);
     this.adminTokenProvider = options?.adminTokenProvider;
     this.adminGet = options?.adminGet ?? defaultAdminGet;
@@ -73,14 +76,16 @@ export class LarkCli {
   /**
    * 查询用户资料，带缓存和过期机制。
    *
-   * 唯一查询通道：管理员身份——FEISHU_ADMIN 通过 /login 授权的 user_access_token 调用 contact API。
-   * 数据范围 = 管理员的组织架构可见范围（管理员默认全组织可见），与应用通讯录权限范围无关；
-   * 应用可见范围外的外部成员同样可查。返回中文名、英文名、部门名。
+   * 通道顺序：
+   * 1. 管理员身份——FEISHU_ADMIN 通过 /login 授权的 user_access_token 调用 contact API。
+   *    数据范围 = 管理员的组织架构可见范围（管理员默认全组织可见），应用可见范围外的内部成员同样可查；
+   * 2. 管理员查不到 → 该用户是跨租户外部用户（不在本组织通讯录）→ 用**群成员名单**（机器人身份）
+   *    分页查找拿中文名（群名单必含消息发送者）。
    *
-   * 缓存只存成功档案（3 天内命中）；查询失败（管理员未登录/接口异常/查无此人）一律**不落盘**——
-   * 返回合并旧资料的临时档案，下一条消息自动重试。消费方自行判断空字段并做兜底展示（如 openId 直显）。
+   * 缓存：成功档案 3 天；全部通道失败也落盘冷却档案（openId + 旧资料），冷却 1 天后自动重试，
+   * 避免重复打接口（应对"刚入群名单未同步"等临时失败）。消费方自行判断空字段并做兜底展示（如 openId 直显）。
    */
-  async getUserProfile(openId: string): Promise<LarkUserProfile> {
+  async getUserProfile(openId: string, chatId?: string): Promise<LarkUserProfile> {
     await this.loadCache();
 
     const now = new Date();
@@ -97,25 +102,37 @@ export class LarkCli {
       logger.info(`[LarkCli] 用户 ${openId} 缓存已过期（${ageInDays.toFixed(1)} 天），重新查询`);
     }
 
-    const primary = await this.queryNameByAdmin(openId);
+    let resolved: ProfileName | undefined = await this.queryNameByAdmin(openId);
+    let via = "管理员";
 
-    // 失败不写缓存：合并旧资料字段原样返回（不刷新持久化时间戳），下一条消息会再次尝试
-    if (!primary) {
+    // 管理员通道未命中 → 跨租户外部用户（不在本组织通讯录）→ 群成员名单（机器人身份）拿中文名
+    if (!resolved && chatId) {
+      resolved = await this.queryNameByGroupMembers(openId, chatId);
+      if (resolved) via = "群名单";
+    }
+
+    // 全部通道失败：仍把 openId 落盘（保留旧资料），进入 1 天冷却——
+    // 期间直接命中缓存不重复打接口，冷却期满自动重试（应对"刚入群名单未同步"等临时失败）
+    if (!resolved) {
       const prev = this.cache[openId];
-      return {
+      const profile: LarkUserProfile = {
         openId,
         name: prev?.name,
         englishName: prev?.englishName,
         departmentNames: prev?.departmentNames,
         updatedAt: now.toISOString(),
       };
+      this.cache[openId] = profile;
+      await this.saveCache();
+      logger.warn(`[LarkCli] 用户 ${openId} 所有通道未命中，写入冷却档案（1 天后重试）`);
+      return profile;
     }
 
     const profile: LarkUserProfile = {
       openId,
-      name: primary.name,
-      englishName: primary.englishName,
-      departmentNames: primary.departmentNames,
+      name: resolved.name,
+      englishName: resolved.englishName,
+      departmentNames: resolved.departmentNames,
       updatedAt: now.toISOString(),
     };
 
@@ -127,7 +144,7 @@ export class LarkCli {
     const displayName = profile.name || profile.englishName || profile.openId;
     const englishInfo = profile.englishName ? `, 英文名: ${profile.englishName}` : "";
     const deptInfo = profile.departmentNames?.length ? `, 部门: ${profile.departmentNames.join(" / ")}` : "";
-    logger.info(`[LarkCli] 🆕 新用户入库: ${displayName} (${profile.openId})${englishInfo}${deptInfo}`);
+    logger.info(`[LarkCli] 🆕 新用户入库[${via}]: ${displayName} (${profile.openId})${englishInfo}${deptInfo}`);
 
     return profile;
   }
@@ -142,7 +159,10 @@ export class LarkCli {
     if (!getToken) return undefined;
     try {
       const token = await getToken();
-      if (!token) return undefined;
+      if (!token) {
+        logger.info("[LarkCli] 管理员通道未登录（/login 后可用），跳过");
+        return undefined;
+      }
 
       const userRes = await this.adminGet(`/open-apis/contact/v3/users/${openId}?user_id_type=open_id`, token);
       const user = userRes.user as { name?: string; en_name?: string; department_ids?: string[] } | undefined;
@@ -190,5 +210,37 @@ export class LarkCli {
   private async saveCache(): Promise<void> {
     await mkdir(dirname(this.cacheFilePath), { recursive: true });
     await writeFile(this.cacheFilePath, `${JSON.stringify(this.cache, null, 2)}\n`, "utf8");
+  }
+
+  /** 外部用户兜底通道：分页遍历群成员名单查中文名（含跨租户外部成员；失败返回 undefined）。 */
+  private async queryNameByGroupMembers(openId: string, chatId?: string): Promise<ProfileName | undefined> {
+    if (!chatId) {
+      logger.warn("[LarkCli] 无 chatId，无法从群成员列表查询");
+      return undefined;
+    }
+    try {
+      let pageToken: string | undefined;
+      do {
+        const res = await this.client.im.chatMembers.get({
+          path: { chat_id: chatId },
+          params: {
+            member_id_type: "open_id",
+            page_size: 100,
+            page_token: pageToken,
+          },
+        });
+        const member = (res.data?.items ?? []).find((m) => m.member_id === openId);
+        if (member?.name) {
+          logger.info(`[LarkCli] 从群 ${chatId} 成员列表获取到名字: ${member.name}`);
+          return { name: member.name };
+        }
+        pageToken = res.data?.page_token;
+      } while (pageToken);
+      logger.warn(`[LarkCli] 群 ${chatId} 成员列表中未找到 ${openId}`);
+      return undefined;
+    } catch (error) {
+      logger.warn(`[LarkCli] 从群成员列表查询失败：${error instanceof Error ? error.message : String(error)}`);
+      return undefined;
+    }
   }
 }
