@@ -84,6 +84,14 @@
           <label for="FEISHU_PI_MODEL_BASE_URL">Base URL *</label>
           <input type="text" id="FEISHU_PI_MODEL_BASE_URL" name="FEISHU_PI_MODEL_BASE_URL" placeholder="https://api.anthropic.com" required>
         </div>
+        <div class="form-group">
+          <label for="FEISHU_SHOW_MODEL_STATS">回复末尾显示模型统计</label>
+          <select id="FEISHU_SHOW_MODEL_STATS" name="FEISHU_SHOW_MODEL_STATS">
+            <option value="1">开启（模型 · token · 费用 · 耗时）</option>
+            <option value="0">关闭</option>
+          </select>
+          <div class="hint">关闭后回复末尾不再显示统计小字；调用工具的过程状态不受影响</div>
+        </div>
       </div>
 
       <!-- API Key -->
@@ -214,6 +222,12 @@
       for (const [key, value] of Object.entries(config)) {
         const input = document.getElementById(key);
         if (input && input.type !== 'hidden') input.value = value || '';
+      }
+      // 开关下拉框：把 1/true/on 等写法归一成选项值 1/0，未配置视为开启
+      const statsToggle = document.getElementById('FEISHU_SHOW_MODEL_STATS');
+      if (statsToggle) {
+        const raw = (config.FEISHU_SHOW_MODEL_STATS ?? '1').toString().trim().toLowerCase();
+        statsToggle.value = ['1', 'true', 'on', 'yes'].includes(raw) ? '1' : '0';
       }
 
       // 渲染表情并恢复选择状态

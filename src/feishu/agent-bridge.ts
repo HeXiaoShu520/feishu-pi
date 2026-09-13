@@ -24,6 +24,8 @@ export class FeishuAgentBridge {
   private readonly commandRegistry: CommandRegistry;
   /** 详细模式开关：key 为 chatId，true 表示工具调用保留在正文中 */
   private readonly detailMode = new Map<string, boolean>();
+  /** 回复末尾是否显示模型统计小字；关闭时只影响终态小字，工具过程状态照常显示 */
+  private readonly showModelStats: boolean;
 
   /** 查询某会话是否开启详细模式（供授权卡撤回等外部逻辑判断）。 */
   isDetailMode(chatId: string): boolean {
@@ -41,6 +43,8 @@ export class FeishuAgentBridge {
       enableReaction?: boolean;
       /** 额外指令（如 /perm），注册在默认指令之后 */
       extraCommands?: CommandHandler[];
+      /** 回复末尾是否显示模型统计小字（默认显示）；工具过程状态不受影响 */
+      showModelStats?: boolean;
     },
   ) {
     this.conversations = conversations;
@@ -49,6 +53,7 @@ export class FeishuAgentBridge {
     this.messages = options?.messages;
     this.client = options?.client;
     this.enableCardKit = options?.enableCardKit ?? true;
+    this.showModelStats = options?.showModelStats ?? true;
     this.reactionController = options?.client && (options?.enableReaction ?? true)
       ? new ReactionController(options.client)
       : undefined;
@@ -232,9 +237,10 @@ export class FeishuAgentBridge {
       clearInterval(toolTimer);
 
       const stats = session?.getStats?.();
-      // 小字在 close 内部（正文渲染完成后）才写入
+      // 小字在 close 内部（正文渲染完成后）才写入；配置关闭时不生成终态统计，
+      // 工具过程状态（工具段 + 小字动画）不经过这里，照常显示
       let statsLine: string | undefined;
-      if (stats) {
+      if (stats && this.showModelStats) {
         const tokens = stats.tokens ?? {};
         const formatTokens = (value: number) => `${(value / 1000).toFixed(1)}K`;
         // 本次新增 token = 当前上下文 - prompt 前基线

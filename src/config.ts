@@ -25,6 +25,14 @@ export interface FeishuPiAppConfig {
   groupMembership: Record<string, string[]>;
   /** 授权卡片等待管理员点击的超时时间（超时视为拒绝） */
   approvalTimeoutMs: number;
+  /** 回复卡末尾是否显示模型统计小字（模型 · token · ctx · 费用 · 耗时 · 会话别名）；工具过程状态不受影响 */
+  showModelStats: boolean;
+}
+
+/** 布尔环境变量：未配置取 fallback；显式 1/true/on/yes 视为开，其余视为关。 */
+function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
+  if (value === undefined || value.trim() === "") return fallback;
+  return ["1", "true", "on", "yes"].includes(value.trim().toLowerCase());
 }
 
 /** 从环境变量读取 feishu-pi 启动配置。 */
@@ -67,5 +75,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
         ]),
     ),
     approvalTimeoutMs: Number(env.FEISHU_APPROVAL_TIMEOUT_MS) > 0 ? Number(env.FEISHU_APPROVAL_TIMEOUT_MS) : 5 * 60_000,
+    // 回复末尾的模型统计小字：默认显示；FEISHU_SHOW_MODEL_STATS=0/false/off 关闭（工具过程状态不受影响）
+    showModelStats: parseBoolEnv(env.FEISHU_SHOW_MODEL_STATS, true),
   };
 }
