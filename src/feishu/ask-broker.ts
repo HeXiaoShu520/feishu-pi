@@ -122,22 +122,21 @@ export class AskBroker {
   /**
    * 向会话发提问卡并等待用户点选（阻塞到选择/超时）。
    * qid/token 与提问对象 openId 绑定：仅本人点击有效。
+   * pending 先注册再发卡：回调不可能早于卡片到达，但注册不能晚于任何一次结算尝试。
    */
   async ask(openId: string, chatId: string, question: string, options: string[]): Promise<AskOutcome> {
     const qid = randomUUID();
     const token = randomUUID();
     const card = buildChoiceCard({ question, options, qid, token });
-    const messageId = await this.options.sendCard(chatId, card);
-    if (!messageId) return { status: "cancelled" };
 
     return await new Promise<AskOutcome>((resolve) => {
-      const pending: PendingAsk = { qid, token, openId, messageId, resolve: (outcome) => resolve(outcome) };
+      const pending: PendingAsk = { qid, token, openId, messageId: "", resolve: (outcome) => resolve(outcome) };
       this.pending.set(qid, pending);
       const timer = setTimeout(() => {
         if (this.pending.get(qid) !== pending) return;
         this.pending.delete(qid);
         void this.options
-          .updateCard(messageId, buildAskResultCard("⏱ 已超时跳过本次选择。如需回答请重新提问。"))
+          .updateCard(pending.messageId, buildAskResultCard("⏱ 已超时跳过本次选择。如需回答请重新提问。"))
           .catch(() => undefined)
           .finally(() => pending.resolve({ status: "timeout" }));
       }, this.askTimeoutMs);
@@ -145,12 +144,29 @@ export class AskBroker {
         clearTimeout(timer);
         resolve(outcome);
       };
+
+      const settleCancelled = () => {
+        if (this.pending.get(qid) !== pending) return; // 已被点选/超时结算
+        clearTimeout(timer);
+        this.pending.delete(qid);
+        pending.resolve({ status: "cancelled" });
+      };
+      this.options
+        .sendCard(chatId, card)
+        .then((messageId) => {
+          if (!messageId) return settleCancelled();
+          pending.messageId = messageId;
+        })
+        .catch((error) => {
+          logger.error(`[AskBroker] 发送提问卡失败: ${error instanceof Error ? error.message : String(error)}`);
+          settleCancelled();
+        });
     });
   }
 
   /**
    * 卡片回调结算：校验存在性 / 一次性 token / 仅本人；
-   * 通过 → 更新结果卡并返回所选原文；非本人点击 → 忽略（返回 undefined）。
+   * 通过 → 更新结果卡、唤醒等待中的 ask() 并返回所选原文；非本人点击 → 忽略（返回 undefined）。
    */
   resolve(input: { qid?: string; token?: string; choice?: string; operatorOpenId?: string; messageId?: string }): AskOutcome | undefined {
     const pending = this.pending.get(input.qid ?? "");
@@ -165,7 +181,9 @@ export class AskBroker {
     void this.options
       .updateCard(messageId, buildAskResultCard(`✅ 已选择：${choice}`))
       .catch(() => undefined);
-    return { status: "answered", choice };
+    const outcome: AskOutcome = { status: "answered", choice };
+    pending.resolve(outcome); // 唤醒挂起的 ask()，工具把选项原文返回给模型
+    return outcome;
   }
 }
 

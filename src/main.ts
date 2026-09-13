@@ -22,6 +22,7 @@ import { PermissionBroker } from "./guard/broker.ts";
 import { ToolGuard } from "./guard/tool-guard.ts";
 import { PolicyJudge } from "./guard/judge.ts";
 import { buildNoticeCard } from "./guard/card.ts";
+import { AskBroker, createAskUserTool } from "./feishu/ask-broker.ts";
 
 /** 授权请求失效（服务重启/已处理）时就地更新的提示卡文案。 */
 const APPROVAL_STALE_NOTICE = "⚠️ 该授权请求已失效（服务已重启或已处理），请重新发起任务。";
@@ -191,6 +192,27 @@ export async function main(): Promise<void> {
     }
   });
 
+  // 选项卡（ask_user）：AI 调 ask_user_question 工具时向会话发提问卡，
+  // 点选回调经 AskBroker 校验（存在性/一次性 token/仅本人）后唤醒等待中的工具
+  const askBroker = new AskBroker({
+    sendCard: (chatId, card) => transport.sendCardToChat(chatId, card),
+    updateCard: (messageId, card) => transport.updateCardById(messageId, card),
+  });
+  transport.onAskUser(async ({ value, action }) => {
+    const outcome = askBroker.resolve({
+      qid: typeof value.qid === "string" ? value.qid : undefined,
+      token: typeof value.token === "string" ? value.token : undefined,
+      choice: typeof value.choice === "string" ? value.choice : undefined,
+      operatorOpenId: action.operatorOpenId,
+      messageId: action.messageId,
+    });
+    if (outcome) {
+      logger.info(`[Main] 选项卡已作答: ${outcome.choice}（点击者 ${action.operatorOpenId}）`);
+    } else {
+      logger.warn(`[Main] 选项卡点击被忽略（非提问对象或请求已失效，点击者 ${action.operatorOpenId}）`);
+    }
+  });
+
   // 技能使用统计：独立事件流（data/stats/，不参与 7 天清理），展示名解析复用用户缓存
   const dataDir = dirname(config.sessionDir);
   const usageStore = new SkillUsageStore(
@@ -233,6 +255,7 @@ ${trimmed}` }] },
   });
 
   // 创建 runtime 配置（两档身份：负责人 = FEISHU_ADMIN，用户 = 其他人；能力全部由策略文件驱动）
+  // 第二个参数：项目内置交互工具（随会话注册，调用者身份由 runtime 派发时注入）
   runtime = new FeishuPiRuntime({
     cwd: config.cwd,
     sessionDir: config.sessionDir,
@@ -245,7 +268,7 @@ ${trimmed}` }] },
     toolGuard: (groupPolicy, params, signal) => toolGuard.check(groupPolicy, params, signal),
     skillUsageStore: usageStore,
     scheduleService,
-  });
+  }, [createAskUserTool(askBroker)]);
 
   // 上电预加载：权限策略 + Skills + 自定义工具在首条消息前全部就绪
   await runtime.preload();
@@ -268,6 +291,8 @@ ${trimmed}` }] },
         new LoginCommand(userAuth),
         new LogoutCommand(userAuth),
       ],
+      // 回复末尾的模型统计小字开关（工具过程状态不受影响）
+      showModelStats: config.showModelStats,
     },
   );
   bridgeRef = bridge;

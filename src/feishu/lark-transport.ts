@@ -60,6 +60,7 @@ export class LarkTransport implements FeishuTransport {
   private readonly client: Client;
   private handler?: (message: FeishuInboundMessage) => Promise<void>;
   private approvalHandler?: (params: { value: Record<string, unknown>; action: { messageId: string; chatId: string; operatorOpenId: string } }) => Promise<void>;
+  private askHandler?: (params: { value: Record<string, unknown>; action: { messageId: string; chatId: string; operatorOpenId: string } }) => Promise<void>;
   private connecting?: Promise<void>;
   /** 会话模式缓存（p2p/group/topic），话题群与普通群的会话隔离策略不同 */
   private readonly chatModeCache = new Map<string, "p2p" | "group" | "topic">();
@@ -288,6 +289,15 @@ export class LarkTransport implements FeishuTransport {
         return;
       }
 
+      // 选项卡回调（ask_user）：交给 AskBroker 校验（存在性/一次性 token/仅本人）
+      if (typeof value === "object" && value?.action === "ask_user") {
+        await this.askHandler?.({
+          value,
+          action: { messageId: action.messageId, chatId: action.chatId, operatorOpenId: action.operator.openId },
+        });
+        return;
+      }
+
       // 其余卡片（/model）：管理员校验后处理
       const operatorOpenId = action.operator.openId;
       const isAdmin = this.adminOpenId ? operatorOpenId === this.adminOpenId : false;
@@ -396,6 +406,11 @@ export class LarkTransport implements FeishuTransport {
   /** 注册授权卡片回调处理器（PermissionBroker 在服务端校验管理员身份）。 */
   onApproval(handler: (params: { value: Record<string, unknown>; action: { messageId: string; chatId: string; operatorOpenId: string } }) => Promise<void>): void {
     this.approvalHandler = handler;
+  }
+
+  /** 注册选项卡回调处理器（AskBroker 校验存在性/一次性 token/仅本人）。 */
+  onAskUser(handler: (params: { value: Record<string, unknown>; action: { messageId: string; chatId: string; operatorOpenId: string } }) => Promise<void>): void {
+    this.askHandler = handler;
   }
 
   /** 向指定会话发送一张卡片，返回 messageId。 */
