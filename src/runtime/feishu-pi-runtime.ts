@@ -96,6 +96,12 @@ export class FeishuPiRuntime {
     logger.info(`[Runtime] 模型已切换为 ${colors.cyan}${modelName}${colors.reset}（新会话生效）`);
   }
 
+  /** 基础 ResourceLoader：进程内只创建一次（Skills 上电加载，各会话复用同一实例）。 */
+  private loadBaseLoaderOnce(): Promise<DefaultResourceLoader> {
+    this.baseLoaderOnce ??= this.createBaseLoader();
+    return this.baseLoaderOnce;
+  }
+
   /** 创建并 reload 基础 ResourceLoader（必须 reload 后才能加载 skills）。 */
   private async createBaseLoader(): Promise<DefaultResourceLoader> {
     const loader = new DefaultResourceLoader({
@@ -112,7 +118,7 @@ export class FeishuPiRuntime {
    * 用于启动日志，让用户知道加载了哪些 Skills 和 Tools
    */
   async printAvailableResources(): Promise<void> {
-    const baseResourceLoader = await this.createBaseLoader();
+    const baseResourceLoader = await this.loadBaseLoaderOnce();
     const { skills } = baseResourceLoader.getSkills();
   
     if (skills.length > 0) {
@@ -128,6 +134,30 @@ export class FeishuPiRuntime {
     logger.info(`[Runtime] 内置工具(按组策略注册): ${colors.gray}${DEFAULT_BUILTIN_TOOLS.join(", ")}${colors.reset}`);
   }
 
+  /** 自定义工具全集：进程内只扫描/导入一次，各会话复用同一份定义（失败可重试） */
+  private customToolsOnce?: Promise<FeishuPiTool[]>;
+  /** 基础资源加载器（Skills 等）：进程内只创建/reload 一次，各会话复用 */
+  private baseLoaderOnce?: Promise<DefaultResourceLoader>;
+
+  private loadCustomToolsOnce(): Promise<FeishuPiTool[]> {
+    this.customToolsOnce ??= createToolRegistryAsync(this.config.cwd)
+      .then((defs) =>
+        defs.map((def) => ({
+          name: def.name,
+          label: def.label ?? def.name,
+          description: def.description,
+          parameters: def.parameters,
+          execute: def.execute.bind(def) as FeishuPiTool["execute"],
+          risk: (def as RiskyToolDefinition).risk,
+        })),
+      )
+      .catch((error) => {
+        this.customToolsOnce = undefined; // 失败不缓存，下个会话重试
+        throw error;
+      });
+    return this.customToolsOnce;
+  }
+
   async createSession(sessionFile: string | undefined, userId: string, context?: FeishuContext): Promise<FeishuPiSession> {
     // 设置 API key 到对应厂商的环境变量
     const apiKey = process.env.FEISHU_PI_MODEL_API_KEY;
@@ -140,10 +170,11 @@ export class FeishuPiRuntime {
       process.env.OPENAI_API_KEY = apiKey;
     }
 
-    // 判定所属身份组（owner 负责人 / user 用户），并取该组的已编译策略
+    // 判定所属身份组（admin 管理员组 / 其余自定义组），并取该组的已编译策略
     const groups = await this.config.permissionPolicy.groupsFor(userId, context?.userName);
     const groupPolicy: GroupPolicy = await this.config.permissionPolicy.forGroups(groups);
-    logger.info(`[Runtime] 用户身份: ${colors.cyan}${userId}${colors.reset} -> ${colors.yellow}${groups.join(", ") || "(无组)"}${colors.reset}`);
+    const displayName = context?.userName || userId;
+    logger.info(`[Runtime] 用户身份: ${colors.cyan}${displayName}${colors.reset}(${colors.gray}${userId}${colors.reset}) -> ${colors.yellow}${groups.join(", ") || "(无组)"}${colors.reset}`);
 
     // 一个会话一个文件夹：新会话的 jsonl 落在会话专属目录；续聊传入同目录，
     // 供 Pi 内部 /new、分支等操作在正确位置建新文件
@@ -154,29 +185,20 @@ export class FeishuPiRuntime {
     const model = getModel(this.config.modelProvider as never, this.config.modelName as never);
     if (!model) throw new Error(`Model not found: ${this.config.modelProvider}/${this.config.modelName}`);
 
-    // 技能全量加载（不做权限过滤）；自定义工具从 .agent/tools/ 加载
-    const baseResourceLoader = await this.createBaseLoader();
-
-    // 加载 .agent/tools/ 目录下的自定义工具（Python + TS/JS 脚本）
-    const customToolDefs = await createToolRegistryAsync(this.config.cwd);
-    let customTools: FeishuPiTool[] = customToolDefs.map((def) => ({
-      name: def.name,
-      label: def.label ?? def.name,
-      description: def.description,
-      parameters: def.parameters,
-      execute: def.execute.bind(def) as FeishuPiTool["execute"],
-      risk: (def as RiskyToolDefinition).risk,
-    }));
+    // 技能/自定义工具均上电加载一次（进程内缓存复用，修改后需重启生效）
+    const baseResourceLoader = await this.loadBaseLoaderOnce();
+    const customTools = await this.loadCustomToolsOnce();
 
     // 自定义工具可标记 risk: "high"：标记后不走策略放行，仍走授权卡
     const riskyTools = new Set(
       customTools.filter((tool) => tool.risk === "high").map((tool) => tool.name),
     );
 
-    // 内置工具：负责人全量注册；用户组注册 bash + read（范围与命令约束在漏斗按组策略执行）。
+    // 内置工具：read 人人都有（阅读技能/文档，可读范围由策略限制）；
+    // bash 亦注册（能否执行哪些命令由组名单决定）；write/edit 仅 admin 组。
     const builtinNames: string[] = groups.includes("admin")
       ? ["read", "bash", "write", "edit"]
-      : ["bash", "read"];
+      : ["read", "bash"];
 
     const { session } = await createAgentSession({
       cwd: this.config.cwd,
