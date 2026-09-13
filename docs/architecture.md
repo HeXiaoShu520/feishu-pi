@@ -37,8 +37,9 @@ Agent 运行时（Pi AgentSession + 内置工具 + .agent 自定义工具 + 定�
 ```ts
 interface FeishuContext {
   userOpenId: string;      // 用户 Open ID
-  userName?: string;       // 中文名 > 英文名 > Open ID
-  departmentNames?: string[]; // 部门中文名列表
+  userName?: string;       // 展示名：中文名 > 英文名 > Open ID
+  en_name?: string;        // 英文名
+  department_name?: string[]; // 部门名列表
   chatId: string;          // 会话 ID
   threadId?: string;       // 话题 ID
   chatMode?: "p2p" | "group" | "topic"; // 会话模式（传输层查询并缓存）
@@ -126,7 +127,18 @@ interface FeishuContext {
 
 ### 定时任务
 
-`ScheduleService`（`src/schedule/service.ts`，croner 调度）管理持久化的定时任务：到点后以**创建者身份**在独立会话（`{创建人}-schedule:{任务ID}`）中执行，输出以卡片推回创建时的会话；执行失败记录 lastStatus 并在列表可见。任务持久化在 `data/schedules.json`，重启自动恢复调度；创建/修改当前通过编辑该文件完成（`addTask`/`removeTask` 接口已就绪，对话创建入口尚未接通）。
+`ScheduleService`（`src/schedule/service.ts`，croner 调度）管理持久化的定时任务。
+
+**任务身份**：创建时生成唯一 id（时间戳_随机数，持久化于 `data/schedules.json`），调度、会话、历史全部挂在这张 id 上——判断"是否同一个任务"只看 id，与任务名/cron/内容无关；改名或改 cron 不换身份，删除重建则是新任务（历史从零开始）。
+
+**专属会话与上下文**：每次触发以**创建者身份**在任务专属会话（conversationId = `{创建人}-schedule:{任务ID}`，同样拥有独立会话文件夹）中执行，输出以卡片推回创建时的会话（task.chatId）：
+
+- 历史按触发累积——第 N 次执行时 AI 能看到之前 N-1 次的指令与结果（支持"接着上次进度继续"类任务）；文件 mtime 随触发刷新，持续触发的任务不会被保留期清理；
+- **prompt 必须自包含**：首次触发时专属会话是空的，创建者那句话就是 AI 唯一能看到的指令。`schedule_manager` 工具已在描述中要求创建时把上下文固化进 prompt（写明做什么/对象/范围/格式），并对过短指令（<15 字）拒绝创建并给出示例；
+
+**权限**：调度本身不做权限判断，判定发生在**执行中的每一次工具调用**——以创建者身份过 ToolGuard 漏斗（读范围/bash 名单/写入范围/tools 名单 → 智能体审核 → 授权卡），创建者权限之外的事任务做不了。无人值守时若弹授权卡，发往 task.chatId，5 分钟无人处理按拒绝（fail-safe），不阻塞调度器。
+
+**持久化与创建入口**：任务持久化在 `data/schedules.json`，重启自动恢复调度；创建/修改当前通过编辑该文件完成（`addTask`/`removeTask` 接口已就绪，对话创建入口尚未接通——接通时需限定创建权限并落实"上下文固化"）。
 
 ## Agent 运行时
 
@@ -155,11 +167,13 @@ interface FeishuContext {
   → complete / fail，移除表情
 ```
 
-`CardKitStream`（`src/feishu/cardkit-stream.ts`）实现 CardKit Schema 2.0 官方流式流程：创建 streaming_mode 卡片实体 → PUT 全量文本（800ms 节流 + 写队列串行化）→ PATCH 关闭流式 → 写统计元素。处理了官方 10 分钟自动关流后的重开重试；工具行等临时文本不进入最终内容。`CardKitReply` 在正文超过 10000 字符时于代码围栏外的完整块边界分新卡续写（分卡与首卡同回复形态）。CardKit 未启用或初始化失败直接报错（无文本回退），错误经日志与失败卡提示用户。
+`CardKitStream`（`src/feishu/cardkit-stream.ts`）实现 CardKit Schema 2.0 官方流式流程：创建 streaming_mode 卡片实体 → PUT 全量文本（800ms 节流 + 写队列串行化）→ PATCH 关闭流式 → 写统计元素。处理了官方 10 分钟自动关流后的重开重试。`CardKitReply` 在正文超过 10000 字符时于代码围栏外的完整块边界分新卡续写（分卡与首卡同回复形态）。CardKit 未启用或初始化失败直接报错（无文本回退），错误经日志与失败卡提示用户。
 
 回复形态按会话模式判定（`resolveReplyInThread`，`src/feishu/cardkit-reply.ts`）：话题群一律以话题形式回复（`reply_in_thread: true`，**含话题根消息**——根消息自身没有 threadId，若按"有无 threadId"判定，飞书会为回复另开一个新话题）；私聊与普通群普通回复，消息本身在线程内则回线程内。指令卡在话题群同样回帖到原话题。
 
-详细/精简模式（`/detail`，按会话记忆）：精简模式工具调用过程临时显示后清除；详细模式永久保留在正文中，便于审查。精简模式下授权卡确认后自动撤回，详细模式保留结果卡。
+**parts 模型与滚动回收**：回复正文以"段"为单位管理（`parts[]`：正文段 + 工具摘要段，`toolPartIndices` 记录工具段位置）。精简模式滚动回收——新正文段出现时，旧工具段与旧正文段一起置空，只留"最新正文段 + 其后的工具段"；新工具出现时上一个工具段就地置空（只留当前一个）。终态组装（`composeFinal`）：详细模式 join 全部段落；精简模式取**最后一个工具段之后**的正文段拼接（无则退回全部非工具段），不丢已见内容。精简模式下授权卡确认后自动撤回，详细模式保留结果卡。
+     
+**模型侧配套**：系统提示注入 FINAL_REPLY_RULE——"最后一次工具调用之后输出的内容才是最终答复"，要求模型每次工具调用后输出完整独立的结论（使用侧保证，否则终态不可读）。
 
 ## 一条消息的时序
 
@@ -189,7 +203,7 @@ Agent 处理失败时，Bridge 将卡片更新为失败提示并记录日志；�
 
 - **`/login`**：向 `accounts.feishu.cn/oauth/v1/device_authorization` 发起授权，回复指引卡（授权链接 + 确认码）；后台按 RFC 8628 轮询 `open-apis/authen/v2/oauth/token`——pending 继续、slow_down 退避（+5s）、denied/expired 终止；结果经 `CommandResult.afterSend` 回传的 message_id 原地更新到指引卡，不阻塞指令回复。
 - **token 生命周期**：按 openId 落盘 `data/user-tokens.json`，device_code 与发起者绑定（不接收"代他人授权"）；对外统一走 `getUserAccessToken(openId)`——access token 临期（<30s）用 refresh token 静默换新，refresh 也失效则清档并引导重新 `/login`。`/logout` 清除本人记录。
-- **scope 默认内置**（`contact:user.base:readonly` + `contact:department.base:readonly`，`FEISHU_USER_AUTH_SCOPES` 可覆盖），仍需在开发者后台为应用开通并发布版本；实际可访问数据 = 应用 scope ∩ 用户本人可见范围，且不绕过 Guard 的组策略闸门。
+- **scope 默认内置**（`contact:contact.base:readonly` 通讯录调用权限 + `contact:user.base:readonly` + `contact:user.department:readonly` + `contact:user.department_path:readonly` + `contact:department.base:readonly`，用户资料查询所需；`FEISHU_USER_AUTH_SCOPES` 可覆盖），免审权限经同意页自动开通（实测：未预开通的免审权限会在同意页自动列出并一键开通，无需后台预操作）；实际可访问数据 = 应用 scope ∩ 用户本人可见范围，且不绕过 Guard 的组策略闸门。
 - 全程免 redirect_uri 与公网回调；HTTP 用全局 fetch 直连（规避 SDK axios 在 Node ESM 下的 https 兼容问题，与 dsh-lark-link 的实践一致）。发起端点未见于公开文档，与官方 lark-cli 行为核实一致，升级 SDK/CLI 后建议回归一次 `/login`。
 
 ## 配置与持久化

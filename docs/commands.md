@@ -9,7 +9,7 @@
 - `/help` - 显示帮助信息
 - `/new` - 清空当前对话历史，开始新对话（话题群的话题内禁止）
 - `/stop` - 停止当前正在生成的 AI 响应
-- `/detail on|off` - 切换详细/精简模式（控制工具调用是否保留在正文中）
+- `/detail on|off` - 切换详细/精简模式（精简=滚动回收只留最新过程与结论；详细=全量保留）
 
 ## /perm 权限矩阵查看
 
@@ -289,6 +289,8 @@ async delete(conversationId: string): Promise<void> {
 ```
 
 ### `/login` `/logout` - 用户飞书身份授权
+
+> `/login` **仅限私聊**使用：群聊中发送会被拒绝（授权链接可能被他人代点，存在身份冒用风险）。
 
 - `/login`：通过 Device Flow（RFC 8628）发起用户身份授权，回复指引卡（授权链接 + 确认码）。用户在浏览器完成授权后，后台轮询拿到 user_access_token，**原卡自动更新为结果**（`CommandResult.afterSend` 回传 message_id）。
 - token 按 openId 落盘 `data/user-tokens.json`；对外统一走 `getUserAccessToken(openId)`——access token 临期用 refresh token 静默换新，refresh 失效则清档并引导重新 `/login`。
