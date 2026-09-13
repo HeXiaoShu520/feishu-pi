@@ -25,7 +25,7 @@ Hermes 强调长期记忆、经验沉淀和自我改进。feishu-pi 借鉴其记
   ↓
 会话层（ConversationManager：按用户或话题隔离、串行队列、持久化映射）
   ↓
-技能与权限层（统一策略文件：工具/命令/读写范围按身份过滤 + ToolGuard：策略 → 智能体 → 授权卡）
+技能与权限层（统一策略文件：工具/命令/读写范围按身份过滤 + ToolGuard：bash 密钥指令过滤 → 策略 → 智能体 → 授权卡）
   ↓
 Agent 运行时（Pi AgentSession + 内置工具 + .agent 自定义工具 + 定时任务）
   ↓
@@ -63,7 +63,7 @@ interface FeishuContext {
 5. 清洗 @机器人 标记；
 6. 判定 isAdmin 后交给上层 handler（fire-and-forget，不阻塞 SDK 事件循环）。
 
-`card.action.trigger` 卡片回调路由：授权卡（`tool_approval` / `forward_approval`）转交 PermissionBroker；模型切换按钮校验管理员后写回 `.env` 并触发热切换。
+`card.action.trigger` 卡片回调路由：授权卡（`tool_approval` / `forward_approval`）转交 PermissionBroker；选项卡（`ask_user`）转交 AskBroker（校验存在性/一次性 token/仅提问对象本人）；模型切换按钮校验管理员后写回 `.env` 并触发热切换。
 
 用户资料查询与缓存（`LarkCli`，`src/feishu/lark-cli.ts`——类名为历史遗留，与外部 lark-cli 工具无关）：**唯一通道为管理员身份**——FEISHU_ADMIN 通过 `/login`（Device Flow）授权的 user token 调用 contact API（获取中文名/英文名/department_ids，再经部门批量接口换部门名）。数据范围 = 管理员的**组织架构可见范围**（管理员默认全组织可见），与应用通讯录权限范围无关，应用可用范围外的外部成员同样可查。管理员通道未命中（**跨租户外部用户**不在本组织通讯录）→ 降级群成员名单（机器人身份，实时分页查找）取中文名。全部通道失败也落盘**冷却档案**（openId + 旧资料，冷却 1 天后自动重试，应对"刚入群名单未同步"等临时失败）；成功档案缓存 3 天到 `data/users/{appId}_users.json`。scope 已内置默认（contact 查询两项，无需配置环境变量）；前置：管理员完成 `/login`。历史版本曾 spawn 外部 lark-cli、曾依赖机器人通讯录权限，均已移除。
 
@@ -87,11 +87,13 @@ interface FeishuContext {
 
 两级机制：**静态的策略过滤**决定会话里有哪些工具、可读写哪些路径，**动态的 Guard** 审核每次工具实际执行。
 
-### 统一权限策略（一个文件，两个身份组）
+### 统一权限策略（一个文件，多个身份组）
 
 全部权限集中在 `.agent/permissions.json`（`src/permission/policy.ts` 解析）：保留组名 **common**（所有人默认拥有的基础权限，每个用户自动叠加）与 **admin**（FEISHU_ADMIN 或 FEISHU_GROUP_ADMIN 自动属于），加任意命名的用户组（group1、vip……）。每组为规则数组：`Read(路径glob)`、`Write(路径glob)`、`Tools(工具名)`、`Bash(命令前缀)`。组成员在 `.env` 中通过 `FEISHU_GROUP_<组名>` 配置。生效范围 = common ∪ 所属各组。
 
 生效范围 = 命中组的规则并集；策略文件 mtime 热重载，新会话生效；策略文件缺失/写坏按保守默认处理（仅技能目录可读、无工具）。
+
+**密钥防护双轨**（不占策略文件）：模型侧由系统提示注入「密钥安全规则」——不读取/输出 .env、密钥/证书/私钥/凭据类敏感文件，某些时候确需返回敏感值时一定要用星号遮蔽；执行侧在 bash 命令运行前按文件名模式过滤（`src/guard/tool-guard.ts` 内置 `.env` 家族、密钥证书、SSH 私钥、凭据类条目），命中直接拦下，对所有人（含管理员）生效。
 
 **工具与技能零改造**：说明书放在 `.agent/skills/*.md`，不含任何权限信息，约束全部由策略文件表达、由过滤层执行。
 
@@ -100,11 +102,13 @@ interface FeishuContext {
 | owner | 策略 tools 名单（默认 `*`） | 名单内的 read/bash/write/edit | 策略 read 范围（默认 `**`） |
 | user | 策略 tools 名单 | 名单内的 bash / read | 策略 read 范围（默认技能目录） |
 
-### ToolGuard（策略 → 智能体 → 授权卡）
+### ToolGuard（bash 密钥过滤 → 策略 → 智能体 → 授权卡）
 
 所有身份（含负责人）的每次工具调用都经过 `beforeToolCall` 钩子（`src/guard/`）：
 
 ```text
+⓪ bash 密钥指令过滤：命令按 token 匹配密钥文件名模式（.env 家族、密钥证书、SSH 私钥、凭据类），
+   命中→直接拦下（对所有人含管理员；read/write 等其余工具由系统提示密钥安全规则约束，不做代码拦截）
 ① read：先判技能可见范围（skills 字段），再判可读范围（read 字段）；
    范围外直接拦截不弹卡（能力问题不问人），范围内免审放行
 ② bash：命令命中组 bash 名单 → 放行
@@ -136,7 +140,7 @@ interface FeishuContext {
 - 历史按触发累积——第 N 次执行时 AI 能看到之前 N-1 次的指令与结果（支持"接着上次进度继续"类任务）；文件 mtime 随触发刷新，持续触发的任务不会被保留期清理；
 - **prompt 必须自包含**：首次触发时专属会话是空的，创建者那句话就是 AI 唯一能看到的指令。`schedule_manager` 工具已在描述中要求创建时把上下文固化进 prompt（写明做什么/对象/范围/格式），并对过短指令（<15 字）拒绝创建并给出示例；
 
-**权限**：调度本身不做权限判断，判定发生在**执行中的每一次工具调用**——以创建者身份过 ToolGuard 漏斗（读范围/bash 名单/写入范围/tools 名单 → 智能体审核 → 授权卡），创建者权限之外的事任务做不了。无人值守时若弹授权卡，发往 task.chatId，5 分钟无人处理按拒绝（fail-safe），不阻塞调度器。
+**权限**：调度本身不做权限判断，判定发生在**执行中的每一次工具调用**——以创建者身份过 ToolGuard 漏斗（bash 密钥指令过滤 → 读范围/bash 名单/写入范围/tools 名单 → 智能体审核 → 授权卡），创建者权限之外的事任务做不了。无人值守时若弹授权卡，发往 task.chatId，5 分钟无人处理按拒绝（fail-safe），不阻塞调度器。
 
 **持久化与创建入口**：任务持久化在 `data/schedules.json`，重启自动恢复调度；创建/修改当前通过编辑该文件完成（`addTask`/`removeTask` 接口已就绪，对话创建入口尚未接通——接通时需限定创建权限并落实"上下文固化"）。
 
@@ -163,7 +167,7 @@ interface FeishuContext {
   → 用户消息加随机表情（处理中标记）
   → 创建 CardKit 卡片，正文显示 spinner 思考动画（200ms/帧，随机样式）
   → 订阅事件流：assistant_text 增量推卡；工具调用显示动画行
-  → 结束后写统计小字（模型、上下文 token、费用、耗时、会话短别名）
+  → 结束后写统计小字（模型、上下文 token、费用、耗时、会话短别名；`FEISHU_SHOW_MODEL_STATS` 可关闭终态小字，工具过程动画不受影响）
   → complete / fail，移除表情
 ```
 
@@ -238,7 +242,7 @@ Agent 处理失败时，Bridge 将卡片更新为失败提示并记录日志；�
 
 ## 当前范围
 
-已实现：飞书 WS 长连接（底层 WSClient + EventDispatcher）、消息去重与卡住恢复、按用户/话题隔离的会话管理与增量持久化、Pi Session 复用与重启恢复、统一权限策略（common/owner/user，Skills 全量开放、工具/命令/读写范围按组过滤与判定）、ToolGuard（策略 → 智能体综合判断 → 授权卡）、CardKit 2.0 流式卡片、图片与文件附件（统一会话文件夹存储 + 附件过期清理）、机器人指令（/model /perm /login /logout /help /new /stop /detail）、用户飞书身份授权（Device Flow + 静默刷新）、话题群回复形态修正（一律回原话题）、模型热切换、统计小字、详细/精简模式、技能使用统计（事件流 + 飞书查询 + 本地可视化页面 + 月度明细）、定时任务（cron 调度 + 持久化恢复 + 结果推送）、优雅退出（SIGINT/SIGTERM/SIGBREAK）、数据自动清理、TypeScript 类型检查与 Vitest 测试。
+已实现：飞书 WS 长连接（底层 WSClient + EventDispatcher）、消息去重与卡住恢复、按用户/话题隔离的会话管理与增量持久化、Pi Session 复用与重启恢复、统一权限策略（common/admin/用户组，Skills 全量开放、工具/命令/读写范围按组过滤与判定）、ToolGuard（bash 密钥指令过滤 → 策略 → 智能体综合判断 → 授权卡，另有系统提示密钥安全规则约束输出脱敏）、选项卡提问（ask_user_question 内置交互工具：向提问对象本人发选择卡，点选/超时后把结果交回模型，调用者身份由 runtime 派发时注入 `_caller`）、CardKit 2.0 流式卡片、图片与文件附件（统一会话文件夹存储 + 附件过期清理）、机器人指令（/model /perm /login /logout /help /new /stop /detail）、用户飞书身份授权（Device Flow + 静默刷新）、话题群回复形态修正（一律回原话题）、模型热切换、统计小字、详细/精简模式、技能使用统计（事件流 + 飞书查询 + 本地可视化页面 + 月度明细）、定时任务（cron 调度 + 持久化恢复 + 结果推送）、优雅退出（SIGINT/SIGTERM/SIGBREAK）、数据自动清理、TypeScript 类型检查与 Vitest 测试。
 
 未实现：长期记忆注入、飞书业务工具（文档/多维表格/日历/审批，用户身份 token 层已就绪可复用）、模型侧用户身份注入与技能分支、状态卡片样式扩展、扫码一键建应用部署引导（候选，见路线图）。
 
