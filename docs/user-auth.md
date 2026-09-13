@@ -28,7 +28,40 @@
 
 全程无 redirect_uri、无公网回调、无重定向 URL 白名单配置。
 
-## 3. 端点与线协议（与官方 lark-cli 一致）
+## 3. 使用指南
+
+### 3.1 准备（无需任何后台操作）
+
+- scope 已内置代码默认：`contact:user.base:readonly`、`contact:user.department:readonly`、`contact:user.department_path:readonly`、`contact:department.base:readonly`（均为免审权限）；
+- **实测结论（2026-09-13）**：这些权限即使未在后台预开通，`/login` 的同意页也会把它们列入"免审权限"区块——点「开通并授权」即一次性完成**自动开通 + 用户授权**，无需在开发者后台勾选、无需发布版本；
+- 若未来某权限属于"需审批"类型，同意页会走申请/审批流，由管理员审批后生效。
+
+### 3.2 管理员登录（开启用户资料查询通道）
+
+> `/login` **仅支持私聊**：群聊中发送会被拒绝——群聊里授权链接可能被他人代点，存在身份冒用风险。
+
+1. 重启服务后，**私聊**机器人发送 `/login`；
+2. 机器人回复**授权卡**：一条授权链接 + 一个确认码，有效期约 5 分钟；
+3. 点击链接 → 飞书授权页（提示"以你的名义访问你的相关数据"）→ 点击**同意**；
+4. 原授权卡自动变为「✅ 授权成功（scope：…）」——之后所有用户资料查询（中文名/英文名/部门名）都用你的身份执行，无需再管。
+
+> 授权页可能只显示部分权限：已开通且免审的权限可能被静默授予、不逐条列出。最终以成功卡片上显示的 scope 为准。
+
+### 3.3 普通用户
+
+现阶段**无需任何操作**：聊天、被查资料都不依赖普通用户的 token。未来"以本人身份"的能力（我的日历、我的文档等）上线后：使用该功能时机器人会**自动弹出补充授权卡**，点一次同意即可（增量授权，见第 5.4 节）。
+
+### 3.4 日常续期（自动，无需操作）
+
+- access_token 约 2 小时、refresh_token 约 30 天；
+- 每次使用前自动检查：access 剩余不足 30 秒 → 自动用 refresh 换新（无感）；
+- 只要 30 天内至少使用过一次，登录状态就会一直延续；token 落盘在 `data/user-tokens.json`，**重启服务不需要重新登录**。
+
+### 3.5 退出登录
+
+发送 `/logout` 清除本人 token（下次使用相关能力时重新授权）。
+
+## 4. 端点与线协议（与官方 lark-cli 一致）
 
 | 步骤 | 端点 | 编码 | 关键参数 |
 |------|------|------|---------|
@@ -42,12 +75,13 @@
 - 轮询中间态以 HTTP 400 + RFC 风格 error body 返回：`authorization_pending`（继续）、`slow_down`（间隔 +5s，封顶 60s）、`access_denied` / `expired_token` / `invalid_grant`（终止）。
 - 成功响应：`access_token` / `refresh_token` / `expires_in` / `refresh_token_expires_in` / `scope`。
 
-## 4. 多用户并行登录方案（核心设计）
+## 5. 多用户并行登录方案（核心设计）
 
 ### 4.1 身份隔离：一人一条 token，互不覆盖
 
 - token 以 **openId 为键**存储在 `data/user-tokens.json`（一人一条，`{access_token, refresh_token, 双过期时间, scope, updated_at}`）；
-- 发起授权时 `device_code` 与**发起者 openId 绑定**，轮询到的 token 只落到发起者名下——不存在"用 A 的同意换 B 的 token"；
+- 授权完成后，机器人用 access token 反查**实际授权者**（`authen/v1/user_info`），token 绑定到**实际点同意的账号**名下——谁完成授权就绑定谁的飞书，任何人都可以通过 `/login` 绑定自己的身份；
+- 即使链接被他人代点，token 也归实际点同意的人（经身份核实，不会冒记到发起人名下）；发起人重新 `/login` 即可绑定自己；
 - 存储文件在 `data/` 下（已被 `.gitignore` 排除），读写经 JSON store 的**串行写队列 + 临时文件原子替换**，多用户并发授权/刷新不会写坏文件。
 
 ### 4.2 并行授权：不同用户互不阻塞
@@ -83,7 +117,8 @@
 // 能力层示例：某功能需要日历权限
 const token = await userAuth.ensureScopes(openId, ["calendar:calendar:readonly"]);
 // 已具备   → 直接返回 access token，功能继续
-// 缺失     → 自动向该会话发"补充授权卡"（含 现有 ∪ 新增），本次返回 undefined
+// 缺失     → 自动向**该用户与机器人的私聊**发"补充授权卡"（含 现有 ∪ 新增，按 openId 直发，
+//            即使触发发生在群聊也不会把授权卡发进群里），本次返回 undefined
 //            能力层提示"已发送授权请求，完成后重试"；用户同意后下次调用即生效
 ```
 
@@ -108,21 +143,52 @@ const token = await userAuth.ensureScopes(openId, ["calendar:calendar:readonly"]
 - 存储按用户隔离，一个人的撤销不会触碰他人档案；
 - 后台任务是独立异步流，异常只记日志（`[UserAuth] 授权轮询异常`），不会向上抛断消息主流程。
 
-## 5. 安全边界
+## 6. 安全边界
 
-- **本人授权本人**：device_code 与发起者 openId 绑定，卡片授权结果只写入发起者名下；
+- **token 绑定实际授权账号**：授权完成后经 `authen/v1/user_info` 核实实际授权者并以其 openId 落库，杜绝"B 的 token 冒记到 A 名下"的错位；
+- **`/login` 仅限私聊**：群聊中授权链接可能被他人代点，因此群聊内直接拒绝；增量授权卡也按 openId 直发到用户私聊，绝不进群；
 - **scope 最小化**：默认只申请用户资料查询所需的最小集合（两个免审只读权限）；新能力上线时按需声明，经用户同意后追加；
 - **执行闸门不绕过**：user token 只解决"以谁的身份调 API"；工具能否被调用仍由 `.agent/permissions.json` 的组策略与 ToolGuard 漏斗决定；
 - **凭据不落代码**：token 存于 `data/user-tokens.json`（`.gitignore` 已排除 `data/`）；App Secret 不出现在 URL 与日志。
 
-## 6. 已知限制
+## 7. 已知限制
 
 - **管理员 token 失效期间**，用户资料查询通道退化为"仅 openId"（新用户入库缺中文名），管理员重新 `/login` 后下一条消息自动恢复——不影响聊天主流程；
 - **跨租户外部用户**不在本组织通讯录，contact API 查不到其资料，走群成员名单兜底（只有中文名，无英文名/部门）；
 - **新 scope 需要重新授权**：能力新增所需 scope 后，用户须重新完成一轮 Device Flow（管理员或用户各自行）；
 - 发起端点 `accounts.feishu.cn/oauth/v1/device_authorization` 未见于公开文档（与官方 lark-cli 行为核实一致），升级官方 SDK/CLI 后建议回归一次 `/login`。
 
-## 7. 实现与测试
+
+## 8. 常见问题（FAQ）
+
+**Q：授权页为什么只显示了一个权限？我申请的不是两个吗？**
+A：授权页只展示**本次需要你同意的增量**。已在后台开通且免审的权限（如 `contact:user.base:readonly`）可能被静默授予、不逐条列出。以授权成功卡片上显示的 scope 为准；也可直接试一次用户资料查询验证。
+
+**Q：如果后面用到的权限，我的 token 里其实已经有了，还会弹申请网页吗？**
+A：不会。`ensureScopes` 先检查现有 token 的 scope 覆盖情况——已包含所需权限时直接静默返回 token；只有缺失时才发起新一轮授权，且弹出的页面只列缺失部分。
+
+**Q：点同意后提示「授权失败：The auth method is not supported」？**
+A：旧版本的缺陷——轮询 token 端点误用了 JSON 编码（官方要求表单编码），已修复。更新代码并重启后再试；若仍出现，说明运行的不是最新代码。
+
+**Q：多久需要重新登录一次？**
+A：refresh_token 有效期约 30 天。30 天内至少使用/触发过一次相关能力，就会自动续期、永不失效；完全闲置超过 30 天，或在飞书后台撤销了授权，才需要重新 `/login`。
+
+**Q：重启服务需要重新登录吗？**
+A：不需要。token 落盘在 `data/user-tokens.json`，重启后自动读取并继续静默刷新。
+
+**Q：多人能同时登录吗？会互相覆盖吗？**
+A：能。token 按各自 openId 隔离存储，多人并行授权互不干扰；同一用户重复触发会去重提示，不会叠加轮询。
+
+**Q：授权成功了，功能还是提示缺权限？**
+A：多半是对应 scope 未在开发者后台开通、或开通后未发布版本。开通 → 发布版本 → 重新 `/login` 即可。
+
+**Q：想换一个飞书账号？**
+A：先 `/logout` 清除当前授权，再用目标账号 `/login`。
+
+**Q：授权链接被别人点开了会怎样？**
+A：授权页绑定的是"实际点同意的账号"——别人点同意，机器人获得的是**那个人的**身份 token 并记录在他自己名下，与发起人无关、也不影响发起人。发起人随后重新 `/login` 即可绑定自己。
+
+## 9. 实现与测试
 
 - 实现：`src/feishu/user-auth.ts`（`UserAuthService` / `LoginCommand` / `LogoutCommand` / `ensureScopes`）；
 - 接线：`src/main.ts`（装配，注入 `updateCard` / `sendCard` / `adminOpenId`）；

@@ -19,6 +19,7 @@ data/
 │       ├── ….jsonl
 │       └── files/…
 ├── user-tokens.json                # 用户飞书身份 token（/login，按 openId 一条）
+├── schedules.json                  # 定时任务表（唯一 id + cron + 指令 + 目标会话，不自动清理）
 ├── stats/
 │   └── skill-usage.jsonl           # 技能使用事件流（长期留存，不清理）
 └── users/
