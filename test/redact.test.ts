@@ -36,6 +36,13 @@ describe("redactSecrets（对话历史脱敏）", () => {
     expect(out).not.toContain(hex);
   });
 
+  it("凭证含 $ 替换特殊序列（如 $1）时按字面量遮蔽，不展开", () => {
+    const secret = "ab$1cdefghij90";
+    const out = redactSecrets(`token=ab$1cdefghij90`);
+    expect(out).not.toContain(secret);
+    expect(out).toContain("ab$1***90");
+  });
+
   it("不误伤普通文本与常见标识（open_id / 命令）", () => {
     const plain = "请把这份文档发给我 /login lark 我的 open_id 是 ou_764f63ac51563aa4b6c98a17f510a6f7";
     expect(redactSecrets(plain)).toBe(plain);

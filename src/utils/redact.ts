@@ -39,7 +39,8 @@ export function redactSecrets(text: string): string {
       const secret = secretGroup === 0 ? match : (groups[secretGroup - 1] as string | undefined);
       if (!secret) return match;
       const masked = MASKED(secret);
-      return secretGroup === 0 ? masked : match.replace(secret, masked);
+      // 函数形式替换：凭证/遮蔽串里若含 `$&` 等序列，作为 replacement 会被特殊展开
+      return secretGroup === 0 ? masked : match.replace(secret, () => masked);
     });
   }
   return result;

@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { logger } from "./logger.ts";
 
 /**
  * JSON 字典文件的持久化基类：懒加载 + 串行写队列 + 临时文件原子替换。
@@ -50,14 +51,19 @@ export abstract class JsonMapStore<V> {
     return new Map(Object.entries((parsed ?? {}) as Record<string, V>));
   }
 
-  /** 串行原子写：先写临时文件再 rename 替换，避免写一半被读到。 */
+  /** 串行原子写：先写临时文件再 rename 替换，避免写一半被读到。
+   *  队列自身必须永远可继续：单次写入失败只抛给当次调用方，
+   *  否则一个 rejected promise 会污染整条链，之后所有持久化静默失效。 */
   protected async persist(): Promise<void> {
-    this.writeQueue = this.writeQueue.then(async () => {
+    const task = this.writeQueue.then(async () => {
       await mkdir(dirname(this.filePath), { recursive: true });
       const temporaryPath = join(dirname(this.filePath), `.${Date.now()}-${process.pid}.tmp`);
       await writeFile(temporaryPath, `${JSON.stringify(Object.fromEntries(this.records), null, 2)}\n`, "utf8");
       await rename(temporaryPath, this.filePath);
     });
-    await this.writeQueue;
+    this.writeQueue = task.catch((error) => {
+      logger.error(`[JsonStore] 持久化失败（${this.filePath}）:`, error);
+    });
+    await task;
   }
 }
