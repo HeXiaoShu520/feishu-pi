@@ -18,9 +18,11 @@ export function globToRegExp(glob: string): RegExp {
     if (m === "*") return "[^/]*";
     return "[^/]";
   });
-  // `.env`、`**` 加 `.pem` 这类条目在任意层级生效；带具体目录前缀的条目从根锚定
+  // `.env`、`**` 加 `.pem` 这类条目在任意层级生效；带具体目录前缀的条目从根锚定。
+  // 大小写不敏感：deny 规则是安全边界，win32 文件系统大小写不敏感，
+  // `Secret.PEM`/`.ENV` 这类变体必须同样命中（白名单侧宽松无害，后续仍有 Guard 兜底）。
   const anyDepth = !normalized.includes("/") || normalized.startsWith("**/");
-  return new RegExp(anyDepth ? `^(?:.*/)?${source}$` : `^${source}$`);
+  return new RegExp(anyDepth ? `^(?:.*/)?${source}$` : `^${source}$`, "i");
 }
 
 /**

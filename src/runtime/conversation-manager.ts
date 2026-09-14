@@ -13,8 +13,10 @@ export interface ConversationMessage {
 interface ConversationState {
   session: FeishuPiSession;
   queue: Promise<void>;
-  /** 当前是否有在途请求（新消息到达时据此打断） */
+  /** 当前是否有在途/排队中的请求（新消息到达时据此打断；evictIdle 据此跳过） */
   busy?: boolean;
+  /** 已从会话表移除（clear/evict）：孤儿任务不得再把 sessionFile 写回映射 */
+  detached?: boolean;
   /** 最近一次活跃时刻（epoch 毫秒）：空闲驱逐的依据 */
   lastActiveAt: number;
   /** 已持久化到 store 的 sessionFile，避免重复写入 */
@@ -39,14 +41,17 @@ export class ConversationManager {
 
   /**
    * 驱逐空闲会话，释放内存中的 Pi Session（历史在磁盘上，下次消息到达自动从 sessionFile 恢复）。
-   * 忙碌（在途请求）的会话不驱逐。返回驱逐数量。
+   * 忙碌（在途/排队中）的会话不驱逐。被驱逐的会话标记 detached——
+   * 驱逐瞬间恰有任务在途时会变成孤儿（继续跑完回复），detached 阻止它把 sessionFile 写回映射，
+   * 避免下一条消息恢复到已被驱逐的旧会话。返回驱逐数量。
    */
   async evictIdle(maxIdleMs: number, now = Date.now()): Promise<number> {
     let evicted = 0;
     for (const [id, statePromise] of this.conversations) {
       const state = await statePromise.catch(() => undefined);
-      if (!state || state.busy) continue;
+      if (!state || state.busy || state.detached) continue;
       if (now - state.lastActiveAt < maxIdleMs) continue;
+      state.detached = true;
       this.conversations.delete(id);
       evicted++;
     }
@@ -77,8 +82,10 @@ export class ConversationManager {
     return state;
   }
 
-  /** sessionFile 一旦可用（Pi 首次落盘）立即持久化映射，不等整轮完成。 */
+  /** sessionFile 一旦可用（Pi 首次落盘）立即持久化映射，不等整轮完成；
+   *  孤儿会话（已 detached）跳过——否则 /new 或 evict 清掉的映射会被在途任务写回。 */
   private async persistSessionFile(conversationId: string, state: ConversationState): Promise<void> {
+    if (state.detached) return;
     const file = state.session.sessionFile;
     if (file && file !== state.persistedSessionFile) {
       state.persistedSessionFile = file;
@@ -95,9 +102,11 @@ export class ConversationManager {
       logger.info(`[Conversation] 新消息打断在途响应: ${message.conversationId}`);
       state.session.abort();
     }
+    // 立即标记占用：覆盖"getState 返回到 task 启动"之间的窗口——
+    // 该窗口内 evictIdle 会把空闲会话驱逐成孤儿（跑完却不写回映射，下一条消息另建新会话）
+    state.busy = true;
 
     const task = state.queue.then(async () => {
-      state.busy = true;
       // 事件到达时同步检查 sessionFile：Pi 在首个 message_end 落盘，此时立刻持久化映射，
       // 即使随后被中断，下次也能恢复到同一会话
       const unsubscribe = state.session.subscribe(async (event) => {
@@ -126,11 +135,19 @@ export class ConversationManager {
     return state.session.getStats?.();
   }
 
-  /** 清空指定会话的历史记录 */
+  /** 清空指定会话的历史记录：移除映射、中断在途任务并标记 detached——
+   *  在途任务会跑完（回复仍送达），但不再把旧 sessionFile 写回映射，否则 /new 会被它抵消。 */
   async clear(conversationId: string): Promise<void> {
-    // 删除映射和持久化
+    const statePromise = this.conversations.get(conversationId);
     this.conversations.delete(conversationId);
     await this.store?.delete(conversationId);
+    if (statePromise) {
+      const state = await statePromise.catch(() => undefined);
+      if (state) {
+        state.detached = true;
+        state.session.abort();
+      }
+    }
   }
 
   /** 中断指定会话的当前响应 */

@@ -251,7 +251,9 @@ export class FeishuAgentBridge {
     try {
       logger.info(`[${message.context.userName}] 执行指令: ${message.text}`);
 
-      // 特殊处理 /new 指令：清空会话；话题内共享会话，禁止清空
+      // 特殊处理 /new 指令：清空会话；话题内共享会话，禁止清空。
+      // 动作完成后直接 return——registry 里的 NewCommand 会重复执行 clear，
+      // 两次 clear 之间若并发消息刚重建会话，会被二次 clear 错杀成孤儿。
       if (message.text.trim() === "/new") {
         if (message.context.conversationId.startsWith("topic:")) {
           logger.info(`[Command] 话题内禁止 /new: ${message.context.conversationId}`);
@@ -264,12 +266,18 @@ export class FeishuAgentBridge {
         }
         await this.conversations.clear(message.context.conversationId);
         logger.info(`[Command] 已清空会话: ${message.context.conversationId}`);
+        await this.sendCommandCard(message, markdownCard("✅ 已清空对话历史，开始新的对话。"));
+        await this.messages?.complete(message.messageId);
+        return;
       }
 
-      // 特殊处理 /stop 指令：中断当前响应
+      // 特殊处理 /stop 指令：中断当前响应（同理，registry 里的 StopCommand 会重复 abort）
       if (message.text.trim() === "/stop") {
         await this.conversations.abort(message.context.conversationId);
         logger.info(`[Command] 已中断会话: ${message.context.conversationId}`);
+        await this.sendCommandCard(message, markdownCard("⏸️ 已停止当前响应。"));
+        await this.messages?.complete(message.messageId);
+        return;
       }
 
       const result = await handler.execute(message, this.client);

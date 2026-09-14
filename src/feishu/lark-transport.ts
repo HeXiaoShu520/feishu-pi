@@ -164,7 +164,9 @@ export class LarkTransport implements FeishuTransport {
       logger.info("[LarkTransport] 飞书 WebSocket 已连接");
       this.connecting = undefined;
     }).catch((error) => {
+      // 首连失败必须清掉残留实例：否则后续 connect() 会被"已连接"短路，永久静默失联
       this.connecting = undefined;
+      this.wsClient = undefined;
       throw error;
     });
     return this.connecting;
@@ -344,15 +346,27 @@ export class LarkTransport implements FeishuTransport {
     if (chatMode !== "topic") {
       return `${senderId}-${threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`}`;
     }
-    let rootId = threadId;
-    if (rootId) {
-      await this.topicRoots?.clear(chatId); // threadId 出现，话题根已确立
-    } else {
-      const pending = await this.topicRoots?.get(chatId);
-      rootId = pending ?? messageId;
-      if (!pending) await this.topicRoots?.set(chatId, rootId); // 首条消息：登记自己为话题根
-    }
-    return `topic:${chatId}:${rootId}`;
+    // 话题根的"读-判-写"必须按 chatId 串行：并发首消息各自登记自己为根会把同一话题裂成两个会话
+    return this.withTopicRootLock(chatId, async () => {
+      let rootId = threadId;
+      if (rootId) {
+        await this.topicRoots?.clear(chatId); // threadId 出现，话题根已确立
+      } else {
+        const pending = await this.topicRoots?.get(chatId);
+        rootId = pending ?? messageId;
+        if (!pending) await this.topicRoots?.set(chatId, rootId); // 首条消息：登记自己为话题根
+      }
+      return `topic:${chatId}:${rootId}`;
+    });
+  }
+
+  /** 话题根登记锁：同一 chatId 的根判定串行化；前序失败不阻塞后续。 */
+  private readonly topicRootLocks = new Map<string, Promise<void>>();
+  private async withTopicRootLock<T>(chatId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = this.topicRootLocks.get(chatId) ?? Promise.resolve();
+    const task = previous.then(fn, fn);
+    this.topicRootLocks.set(chatId, task.then(() => undefined, () => undefined));
+    return task;
   }
 
   /** 查询会话模式并缓存（话题群与普通群的会话隔离策略不同，模式极少变化）。 */

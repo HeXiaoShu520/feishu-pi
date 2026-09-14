@@ -58,6 +58,16 @@ function readPythonMeta(filePath: string): PythonToolMeta | null {
   return null;
 }
 
+/** 自定义工具不得占用的内置工具名：同名会覆盖内置实现，绕过对应的 Guard 链（如 read 的可读范围判定） */
+const RESERVED_TOOL_NAMES = new Set<string>(DEFAULT_BUILTIN_TOOLS);
+
+/** 内置同名工具拒绝登记；返回 undefined 表示应跳过该工具 */
+function checkReservedName(name: string, file: string): boolean {
+  if (!RESERVED_TOOL_NAMES.has(name)) return true;
+  logger.warn(`[Registry] 跳过 ${file}：自定义工具名「${name}」与内置工具冲突（会绕过对应权限链）`);
+  return false;
+}
+
 // ---------- 加载器 ----------
 
 /** 上一次加载的自定义工具签名：用于"仅在首次/工具集变化时打日志" */
@@ -91,6 +101,7 @@ async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
         // ---- Python 脚本工具 ----
         const meta = readPythonMeta(filePath);
         if (!meta) continue;
+        if (!checkReservedName(meta.name, filePath)) continue;
 
         const pythonCmd = detectPython();
         tools.push({
@@ -130,6 +141,9 @@ async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
                   }
                 },
               );
+              // Python 脚本未读 stdin 就退出时 end() 会触发 EPIPE，
+              // 不挂 error 监听会以 uncaught exception 冒泡并崩掉整个进程
+              child.stdin!.on("error", () => {});
               child.stdin!.end(JSON.stringify(params ?? {}));
             });
           },
@@ -141,7 +155,7 @@ async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
         const tool = module.default ??
           Object.values(module).find((exp) => (exp as ToolDefinition | undefined)?.name && (exp as ToolDefinition | undefined)?.execute);
 
-        if (tool && typeof tool === "object" && "name" in tool && "execute" in tool) {
+        if (tool && typeof tool === "object" && "name" in tool && "execute" in tool && checkReservedName((tool as ToolDefinition).name, filePath)) {
           tools.push(tool as ToolDefinition);
           entries.push({ name: (tool as ToolDefinition).name, file });
         }
