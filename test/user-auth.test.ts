@@ -7,7 +7,7 @@ import type { FeishuInboundMessage } from "../src/feishu/types.ts";
 
 /** 构造注入版 UserAuthService：HTTP 全走脚本应答（postForm：第 1 次为 begin，其余为轮询/刷新） */
 function makeService(opts: {
-  storeFile: string;
+  dir: string;
   postForm: ReturnType<typeof vi.fn>;
   updateCard: (messageId: string, card: object) => Promise<void>;
   sendCard?: (chatId: string, card: object) => Promise<string | undefined>;
@@ -19,7 +19,8 @@ function makeService(opts: {
     appId: "cli_test",
     appSecret: "secret",
     scopes: ["contact:user.base:readonly"],
-    storeFile: opts.storeFile,
+    vaultFile: join(opts.dir, "credentials.vault.json"),
+    legacyTokenFile: join(opts.dir, "user-tokens.json"),
     updateCard: opts.updateCard,
     sendCard: opts.sendCard,
     postForm: opts.postForm,
@@ -68,7 +69,7 @@ describe("UserAuthService（Device Flow）", () => {
       .mockResolvedValueOnce({ error: "authorization_pending" })
       .mockResolvedValueOnce(TOKEN_OK);
     const { service } = makeService({
-      storeFile: join(dir, "user-tokens.json"),
+      dir,
       postForm,
       updateCard: async (messageId, card) => {
         updates.push({ messageId, card });
@@ -102,7 +103,7 @@ describe("UserAuthService（Device Flow）", () => {
       .mockResolvedValueOnce({ error: "slow_down" })
       .mockResolvedValueOnce({ error: "access_denied" });
     const { service } = makeService({
-      storeFile: join(dir, "user-tokens.json"),
+      dir,
       postForm,
       updateCard: async (messageId, card) => {
         updates.push({ messageId, card });
@@ -121,7 +122,7 @@ describe("UserAuthService（Device Flow）", () => {
   it("群聊中 /login → 拒绝并提示转私聊（授权卡不进群）", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-"));
     const postForm = vi.fn();
-    const { service } = makeService({ storeFile: join(dir, "user-tokens.json"), postForm, updateCard: async () => {} });
+    const { service } = makeService({ dir, postForm, updateCard: async () => {} });
     const msg = message();
     msg.context.chatMode = "group";
     const result = await service.startLogin(msg);
@@ -141,17 +142,20 @@ describe("UserAuthService 增量授权（ensureScopes）", () => {
     updatedAt: 1_000_000,
   };
 
-  async function seed(storeFile: string): Promise<void> {
-    await writeFile(storeFile, JSON.stringify({ ou_test: VALID_TOKEN }), "utf8");
+  /**
+   * 预置旧明文 token 文件（历史格式）：service 首次访问时自动迁入加密凭证库，
+   * 顺带覆盖"明文迁移"路径的回归。
+   */
+  async function seed(dir: string): Promise<void> {
+    await writeFile(join(dir, "user-tokens.json"), JSON.stringify({ ou_test: VALID_TOKEN }), "utf8");
   }
 
   it("scope 已覆盖 → 直接返回 token，不发起授权", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-"));
-    const storeFile = join(dir, "user-tokens.json");
-    await seed(storeFile);
+    await seed(dir);
     const postForm = vi.fn();
     const sendCard = vi.fn();
-    const { service } = makeService({ storeFile, postForm, updateCard: async () => {}, sendCard });
+    const { service } = makeService({ dir, postForm, updateCard: async () => {}, sendCard });
 
     const token = await service.ensureScopes("ou_test", ["s1"]);
     expect(token).toBe("uat_old");
@@ -161,8 +165,7 @@ describe("UserAuthService 增量授权（ensureScopes）", () => {
 
   it("缺失 scope → 自动发增量授权卡；同意后合并入库，下次调用生效", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-"));
-    const storeFile = join(dir, "user-tokens.json");
-    await seed(storeFile);
+    await seed(dir);
     const updates: object[] = [];
     const sentCards: object[] = [];
     const postForm = vi.fn()
@@ -181,7 +184,7 @@ describe("UserAuthService 增量授权（ensureScopes）", () => {
         scope: "s1 s2 offline_access",
       });
     const { service } = makeService({
-      storeFile,
+      dir,
       postForm,
       updateCard: async (_messageId, card) => {
         updates.push(card);
@@ -202,8 +205,8 @@ describe("UserAuthService 增量授权（ensureScopes）", () => {
     expect(postForm.mock.calls[0][1].scope).toBe("s1 s2 offline_access");
     // 同意后新 token 入库（scope 合并），下次调用直接返回新 token
     expect(await service.getUserAccessToken("ou_test")).toBe("uat_new");
-    const stored = JSON.parse(await readFile(storeFile, "utf8"));
-    expect(stored.ou_test.scope).toBe("s1 s2 offline_access");
+    const stored = await service.getStoredUserToken("ou_test");
+    expect(stored?.scope).toBe("s1 s2 offline_access");
     expect(JSON.stringify(updates[0])).toContain("✅");
   });
 });
@@ -216,7 +219,7 @@ describe("UserAuthService 增量授权（ensureScopes）", () => {
       .mockResolvedValueOnce(BEGIN_OK)
       .mockResolvedValueOnce(TOKEN_OK);
     const { service } = makeService({
-      storeFile: join(dir, "user-tokens.json"),
+      dir,
       postForm,
       updateCard: async (_messageId, card) => {
         updates.push(card);
@@ -237,10 +240,9 @@ describe("UserAuthService 增量授权（ensureScopes）", () => {
 describe("getUserAccessToken 刷新", () => {
   it("近过期自动刷新（表单编码）；刷新失败清档返回 undefined", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-"));
-    const storeFile = join(dir, "user-tokens.json");
-    await mkdir(dir, { recursive: true });
+    // 旧明文格式写入 legacy 文件：service 首次访问自动迁入加密库（迁移路径回归）
     const nowMs = Date.now();
-    await writeFile(storeFile, JSON.stringify({
+    await writeFile(join(dir, "user-tokens.json"), JSON.stringify({
       ou_test: {
         openId: "ou_test",
         accessToken: "uat_old",
@@ -263,7 +265,8 @@ describe("getUserAccessToken 刷新", () => {
       appId: "cli_test",
       appSecret: "secret",
       scopes: ["s1"],
-      storeFile,
+      vaultFile: join(dir, "credentials.vault.json"),
+      legacyTokenFile: join(dir, "user-tokens.json"),
       updateCard: async () => {},
       postForm,
     });
@@ -271,8 +274,9 @@ describe("getUserAccessToken 刷新", () => {
     expect(await service.getUserAccessToken("ou_test")).toBe("uat_new");
     expect(postForm.mock.calls[0][1]).toMatchObject({ grant_type: "refresh_token", refresh_token: "urt_old" });
 
-    // 刷新失败 → 清档返回 undefined；再查无记录，不再发请求
-    await writeFile(storeFile, JSON.stringify({
+    // 刷新失败 → 清档返回 undefined；再查无记录，不再发请求（第二个独立目录，避免读到上一份加密库）
+    const dir2 = await mkdtemp(join(tmpdir(), "uauth-"));
+    await writeFile(join(dir2, "user-tokens.json"), JSON.stringify({
       ou_test: {
         openId: "ou_test",
         accessToken: "uat_old2",
@@ -288,7 +292,8 @@ describe("getUserAccessToken 刷新", () => {
       appId: "cli_test",
       appSecret: "secret",
       scopes: ["s1"],
-      storeFile,
+      vaultFile: join(dir2, "credentials.vault.json"),
+      legacyTokenFile: join(dir2, "user-tokens.json"),
       updateCard: async () => {},
       postForm: postFormFail,
     });
@@ -303,7 +308,7 @@ describe("getUserAccessToken 刷新", () => {
       .mockResolvedValueOnce(BEGIN_OK)
       .mockResolvedValue(TOKEN_OK);
     const { service } = makeService({
-      storeFile: join(dir, "user-tokens.json"),
+      dir,
       postForm,
       updateCard: async () => {},
     });
@@ -334,7 +339,8 @@ describe("/login 去重锁生命周期", () => {
       appId: "cli_test",
       appSecret: "secret",
       scopes: ["contact:user.base:readonly"],
-      storeFile: join(dir, "user-tokens.json"),
+      vaultFile: join(dir, "credentials.vault.json"),
+      legacyTokenFile: join(dir, "user-tokens.json"),
       updateCard: async () => {},
       postForm,
       getIdentity: async () => ({ openId: "ou_test", name: "测试用户" }),

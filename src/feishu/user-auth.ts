@@ -16,8 +16,9 @@
  * - token 落盘在 data/（.gitignore 已排除），对外统一走 getUserAccessToken（近过期静默刷新）；
  *   实际可访问数据 = 应用申请的 scope ∩ 用户本人可见范围，不绕过 Guard 的组策略闸门。
  */
+import { readFile, rename } from "node:fs/promises";
 import { logger } from "../utils/logger.ts";
-import { JsonMapStore } from "../utils/json-store.ts";
+import { CredentialVault } from "../utils/credential-vault.ts";
 import type { FeishuInboundMessage } from "./types.ts";
 import { markdownCard, type CommandHandler, type CommandResult } from "./commands.ts";
 
@@ -54,7 +55,7 @@ async function defaultPostForm(
   return (await res.json().catch(() => ({}))) as Record<string, unknown>;
 }
 
-/** 持久化的用户 token（data/user-tokens.json，按 openId 一条） */
+/** 持久化的用户 token（加密凭证库中按 openId 一条；provider = "lark"） */
 export interface StoredUserToken {
   accessToken: string;
   refreshToken: string;
@@ -67,20 +68,64 @@ export interface StoredUserToken {
   updatedAt: number;
 }
 
-class UserTokenStore extends JsonMapStore<StoredUserToken> {
+/**
+ * token 存储：加密凭证库（CredentialVault，provider = "lark"）。
+ * 首次访问时把历史明文文件（data/user-tokens.json）一次性迁入库中，原文件改名 .migrated.bak 保留。
+ */
+class UserTokenStore {
+  private vault: CredentialVault | undefined;
+  private readonly vaultFile: string;
+  private readonly legacyFile: string;
+  /** 明文迁移只做一次的哨兵（进程内） */
+  private migrated = false;
+
+  constructor(vaultFile: string, legacyFile: string) {
+    this.vaultFile = vaultFile;
+    this.legacyFile = legacyFile;
+  }
+
+  private async backend(): Promise<CredentialVault> {
+    this.vault ??= await CredentialVault.open(this.vaultFile);
+    if (!this.migrated) {
+      this.migrated = true;
+      await this.migrateLegacyPlainFile();
+    }
+    return this.vault;
+  }
+
+  /** 历史明文文件一次性迁入加密库：成功后原文件改名保留（.migrated.bak），不再回读。 */
+  private async migrateLegacyPlainFile(): Promise<void> {
+    let plain: Record<string, StoredUserToken>;
+    try {
+      plain = JSON.parse(await readFile(this.legacyFile, "utf8")) as Record<string, StoredUserToken>;
+    } catch {
+      return; // 无旧文件或不可读：无迁移需求
+    }
+    const entries = Object.entries(plain).filter(([, v]) => v?.accessToken);
+    for (const [openId, token] of entries) {
+      await this.vault!.put("lark", openId, token);
+    }
+    if (entries.length > 0) {
+      await rename(this.legacyFile, `${this.legacyFile}.migrated.bak`);
+      logger.info(`[UserAuth] 已将 ${entries.length} 条明文 token 迁入加密凭证库（原文件保留为 ${this.legacyFile}.migrated.bak）`);
+    }
+  }
+
   async get(openId: string): Promise<StoredUserToken | undefined> {
-    await this.ensureLoaded();
-    return this.records.get(openId);
+    return (await this.backend()).get<StoredUserToken>("lark", openId);
+  }
+
+  /** 列出所有已登录用户的 openId（后台保鲜遍历用）。 */
+  async listUsers(): Promise<string[]> {
+    return (await this.backend()).listUsers("lark");
   }
 
   async put(openId: string, token: StoredUserToken): Promise<void> {
-    await this.ensureLoaded();
-    this.records.set(openId, token);
-    await this.persist();
+    await (await this.backend()).put("lark", openId, token);
   }
 
   async delete(openId: string): Promise<void> {
-    await this.remove(openId);
+    await (await this.backend()).delete("lark", openId);
   }
 }
 
@@ -89,8 +134,10 @@ export interface UserAuthOptions {
   appSecret: string;
   /** /login 时申请的用户身份 scope 列表（需先在开发者后台为应用开通并发布版本） */
   scopes: string[];
-  /** token 持久化文件路径 */
-  storeFile: string;
+  /** 加密凭证库文件路径（data/credentials.vault.json） */
+  vaultFile: string;
+  /** 历史明文 token 文件路径（data/user-tokens.json）；存在时一次性迁入加密库后废弃 */
+  legacyTokenFile: string;
   /** 指引卡的原地更新（轮询结束后把"待授权"卡更新为结果卡） */
   updateCard: (messageId: string, card: object) => Promise<void>;
   /** FEISHU_ADMIN 的 openId：其登录 token 用于用户资料查询通道 */
@@ -128,10 +175,14 @@ export class UserAuthService {
   /** 每个用户进行中的授权；同一用户重复 /login 时去重提示，避免叠开轮询 */
   private readonly pending = new Map<string, PendingLogin>();
   private readonly options: UserAuthOptions;
+  /** 同用户并发刷新合并（singleflight）：refresh token 轮换下并发双刷会让后者拿到已作废的旧 token */
+  private readonly refreshInflight = new Map<string, Promise<string | undefined>>();
+  /** 内存 token 缓存：供会话 bash 注入时同步读取（spawnHook 是同步钩子）；由各写入点维护 */
+  private readonly memToken = new Map<string, { accessToken: string; expiresAt: number }>();
 
   constructor(options: UserAuthOptions) {
     this.options = options;
-    this.store = new UserTokenStore(options.storeFile);
+    this.store = new UserTokenStore(options.vaultFile, options.legacyTokenFile);
     this.postForm = options.postForm ?? defaultPostForm;
     this.getIdentity = options.getIdentity ?? defaultGetIdentity;
     this.now = options.now ?? (() => Date.now());
@@ -203,14 +254,31 @@ export class UserAuthService {
   /**
    * 取用户的有效 access token；未登录或刷新失败返回 undefined（调用方可引导 /login）。
    * access token 临期（<30s）时用 refresh token 静默换新；refresh token 也失效则清档要求重新登录。
+   * 同一用户的并发刷新合并为一次（singleflight）——refresh token 轮换下双刷会让后者拿着
+   * 已作废的旧 refresh token 失败，进而误删他人刚写回的新 token（把用户意外登出）。
    */
   async getUserAccessToken(openId: string): Promise<string | undefined> {
     const token = await this.store.get(openId);
     if (!token) return undefined;
-    const now = this.now();
-    if (token.expiresAt - 30_000 > now) return token.accessToken;
-    if (token.refreshExpiresAt - 60_000 <= now) {
+    if (token.expiresAt - 30_000 > this.now()) {
+      this.memToken.set(openId, { accessToken: token.accessToken, expiresAt: token.expiresAt });
+      return token.accessToken;
+    }
+
+    const inflight = this.refreshInflight.get(openId);
+    if (inflight) return inflight;
+    const task = this.refreshByStoreToken(openId, token).finally(() => {
+      this.refreshInflight.delete(openId);
+    });
+    this.refreshInflight.set(openId, task);
+    return task;
+  }
+
+  /** 实际刷新流程（per-openId 串行，经 getUserAccessToken 的 singleflight 进入）。 */
+  private async refreshByStoreToken(openId: string, token: StoredUserToken): Promise<string | undefined> {
+    if (token.refreshExpiresAt - 60_000 <= this.now()) {
       await this.store.delete(openId);
+      this.memToken.delete(openId);
       logger.info(`[UserAuth] 用户 ${openId} 的 refresh token 已过期，需要重新 /login`);
       return undefined;
     }
@@ -223,9 +291,17 @@ export class UserAuthService {
     });
     const accessToken = str(res.access_token);
     if (!accessToken) {
-      await this.store.delete(openId);
-      logger.warn(`[UserAuth] 用户 ${openId} 刷新 token 失败（${str(res.error) || "未知错误"}），需要重新 /login`);
-      return undefined;
+      // 乐观删保护：并发场景下别的请求可能已完成刷新并写回新记录；
+      // 仅当库中记录仍是本次拿来刷新的那条（updatedAt 未变）才清档
+      const current = await this.store.get(openId);
+      if (current && current.updatedAt === token.updatedAt) {
+        await this.store.delete(openId);
+        this.memToken.delete(openId);
+        logger.warn(`[UserAuth] 用户 ${openId} 刷新 token 失败（${str(res.error) || "未知错误"}），需要重新 /login`);
+        return undefined;
+      }
+      logger.warn(`[UserAuth] 用户 ${openId} 刷新失败但记录已被并发更新，采用最新记录`);
+      return current?.accessToken;
     }
     const refreshTtlSec = num(res.refresh_token_expires_in) || num(res.refresh_expires_in);
     const updated: StoredUserToken = {
@@ -237,7 +313,29 @@ export class UserAuthService {
       updatedAt: this.now(),
     };
     await this.store.put(openId, updated);
+    this.memToken.set(openId, { accessToken: updated.accessToken, expiresAt: updated.expiresAt });
     return updated.accessToken;
+  }
+
+  /**
+   * 同步读取内存中的有效 token（供会话 bash 工具的同步 spawnHook 注入）；
+   * 只读不刷新——新鲜度由消息入口预刷新与后台保鲜任务保证，未登录/未加载返回 undefined。
+   */
+  peekUserAccessToken(openId: string): string | undefined {
+    const cached = this.memToken.get(openId);
+    if (!cached || cached.expiresAt - 30_000 <= this.now()) return undefined;
+    return cached.accessToken;
+  }
+
+  /** 后台保鲜：把所有已登录用户的后台刷新跑一遍（各自经 singleflight 合并）；供定时任务调用。 */
+  async refreshAllKnown(): Promise<void> {
+    const openIds = await this.store.listUsers();
+    await Promise.all(openIds.map((openId) => this.getUserAccessToken(openId).catch(() => undefined)));
+  }
+
+  /** 只读查看某用户的落库记录（scope/过期时间诊断用）；不含明文 token 场景请勿打日志。 */
+  async getStoredUserToken(openId: string): Promise<StoredUserToken | undefined> {
+    return this.store.get(openId);
   }
 
   /**
@@ -304,6 +402,7 @@ export class UserAuthService {
     const existing = await this.store.get(openId);
     if (!existing) return false;
     await this.store.delete(openId);
+    this.memToken.delete(openId);
     return true;
   }
 
@@ -337,6 +436,7 @@ export class UserAuthService {
           updatedAt: this.now(),
         };
         await this.store.put(owner, token);
+        this.memToken.set(owner, { accessToken: token.accessToken, expiresAt: token.expiresAt });
         logger.info(`[UserAuth] 用户 ${owner} 授权成功（scope: ${token.scope || "默认"}）`);
         const bound = identity?.name ? `，已绑定账号：${identity.name}` : "";
         await this.finishCard(messageId, markdownCard(`✅ 授权成功${bound}（scope：${token.scope || "默认"}）。`));
@@ -375,7 +475,34 @@ export class UserAuthService {
   }
 }
 
-/** /login：发起 Device Flow 授权，把指引卡发给用户；后台轮询完成后原地更新结果。 */
+/**
+ * 登录 provider 目录：/login <provider> 的可接入清单。
+ * - lark：飞书 CLI（Device Flow，已完整接入）；
+ * - meegle / bbt（bitbucket）：占位——各自的用户凭证获取方式确定后在此追加实现，
+ *   凭证统一进 CredentialVault 的对应 provider 命名空间。
+ */
+interface ProviderEntry {
+  label: string;
+  /** 占位 provider 的说明文案（有 startLogin 的 provider 不需要） */
+  pending?: string;
+}
+
+const LOGIN_PROVIDERS: Record<string, ProviderEntry> = {
+  lark: { label: "飞书 CLI（lark-cli）" },
+  meegle: {
+    label: "飞书项目（meegle-cli）",
+    pending: "Meegle 的用户凭证获取方式接入中，暂不可用 /login 登录。当前 meegle 命令以服务端默认身份运行。",
+  },
+  bbt: {
+    label: "Bitbucket（bbt）",
+    pending: "Bitbucket 接入中，暂不可用 /login 登录。",
+  },
+};
+
+/** /login：统一多应用登录入口。
+ *  - `/login` 或 `/login lark`：飞书 Device Flow 授权（向后兼容：无参数默认 lark）；
+ *  - `/login <其他 provider>`：暂未接入的返回说明卡；
+ *  发起后卡片后台轮询，完成时原地更新结果。 */
 export class LoginCommand implements CommandHandler {
   private readonly auth: UserAuthService;
 
@@ -384,15 +511,24 @@ export class LoginCommand implements CommandHandler {
   }
 
   match(text: string): boolean {
-    return text.trim() === "/login";
+    return /^\/login(\s+\S+)?$/.test(text.trim());
   }
 
   execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
+    const provider = message.text.trim().split(/\s+/)[1]?.toLowerCase() ?? "lark";
+    const entry = LOGIN_PROVIDERS[provider];
+    if (!entry) {
+      const known = Object.entries(LOGIN_PROVIDERS).map(([id, e]) => `- \`/login ${id}\`：${e.label}`).join("\n");
+      return Promise.resolve({ card: markdownCard(`❓ 未知的应用「${provider}」。当前支持：\n${known}`) });
+    }
+    if (entry.pending) {
+      return Promise.resolve({ card: markdownCard(`⏳ ${entry.label}：${entry.pending}`) });
+    }
     return this.auth.startLogin(message);
   }
 }
 
-/** /logout：清除本人的用户身份登录记录。 */
+/** /logout：清除登录记录（无参数 = 全部 provider）。 */
 export class LogoutCommand implements CommandHandler {
   private readonly auth: UserAuthService;
 
@@ -401,10 +537,14 @@ export class LogoutCommand implements CommandHandler {
   }
 
   match(text: string): boolean {
-    return text.trim() === "/logout";
+    return /^\/logout(\s+\S+)?$/.test(text.trim());
   }
 
   async execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
+    const provider = message.text.trim().split(/\s+/)[1]?.toLowerCase() ?? "all";
+    if (provider !== "all" && provider !== "lark") {
+      return { card: markdownCard(`⏳ ${LOGIN_PROVIDERS[provider]?.label ?? provider}：暂无登录记录可清除（该应用尚未接入 /login）。`) };
+    }
     const removed = await this.auth.logout(message.context.userOpenId);
     return {
       card: markdownCard(removed ? "✅ 已退出登录，用户授权已清除。需要用户身份能力时请重新 /login。" : "你当前没有登录记录。"),
