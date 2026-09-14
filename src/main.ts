@@ -14,7 +14,8 @@ import { ScheduleService } from "./schedule/service.ts";
 import { PermissionPolicy } from "./permission/policy.ts";
 import { PermCommand } from "./feishu/commands.ts";
 import { LoginCommand, LogoutCommand, UserAuthService } from "./feishu/user-auth.ts";
-import { dirname, join } from "node:path";
+import { createIdentityBashTool } from "./runtime/identity-bash.ts";
+import { delimiter, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "./utils/logger.ts";
@@ -46,6 +47,12 @@ async function logCleanupStats(cleanup: Promise<CleanupStats>): Promise<void> {
  */
 export async function main(): Promise<void> {
   const config = loadConfig();
+
+  // 项目内预制 CLI（lark-cli / meegle …）：把 node_modules/.bin 前插到 PATH，
+  // Agent 的 bash 子进程继承后可直接调用，且优先于全局同名命令（npm install 即自带，不依赖全局安装）
+  const projectBinDir = join(config.cwd, "node_modules", ".bin");
+  process.env.PATH = `${projectBinDir}${delimiter}${process.env.PATH ?? ""}`;
+
   const messages = new MessageStore(join(config.sessionDir, "messages.json"));
 
   // 启动时清理过期数据和卡住的消息
@@ -124,17 +131,36 @@ export async function main(): Promise<void> {
     onModelSwitch: (name) => runtime?.setModelName(name),
   });
 
-  // 用户飞书身份授权（Device Flow，RFC 8628）：/login 指令 + 按 openId 存取 user_access_token
+  // 上电自举：机器人身份预取管理员资料（中英文名 + 部门），不依赖任何用户 /login——
+  // 预取走 contact 的 tenant 只读通道，失败不落冷却档案（后台异步，不阻塞启动）
+  if (adminOpenId) {
+    void transport.prefetchUserProfile(adminOpenId).catch((error) => {
+      logger.warn("[Main] 管理员资料预取失败:", error);
+    });
+  }
+
+  // 用户飞书身份授权（Device Flow，RFC 8628）：/login 指令 + 按 openId 加密存取 user_access_token
   userAuth = new UserAuthService({
     appId: config.feishuAppId,
     appSecret: config.feishuAppSecret,
     scopes: config.userAuthScopes,
     adminOpenId: adminOpenId,
-    storeFile: join(config.dataDir, "user-tokens.json"),
+    vaultFile: join(config.dataDir, "credentials.vault.json"),
+    legacyTokenFile: join(config.dataDir, "user-tokens.json"),
     updateCard: (messageId, card) => transport.updateCardById(messageId, card),
     // 增量授权：能力需要新 scope 时自动向该会话发授权卡
     sendCard: (chatId, card) => transport.sendCardToChat(chatId, card),
   });
+
+  // 后台保鲜：定时把已登录用户（含管理员）的 access token 刷新一遍——
+  // 会话 bash 的凭证注入走同步内存缓存，靠这里保证缓存里的 token 始终有效
+  const TOKEN_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
+  const tokenRefresher = setInterval(() => {
+    void userAuth?.refreshAllKnown().catch((error) => {
+      logger.warn("[Main] 用户 token 后台保鲜失败:", error);
+    });
+  }, TOKEN_REFRESH_INTERVAL_MS);
+  tokenRefresher.unref?.();
 
   // ---------- 权限闸门：策略 → 智能体审核 → 管理员授权卡 ----------
 
@@ -283,6 +309,17 @@ ${trimmed}` }] },
     toolGuard: (groupPolicy, params, signal) => toolGuard.check(groupPolicy, params, signal),
     skillUsageStore: usageStore,
     scheduleService,
+    // 会话级带身份 bash：按发起人（含管理员）注入 lark-cli 凭证 env；
+    // 同步读内存缓存，未登录时不注入（lark-cli 走默认身份，调用方提示 /login）。
+    // 工厂调用即异步预热该用户的内存缓存（快路径命中时零开销），保证首条 bash 前缓存就绪。
+    identityBash: (userId) => {
+      void userAuth?.getUserAccessToken(userId).catch(() => undefined);
+      return createIdentityBashTool({
+        cwd: config.cwd,
+        appId: config.feishuAppId,
+        getLarkToken: () => userAuth?.peekUserAccessToken(userId),
+      });
+    },
   }, [createAskUserTool(askBroker)]);
 
   // 上电预加载：权限策略 + Skills + 自定义工具在首条消息前全部就绪

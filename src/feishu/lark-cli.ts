@@ -48,6 +48,16 @@ const CACHE_EXPIRY_DAYS = 3;
 /** 空档案（三级查询均未命中的最小资料）的重查间隔：信息可能随时变得可查，更快重试 */
 const SPARSE_CACHE_EXPIRY_DAYS = 1;
 
+/** getUserProfile 的可选行为开关 */
+export interface UserProfileQueryOptions {
+  /**
+   * 预取模式（上电时主动拉取管理员资料用）：全部通道失败时**不写冷却档案**。
+   * 上电时管理员 user token 未登录、群名单也不可得，若按常规语义会把空档案冻住 1 天，
+   * 导致真实首条消息命中冷却缓存而查不到资料。
+   */
+  prefetch?: boolean;
+}
+
 /** 空档案判定：无名字、无英文名、无部门（仅 openId） */
 function isSparseProfile(profile: LarkUserProfile): boolean {
   return !profile.name && !profile.en_name && !profile.department_name?.length;
@@ -78,15 +88,18 @@ export class LarkCli {
    * 查询用户资料，带缓存和过期机制。
    *
    * 通道顺序：
-   * 1. 管理员身份——FEISHU_ADMIN 通过 /login 授权的 user_access_token 调用 contact API。
+   * 0. 机器人身份——tenant token 直查 contact v3（应用开通 contact 只读权限即可），
+   *    上电预取管理员资料不依赖任何用户登录；
+   * 1. 管理员用户身份——FEISHU_ADMIN 通过 /login 授权的 user_access_token 调用 contact API。
    *    数据范围 = 管理员的组织架构可见范围（管理员默认全组织可见），应用可见范围外的内部成员同样可查；
-   * 2. 管理员查不到 → 该用户是跨租户外部用户（不在本组织通讯录）→ 用**群成员名单**（机器人身份）
+   * 2. 前两通道未命中 → 该用户是跨租户外部用户（不在本组织通讯录）→ 用**群成员名单**（机器人身份）
    *    分页查找拿中文名（群名单必含消息发送者）。
    *
    * 缓存：成功档案 3 天；全部通道失败也落盘冷却档案（openId + 旧资料），冷却 1 天后自动重试，
    * 避免重复打接口（应对"刚入群名单未同步"等临时失败）。消费方自行判断空字段并做兜底展示（如 openId 直显）。
+   * prefetch 模式例外：失败不落冷却档案（见 UserProfileQueryOptions）。
    */
-  async getUserProfile(openId: string, chatId?: string): Promise<LarkUserProfile> {
+  async getUserProfile(openId: string, chatId?: string, queryOptions?: UserProfileQueryOptions): Promise<LarkUserProfile> {
     await this.loadCache();
 
     const now = new Date();
@@ -106,15 +119,30 @@ export class LarkCli {
     let resolved: ProfileName | undefined = await this.queryNameByAdmin(openId);
     let via = "管理员";
 
-    // 管理员通道未命中 → 跨租户外部用户（不在本组织通讯录）→ 群成员名单（机器人身份）拿中文名
+    // 通道 0（机器人身份）兜底：无 admin user token 时也能查（tenant 权限范围内）
+    if (!resolved) {
+      resolved = await this.queryNameByBot(openId);
+      if (resolved) via = "机器人";
+    }
+
+    // 通道 2（外部用户兜底）：群成员名单（机器人身份）拿中文名
     if (!resolved && chatId) {
       resolved = await this.queryNameByGroupMembers(openId, chatId);
       if (resolved) via = "群名单";
     }
 
-    // 全部通道失败：仍把 openId 落盘（保留旧资料），进入 1 天冷却——
-    // 期间直接命中缓存不重复打接口，冷却期满自动重试（应对"刚入群名单未同步"等临时失败）
+    // 全部通道失败：常规语义落冷却档案（1 天）；预取模式不落盘，避免冻住真实首条消息的查询
     if (!resolved) {
+      if (queryOptions?.prefetch) {
+        logger.info(`[LarkCli] 预取 ${openId} 资料未命中（不落冷却档案），留待真实消息时再查`);
+        const prev = this.cache[openId];
+        return {
+          name: prev?.name ?? "",
+          en_name: prev?.en_name ?? "",
+          department_name: prev?.department_name ?? [],
+          updatedAt: now.toISOString(),
+        };
+      }
       const prev = this.cache[openId];
       const profile: LarkUserProfile = {
         name: prev?.name ?? "",
@@ -206,9 +234,43 @@ export class LarkCli {
     }
   }
 
+  /**
+   * 机器人身份通道：tenant token 直查 contact v3（应用后台开通 contact 只读权限即可）。
+   * 上电预取管理员资料不依赖任何用户 /login；查不到返回 undefined（如外部用户不在通讯录）。
+   */
+  private async queryNameByBot(openId: string): Promise<ProfileName | undefined> {
+    try {
+      const res = await this.client.contact.user.get({
+        path: { user_id: openId },
+        params: { user_id_type: "open_id" },
+      });
+      if (res.code !== 0) {
+        logger.info(`[LarkCli] 机器人通道未查到用户 ${openId}：${res.msg ?? `code ${res.code}`}`);
+        return undefined;
+      }
+      const user = res.data?.user as {
+        name?: string;
+        en_name?: string;
+        department_path?: Array<{ department_path?: { name?: string }; department_name?: { name?: string } }>;
+      } | undefined;
+      const name = user?.name ?? undefined;
+      const en_name = user?.en_name ?? undefined;
+      const department_name = Array.isArray(user?.department_path)
+        ? user.department_path
+            .map((d) => d.department_path?.name || d.department_name?.name)
+            .filter((n): n is string => Boolean(n))
+        : undefined;
+      if (!name && !en_name) return undefined;
+      logger.info(`[LarkCli] 机器人通道查询成功: 中文名=${name}, 英文名=${en_name ?? "无"}, 部门=${department_name?.join(" / ") ?? "无"}`);
+      return { name, en_name, department_name };
+    } catch (error) {
+      logger.warn(`[LarkCli] 机器人通道查询 ${openId} 失败：${error instanceof Error ? error.message : String(error)}`);
+      return undefined;
+    }
+  }
+
 /** 加载缓存文件 */
-  private async loadCache(): Promise<void> {
-    if (this.cacheLoaded) return;
+  private async loadCache(): Promise<void> {    if (this.cacheLoaded) return;
     try {
       await access(this.cacheFilePath, constants.R_OK);
       const content = await readFile(this.cacheFilePath, "utf8");

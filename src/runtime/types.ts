@@ -2,6 +2,7 @@
  * Runtime 层的类型定义：Pi 会话事件、提示词、配置与会话接口。
  */
 import type { AgentTool } from "@earendil-works/pi-agent-core";
+import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { SkillUsageStore } from "../stats/skill-usage-store.ts";
 import type { GroupPolicy, PermissionPolicy } from "../permission/policy.ts";
 import type { ScheduleService } from "../schedule/service.ts";
@@ -45,6 +46,12 @@ export interface FeishuPiConfig {
   skillUsageStore?: SkillUsageStore;
   /** 定时任务服务（可选）；提供时为负责人会话注入定时任务管理工具 */
   scheduleService?: ScheduleService;
+  /**
+   * 会话级"带身份"bash 工厂（可选）；提供时以同名自定义工具覆盖内置 bash，
+   * 在每次命令 spawn 前按会话用户注入 CLI 凭证环境变量（lark-cli 等，见 identity-bash.ts）。
+   * 参数为该会话的用户 openId——管理员与普通用户同流程。
+   */
+  identityBash?: (userId: string) => ToolDefinition;
 }
 
 /** 对 Pi AgentSession 的最小接口封装（供会话管理与卡片渲染使用） */

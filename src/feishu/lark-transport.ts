@@ -104,6 +104,14 @@ export class LarkTransport implements FeishuTransport {
     });
   }
 
+  /**
+   * 上电预取用户资料（管理员自举用）：机器人身份直查 contact，不依赖任何用户 /login。
+   * 预取模式失败不写冷却档案，不影响真实首条消息时的完整查询。
+   */
+  async prefetchUserProfile(openId: string): Promise<void> {
+    await this.larkCli.getUserProfile(openId, undefined, { prefetch: true });
+  }
+
   /** 建立飞书长连接并开始接收事件。 */
   async connect(): Promise<void> {
     if (this.connecting) return this.connecting;
