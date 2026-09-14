@@ -23,7 +23,21 @@
       "Bash(npm install:*)",
       "Bash(npx:*)",
       "Bash(pip install:*)",
-      "Bash(gh auth:*)"
+      "Bash(gh auth:*)",
+      "Bash(lark-cli docs:*)",
+      "Bash(lark-cli im:*)",
+      "Bash(lark-cli contact:*)",
+      "Bash(lark-cli base:*)",
+      "Bash(lark-cli sheets:*)",
+      "Bash(lark-cli wiki:*)",
+      "Bash(lark-cli drive:*)",
+      "Bash(lark-cli calendar:*)",
+      "Bash(lark-cli task:*)",
+      "Bash(lark-cli approval:*)",
+      "Bash(lark-cli mail:*)",
+      "Bash(lark-cli okr:*)",
+      "Bash(lark-cli meeting:*)",
+      "Bash(lark-cli --help)"
     ],
     "group_1": [
       "Read(docs/**)",
