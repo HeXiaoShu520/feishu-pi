@@ -20,4 +20,10 @@ describe("loadConfig 模型统计小字开关", () => {
     expect(loadConfig({ ...baseEnv, FEISHU_SHOW_MODEL_STATS: "true" }).showModelStats).toBe(true);
     expect(loadConfig({ ...baseEnv, FEISHU_SHOW_MODEL_STATS: "ON" }).showModelStats).toBe(true);
   });
+
+  it("组员宏：FEISHU_GROUP_<纯数字> 映射为 group_<数字>；非数字组名转小写", () => {
+    const config = loadConfig({ ...baseEnv, FEISHU_GROUP_1: "李雷", FEISHU_GROUP_VIP: "韩梅梅" });
+    expect(config.groupMembership["group_1"]).toEqual(["李雷"]);
+    expect(config.groupMembership["vip"]).toEqual(["韩梅梅"]);
+  });
 });

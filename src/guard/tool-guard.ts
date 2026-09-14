@@ -1,7 +1,6 @@
 import type { GroupPolicy } from "../permission/policy.ts";
 import type { PermissionBroker } from "./broker.ts";
 import type { PolicyJudge } from "./judge.ts";
-import { matchGlobs } from "../utils/path-glob.ts";
 import { logger } from "../utils/logger.ts";
 
 export interface ToolGuardCheckParams {
@@ -14,10 +13,11 @@ export interface ToolGuardCheckParams {
 
 /**
  * 工具调用 Guard，作为 Pi Agent 的 beforeToolCall 钩子。
- * 判定流程（bash 密钥过滤 → 策略 → 智能体 → 授权卡）：
+ * 判定流程（deny 规则 → 策略 → 智能体 → 授权卡）：
  *
- *   ⓪ bash 命令引用密钥/凭据文件（.env、*.key 等）→ 直接拦下，对所有人（含管理员）生效；
- *      read/write 等其余工具的密钥约束由系统提示的密钥安全规则负责（模型侧，不做代码拦截）
+ *   ⓪ deny 规则（.env、密钥/凭据等路径 glob，permissions.json "deny" 可扩展）：
+ *      bash 命令 token / write·edit 路径命中 → 一律拦截，对所有人（含管理员）生效；
+ *      read 路径在 runtime 分支用同一份 deny 清单先行拦截
  *   ① 调用命中所属组策略（bash 名单 / write 范围 / tools 名单）→ 免审放行
  *   ② 策略未命中 → 智能体综合判断（以该组授权策略为参考）：
  *        allow → 放行；ask → 授权卡
@@ -39,17 +39,26 @@ export class ToolGuard {
   async check(policy: GroupPolicy, params: ToolGuardCheckParams, signal?: AbortSignal): Promise<{ block: true; reason: string } | undefined> {
     const { toolName, args, risky } = params;
 
-    // ⓪ bash 密钥指令过滤：引用密钥/凭据文件的命令执行前直接拦下（对所有人含管理员生效）；
-    // 其余工具（read/write 等）的密钥约束交给系统提示的密钥安全规则
+    // ⓪ deny 规则（第 0 层）：先于组策略、智能体审核与授权卡，对所有人（含管理员）生效。
+    // bash 按命令 token 匹配；read 在 runtime 分支先行拦截；这里补 write/edit 的路径拦截。
     if (toolName === "bash") {
       const command = extractCommand(args);
-      const secretHit = command !== undefined ? matchSecretCommand(command) : undefined;
-      if (secretHit) {
-        logger.warn(`[ToolGuard] bash 命令引用密钥文件，已过滤: ${command}（命中 ${secretHit}）`);
+      const denyHit = command !== undefined
+        ? command.split(/[\s'"`;&|()<>,]+/).map((token) => (token ? policy.deniedPath(token) : undefined)).find(Boolean)
+        : undefined;
+      if (denyHit) {
+        logger.warn(`[ToolGuard] bash 命令引用禁止路径，已拦截: ${command}（命中 ${denyHit}）`);
         return {
           block: true,
-          reason: `⛔ 命令引用了密钥/凭据文件（命中 ${secretHit}），不允许通过指令读取；如需其中信息，请让用户自行查看后告知`,
+          reason: `⛔ 命令引用了受保护的路径（命中 deny 规则 ${denyHit}），不允许通过指令访问；如需其中信息，请让用户自行查看后告知`,
         };
+      }
+    } else if (toolName === "write" || toolName === "edit") {
+      const path = extractPath(args);
+      const denyHit = path !== undefined ? policy.deniedPath(path) : undefined;
+      if (denyHit) {
+        logger.warn(`[ToolGuard] 写入禁止路径，已拦截: ${path}（命中 ${denyHit}）`);
+        return { block: true, reason: `⛔ 该路径已被权限策略禁止读写（命中 deny 规则 ${denyHit}）` };
       }
     }
 
@@ -128,23 +137,4 @@ function extractCommand(args: unknown): string | undefined {
   if (typeof args !== "object" || args === null) return undefined;
   const command = (args as Record<string, unknown>).command;
   return typeof command === "string" ? command : undefined;
-}
-
-/** 密钥/凭据文件名模式（bash 指令过滤用，路径 glob，无目录分隔符即匹配任意层级）。 */
-const SECRET_FILE_PATTERNS = [
-  ".env", ".env.*", "*.env",                             // 环境变量/密钥配置
-  "*.key", "*.pem", "*.p12", "*.pfx",                    // 密钥与证书
-  "id_rsa*", "id_ed25519*", "id_ecdsa*",                 // SSH 私钥
-  "*credential*", "*secret*", ".git-credentials", ".netrc", // 凭据类文件
-];
-
-/** bash 命令是否引用密钥/凭据文件：按空白与 shell 标点拆 token 逐个匹配，命中返回模式。 */
-function matchSecretCommand(command: string): string | undefined {
-  for (const token of command.split(/[\s'"`;&|()<>,]+/)) {
-    if (!token) continue;
-    for (const pattern of SECRET_FILE_PATTERNS) {
-      if (matchGlobs([pattern], token)) return pattern;
-    }
-  }
-  return undefined;
 }

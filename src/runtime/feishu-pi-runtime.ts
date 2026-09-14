@@ -269,6 +269,12 @@ export class FeishuPiRuntime {
       if (ctx.toolCall.name === "read") {
         const target = extractReadPath(ctx.args);
         if (target !== undefined) {
+          // 第 0 层 deny 规则：先于可读范围判定，对所有人（含管理员）生效
+          const denyHit = groupPolicy.deniedPath(target);
+          if (denyHit) {
+            logger.warn(`[Runtime] 读取已被 deny 规则拦截: ${target}（命中 ${denyHit}）`);
+            return { block: true, reason: `⛔ 该路径已被权限策略禁止访问（命中 deny 规则 ${denyHit}）` };
+          }
           const allowed = groupPolicy.readAllowed(target);
           if (!allowed) {
             return { block: true, reason: "⛔ 该路径不在你的可读范围内" };

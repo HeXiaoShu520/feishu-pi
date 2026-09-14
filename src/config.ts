@@ -65,14 +65,19 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     guardModels: (env.FEISHU_GUARD_MODELS ?? env.FEISHU_GUARD_MODEL ?? "").split(",").map((m) => m.trim()).filter(Boolean),
     guardApiKey: env.FEISHU_GUARD_API_KEY ?? env.FEISHU_PI_MODEL_API_KEY,
     guardTimeoutMs: Number(env.FEISHU_GUARD_TIMEOUT_MS) > 0 ? Number(env.FEISHU_GUARD_TIMEOUT_MS) : 15_000,
-    // 各组归属关系：解析 FEISHU_GROUP_<NAME>=成员1,成员2,... 格式
+    // 各组归属关系：解析 FEISHU_GROUP_<NAME>=成员1,成员2,... 格式；
+    // 纯数字后缀映射为团队组名（FEISHU_GROUP_1 → group_1，与 permissions.json 的 group_1/group_2 对应）
     groupMembership: Object.fromEntries(
       Object.entries(env)
         .filter(([key]) => key.startsWith("FEISHU_GROUP_"))
-        .map(([key, value]) => [
-          key.slice("FEISHU_GROUP_".length).toLowerCase(),
-          (value ?? "").split(",").map((s) => s.trim()).filter(Boolean),
-        ]),
+        .map(([key, value]) => {
+          const suffix = key.slice("FEISHU_GROUP_".length);
+          const groupName = /^\d+$/.test(suffix) ? `group_${suffix}` : suffix.toLowerCase();
+          return [
+            groupName,
+            (value ?? "").split(",").map((s) => s.trim()).filter(Boolean),
+          ];
+        }),
     ),
     approvalTimeoutMs: Number(env.FEISHU_APPROVAL_TIMEOUT_MS) > 0 ? Number(env.FEISHU_APPROVAL_TIMEOUT_MS) : 5 * 60_000,
     // 回复末尾的模型统计小字：默认显示；FEISHU_SHOW_MODEL_STATS=0/false/off 关闭（工具过程状态不受影响）

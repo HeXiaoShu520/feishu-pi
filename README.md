@@ -16,8 +16,8 @@ feishu-pi 是一个基于 [Pi](https://github.com/earendil-works/pi) 的飞书 A
 - ✅ **消息去重** - 防止重复处理同一消息
 - ✅ **自动重连** - WebSocket 断线自动恢复
 - ✅ **飞书用户上下文** - 自动查询并缓存用户信息（中文名、英文名、部门名；经管理员 `/login` 授权的用户身份查询），供所有技能和 Function Calling 直接使用
-- ✅ **基于组的权限控制** - admin 和任意自定义组（group1、vip…），规则扁平分组、动态热重载
-- ✅ **工具调用 Guard** - bash 密钥指令过滤（引用 .env/密钥/凭据的命令直接拦下）+ 指令白名单（正则）+ 大模型审核 + 管理员授权卡（单次确认，支持转发到管理员私聊），高危调用默认弹卡；系统提示注入密钥安全规则（确需返回敏感值必须加 * 遮蔽）
+- ✅ **基于组的权限控制** - admin、common 与用户组（group_1、group_2……），规则扁平分组、动态热重载；deny 规则（.env 等敏感路径）全局禁止读写
+- ✅ **工具调用 Guard** - deny 规则（.env/密钥/凭据一律禁止读写，含管理员）+ 指令白名单（正则）+ 大模型审核 + 管理员授权卡（单次确认，支持转发到管理员私聊），高危调用默认弹卡；系统提示注入密钥安全规则（确需返回敏感值必须加 * 遮蔽）
 - ✅ **Skills 支持** - 基于 Pi-agent 的技能系统，支持权限配置
 - ✅ **Function Calling** - 自定义工具注册，支持权限控制
 - ✅ **受限文件访问** - 非管理员只能读取技能文件，无法访问敏感数据
@@ -136,7 +136,7 @@ cd mini-claw
 npm install
 ```
 
-> `npm install` 会自动执行 `postinstall` 脚本（`scripts/patch-pi-ai.js`），对 `node_modules/@earendil-works/pi-ai` 打补丁：移除 Anthropic 请求头中的 `anthropic-dangerous-direct-browser-access`，避免经 API 中转站调用时返回 403。重新安装依赖后补丁会自动重新应用，无需手动处理。
+> `npm install` 会自动执行 `postinstall` 脚本（`src/scripts/patch-pi-ai.js`），对 `node_modules/@earendil-works/pi-ai` 打补丁：移除 Anthropic 请求头中的 `anthropic-dangerous-direct-browser-access`，避免经 API 中转站调用时返回 403。重新安装依赖后补丁会自动重新应用，无需手动处理。
 
 ### 依赖补丁与升级注意
 
@@ -144,7 +144,7 @@ npm install
 
 | 补丁 | 补的对象 | 原因 | 失效症状 | 何时可删 |
 |------|---------|------|---------|---------|
-| `scripts/patch-pi-ai.js`（postinstall，自动重放） | `@earendil-works/pi-ai` | 浏览器访问请求头导致 API 中转站 403 | 直连官方 API 时中转站不再 403，或改用官方直连 | pi-ai 上游移除该请求头 |
+| `src/scripts/patch-pi-ai.js`（postinstall，自动重放） | `@earendil-works/pi-ai` | 浏览器访问请求头导致 API 中转站 403 | 直连官方 API 时中转站不再 403，或改用官方直连 | pi-ai 上游移除该请求头 |
 | ~~`patchCardAck()`（已删除）~~ | `@larksuiteoapi/node-sdk` LarkChannel | 卡片回调应答无数据体 + 去重静默吞事件 | — | 已于传输层切换到官方底层 `WSClient + EventDispatcher` 后删除（详见 `git log` 中"传输层切换"提交） |
 
 **传输层实现说明**：`src/feishu/lark-transport.ts` 使用官方**底层** `WSClient + EventDispatcher`（而非 LarkChannel 高层封装）——卡片回调 handler 的返回值会原样进 ACK 数据体（与 Go 官方 SDK 行为一致），消息归一化使用官方导出的 `normalize()`。升级 node-sdk 版本后建议快速回归一次：收发消息、文件附件、授权卡点击、/model 切换。
@@ -459,34 +459,39 @@ call check_health() → ✅ 服务健康
 
 **一个策略文件 + 两道闸门：白名单先行，智能体兜底；常用操作免审，边界操作灵活判断，敏感操作交人工确认。**
 
-- `.agent/permissions.json` 定义各身份组的规则——每条规则用类型前缀标明范围
-- 组成员在 `.env` 中通过 `FEISHU_GROUP_<组名>=成员1,成员2,...` 配置，`FEISHU_ADMIN` 自动属于 admin 组
-- 每次工具调用时，先过白名单闸门（匹配即放行），未命中交智能体闸门综合判断，再不行弹授权卡交管理员
-- **密钥防护双轨**：系统提示注入「密钥安全规则」（不读取/输出 .env、密钥、凭据类文件；某些时候确需返回密钥之类的值时，一定要加 `*` 遮蔽），bash 指令执行前另有过滤兜底（引用密钥文件的命令直接拦下，对所有人含管理员生效）
+- `.agent/permissions.json` 只有两个输入：`deny`（全局禁止读写的路径清单）与 `allow`（各身份组的放行规则，含 common/admin/group_*）——每条规则用类型前缀标明范围
+- 组成员在 `.env` 中配置：团队组用纯数字简写 `FEISHU_GROUP_1=成员1,成员2`（对应组 `group_1`，扩展 `FEISHU_GROUP_2` → `group_2`）；非数字组名用全名 `FEISHU_GROUP_<组名>`；`FEISHU_ADMIN` 自动属于 admin 组
+- 每次工具调用时，先过 deny 规则（.env 等敏感路径一律禁止读写，对所有人含管理员生效），再过白名单闸门（匹配即放行），未命中交智能体闸门综合判断，再不行弹授权卡交管理员
+- **密钥防护双轨**：执行侧由 deny 规则硬拦（.env 等内置默认 + `permissions.json` 顶层 `deny` 可扩展，read/write/bash 全覆盖）；模型侧由系统提示注入「密钥安全规则」（确需返回密钥之类的值时，一定要加 `*` 遮蔽）
 
 ### 策略文件
 
+文件只有两个输入：`deny`（全局禁止清单）与 `allow`（各身份组的放行规则）：
+
 ```json
 {
-  "common": [
-    "Read(.agent/skills/**)",
-    "Tools(query_skill_usage)"
-  ],
-  "admin": [
-    "Read(**)",
-    "Write(.agent/**)",
-    "Write(data/**)",
-    "Tools(*)",
-    "Bash(git status:*)",
-    "Bash(npm run test:*)",
-    "Bash(npm run build:*)"
-  ],
-  "group1": [
-    "Read(docs/**)",
-    "Bash(npm run test:*)",
-    "Bash(git diff:*)",
-    "Bash(git log:*)"
-  ]
+  "deny": [],
+  "allow": {
+    "common": [
+      "Read(.agent/skills/**)",
+      "Tools(query_skill_usage)"
+    ],
+    "admin": [
+      "Read(**)",
+      "Write(.agent/**)",
+      "Write(data/**)",
+      "Tools(*)",
+      "Bash(git status:*)",
+      "Bash(npm run test:*)",
+      "Bash(npm run build:*)"
+    ],
+    "group_1": [
+      "Read(docs/**)",
+      "Bash(npm run test:*)",
+      "Bash(git diff:*)",
+      "Bash(git log:*)"
+    ]
+  }
 }
 ```
 
@@ -501,8 +506,9 @@ call check_health() → ✅ 服务健康
 | `Tools(name)` | 工具名或 `*` | 该组可调用的自定义工具 |
 | `Bash(cmd)` | 命令、`cmd:*` 或 `*` | 该组可执行的 bash 命令（精确/前缀/全部） |
 
-- **admin 组**（保留名）：`FEISHU_ADMIN` 或 `FEISHU_GROUP_ADMIN` 自动属于；未配置的字段取全量缺省（`Bash(*)`、`Read(**)`、`Write(**)`、`Tools(*)`）
-- **普通组**（组名任意，如 `group1`、`vip`）：未配置的字段取保守缺省（仅技能目录可读、无工具、无命令）
+- **admin 组**（保留名）：`FEISHU_ADMIN` 自动属于；未配置的字段取全量缺省（`Bash(*)`、`Read(**)`、`Write(**)`、`Tools(*)`）
+- **团队组**：命名 `group_1`、`group_2`……，组员宏可用纯数字简写 `FEISHU_GROUP_1`（只暂定一个团队时配 `FEISHU_GROUP_1` 即可）
+- **其他组**（组名任意，如 `vip`）：组员宏用全名 `FEISHU_GROUP_VIP`；未配置的字段取保守缺省（仅技能目录可读、无工具、无命令）
 - **不在任何组**：仅技能目录可读，其余全部拦截
 - 一人可属多组，能力取**并集**
 - 组文件 mtime 热重载，新会话生效（`/new` 后重算）
@@ -531,20 +537,20 @@ Bash      → 命令命中组 bash 名单（精确/前缀/*）？在→放行
 ### 安全保障
 
 1. ✅ **代码层判定** - 工具注册与调用判定全部在代码层，提示词注入绕不过
-2. ✅ **密钥防护双轨** - 系统提示注入密钥安全规则：不读取/输出 .env、密钥、凭据类文件，确需返回敏感值时必须加 `*` 遮蔽；bash 命令执行前另有过滤兜底（对所有人含管理员生效）
+2. ✅ **deny 第 0 层** - `.env`/`*.key`/`*.pem`/SSH 私钥/凭据类文件禁止经智能体读写（read 路径、write/edit 路径、bash 命令引用全覆盖），对所有人含管理员生效；`permissions.json` 顶层 `deny` 数组可追加；系统提示另注入密钥安全规则（确需返回敏感值时必须加 `*` 遮蔽）
 3. ✅ **最小权限** - 用户默认只能读技能目录、用名单内工具
 4. ✅ **防穿越** - 路径判定用 cwd 归一化后的形态，`..` 穿越串不参与匹配
 5. ✅ **bash 防拼接** - 含 `;` `&&` `|` 反引号 `$(` 的命令不参与前缀匹配，直接交授权卡
 6. ✅ **fail-safe** - 策略文件写坏按最保守处理；策略未命中且智能体未配置 → 直接弹卡
 
-## 工具调用 Guard：密钥过滤 + 白名单 + 授权卡
+## 工具调用 Guard：deny 规则 + 白名单 + 授权卡
 
-在组过滤之上，每次工具实际执行前还有一道闸（`beforeToolCall` 钩子，`src/guard/`）。**bash 密钥指令先过滤，其余非允许即 ask**——不在白名单里的调用一律找管理员确认：
+在组过滤之上，每次工具实际执行前还有一道闸（`beforeToolCall` 钩子，`src/guard/`）。**deny 先硬拦，其余非允许即 ask**——不在白名单里的调用一律找管理员确认：
 
 ```
 工具调用
   ↓
-⓪ bash 命令引用密钥/凭据文件（.env、*.key、凭据类，含拼接引用）→ 直接拦下（对所有人含管理员）
+⓪ deny 规则（.env/密钥/凭据路径）：read 路径、write/edit 路径、bash 命令引用（含拼接）→ 一律拦截（对所有人含管理员）
 ① Read/Write/Bash/Tools 规则命中白名单 → 放行
 ② 自定义工具（未标高危 risk: "high"）→ 快速放行
 ③ 其余（白名单未命中 + 高危自定义工具）→ 智能体闸门
@@ -556,13 +562,13 @@ Bash      → 命令命中组 bash 名单（精确/前缀/*）？在→放行
 
 **密钥防护双轨：**
 
-- **模型侧（系统提示）**：注入「密钥安全规则」——不读取、引用或输出 .env、密钥/证书/私钥/凭据类敏感文件的内容；如果某些时候任务确实需要返回密钥之类的值，返回时一定要用星号遮蔽（只保留前几位，其余用 `*` 代替），不允许明文输出
-- **执行侧（代码过滤）**：bash 命令按空白与 shell 标点拆 token 匹配密钥文件名模式，引用命中直接拦下（覆盖 `cat .env`、`python -c "open('.env')"` 等拼接引用）；read/write 等其余工具不做代码拦截，靠模型侧规则约束
+- **执行侧（deny 第 0 层）**：内置默认模式 + `permissions.json` 顶层 `deny` 数组构成禁止清单——read 路径、write/edit 路径、bash 命令按 token 匹配（覆盖 `cat .env`、`python -c "open('.env')"` 等拼接引用），命中一律拦截，**对所有人含管理员生效、不走授权卡**
+- **模型侧（系统提示）**：注入「密钥安全规则」——不读取、引用或输出密钥/证书/私钥/凭据类敏感文件的内容；如果某些时候任务确实需要返回密钥之类的值，返回时一定要用星号遮蔽（只保留前几位，其余用 `*` 代替），不允许明文输出
 
 **安全设计：**
 
 - **规则语法**：使用 `Read(glob)` / `Write(glob)` / `Tools(name)` / `Bash(cmd)` 前缀格式，大小写不敏感
-- **非允许即 ask**：白名单之外没有其他拒绝规则，一律找管理员确认；唯一例外是 bash 密钥指令过滤（如上）——引用密钥/凭据文件的命令直接拦下。想让某个操作免审，就写一条规则；想管住它，就别写
+- **非允许即 ask**：白名单之外没有其他拒绝规则，一律找管理员确认；唯一例外是 deny 第 0 层（如上）——禁止清单里的路径无论如何不开放。想让某个操作免审，就写一条规则；想管住它，就别写
 - **自定义工具快速通道**：自定义工具注册时已指定所属组（即已授权），直接放行；逃生口：`risk: "high"` 强制走授权卡
 - **授权卡服务端校验**：唯一 `approval_id` + 一次性 `token`；回调校验 token 一致、卡片来源、点击者必须是管理员、decision 合法、未处理过
 - **参数脱敏**：授权卡中 `token`、`password`、`api_key`、`secret`、`cookie` 等字段脱敏为 `***`，命令最多展示 1200 字符
@@ -574,8 +580,11 @@ Bash      → 命令命中组 bash 名单（精确/前缀/*）？在→放行
 
 ```json
 {
-  "admin": ["Read(**)", "Write(.agent/**)", "Tools(*)", "Bash(git push:*)"],
-  "group1": ["Read(.agent/skills/**)", "Tools(query_skill_usage)"]
+  "deny": ["**/vault/**"],
+  "allow": {
+    "admin": ["Read(**)", "Write(.agent/**)", "Tools(*)", "Bash(git push:*)"],
+    "group_1": ["Read(.agent/skills/**)", "Tools(query_skill_usage)"]
+  }
 }
 ```
 

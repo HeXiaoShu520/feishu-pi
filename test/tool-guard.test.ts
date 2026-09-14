@@ -12,16 +12,25 @@ const userPolicy: GroupPolicy = {
   readAllowed: () => true,
   writeAllowed: (p) => p.startsWith("docs/"),
   toolsAllowed: () => true,
+  deniedPath: () => undefined,
   describe: () => ({ bash: ["npm run test:*"], read: ["docs/**"], write: ["docs/**"], tools: ["*"] }),
 };
 
-/** 全量放行策略（模拟管理员）：用于验证 bash 密钥过滤独立于组策略生效 */
+/** deny 模拟：.env 家族 / 密钥 / 凭据类命中（与内置 DEFAULT_DENY_PATTERNS 语义一致） */
+const isDeniedRef = (ref: string): boolean => {
+  const base = ref.replace(/\\/g, "/").split("/").pop() ?? "";
+  return base === ".env" || base.startsWith(".env.") || /\.env$/.test(base)
+    || base.endsWith(".key") || base.endsWith(".pem") || base.includes("credential");
+};
+
+/** 全量放行策略（模拟管理员）+ deny 生效：验证 deny 第 0 层独立于组策略、先于一切放行 */
 const allowAllPolicy: GroupPolicy = {
   ...userPolicy,
   groups: ["admin"],
   isAdmin: true,
   bashAllowed: () => true,
   writeAllowed: () => true,
+  deniedPath: (ref) => (isDeniedRef(ref) ? ref : undefined),
 };
 
 class FakeBroker extends PermissionBroker {
@@ -92,13 +101,13 @@ describe("ToolGuard 策略 + 智能体 + 授权卡", () => {
   });
 });
 
-describe("ToolGuard bash 密钥指令过滤（先于策略/智能体/授权卡）", () => {
-  it("bash 引用 .env：即使组名单全量放行也拦下，且不发授权卡", async () => {
+describe("ToolGuard deny 规则（第 0 层，先于策略/智能体/授权卡）", () => {
+  it("bash 引用 .env：即使组名单全量放行也拦截，且不发授权卡", async () => {
     const broker = new FakeBroker();
     const guard = new ToolGuard(broker, judgeAllow);
     const result = await guard.check(allowAllPolicy, { toolName: "bash", args: { command: "cat .env" } });
     expect(result?.block).toBe(true);
-    expect(result?.reason).toContain("密钥");
+    expect(result?.reason).toContain("deny");
     expect(broker.calls.length).toBe(0);
   });
 
@@ -108,7 +117,7 @@ describe("ToolGuard bash 密钥指令过滤（先于策略/智能体/授权卡�
     expect(result?.block).toBe(true);
   });
 
-  it("密钥文件引用（server.key / 凭据类）同样命中", async () => {
+  it("密钥/凭据类文件（server.key、credentials）同样命中", async () => {
     const guard = makeGuard({});
     const key = await guard.check(allowAllPolicy, { toolName: "bash", args: { command: "cat certs/server.key" } });
     expect(key?.block).toBe(true);
@@ -122,9 +131,16 @@ describe("ToolGuard bash 密钥指令过滤（先于策略/智能体/授权卡�
     expect(await guard.check(allowAllPolicy, { toolName: "bash", args: { command: "cat notes.env.md" } })).toBeUndefined();
   });
 
-  it("read/write 等其余工具不做密钥拦截（由系统提示密钥安全规则约束）", async () => {
+  it("write/edit 写禁止路径 → 拦截（deny 先于 write 范围放行）", async () => {
     const guard = makeGuard({});
-    expect(await guard.check(allowAllPolicy, { toolName: "write", args: { path: ".env", content: "x" } })).toBeUndefined();
-    expect(await guard.check(allowAllPolicy, { toolName: "doc-import", args: { file_path: ".env" } })).toBeUndefined();
+    const env = await guard.check(allowAllPolicy, { toolName: "write", args: { path: ".env.local", content: "x" } });
+    expect(env?.block).toBe(true);
+    const key = await guard.check(allowAllPolicy, { toolName: "edit", args: { file_path: "certs/server.key" } });
+    expect(key?.block).toBe(true);
+  });
+
+  it("deny 未命中的正常写入不受影响", async () => {
+    const guard = makeGuard({});
+    expect(await guard.check(allowAllPolicy, { toolName: "write", args: { path: "docs/a.md", content: "x" } })).toBeUndefined();
   });
 });

@@ -3,28 +3,38 @@ import { matchGlobs } from "../utils/path-glob.ts";
 import { logger } from "../utils/logger.ts";
 
 /**
- * 统一权限策略：一个文件（.agent/permissions.json）定义若干身份组——
- * admin（管理员组）与任意多个用户组（group1、vip……组名任取）——各自的可调用范围。
+ * 统一权限策略：一个文件（.agent/permissions.json）只有两个输入——
  *
  *   {
- *     "admin":  ["Bash(git status:*)", "Read(**)", "Write(.agent/**)", "Tools(*)"],
- *     "group1": ["Bash(npm run test:*)", "Read(docs/**)", "Tools(query_skill_usage)"]
+ *     "deny":  ["禁止读写的路径 glob，第 0 层，对所有人含管理员生效"],
+ *     "allow": {
+ *       "common":  ["Read(.agent/skills/**)", "Tools(query_skill_usage)"],
+ *       "admin":   ["Bash(git status:*)", "Read(**)", "Write(.agent/**)", "Tools(*)"],
+ *       "group_1": ["Bash(npm run test:*)", "Read(docs/**)"]
+ *     }
  *   }
  *
- * 规则前导词：
+ * allow 里每组为规则数组，前导词：
  *   - Bash(命令)   — 命令精确匹配、`cmd:*` 前缀匹配或 "*"（该组可执行的 bash 命令）
  *   - Read(路径glob) — 该组可读的路径范围
  *   - Write(路径glob) — 该组可写的路径范围
  *   - Tools(工具名)  — 该组可调用的自定义工具，精确名称或 "*"（全部）
  *
- * 组成员在 .env 中通过 FEISHU_GROUP_<组名>=成员1,成员2,... 配置。
- * 保留组名：
+ * allow 里的保留组名：
  *   - common——所有人默认拥有的基础权限（每个用户自动叠加，无需归属）；
- *   - admin——管理员组，FEISHU_ADMIN 或 FEISHU_GROUP_ADMIN 自动属于；未配置的字段取全量缺省。
+ *   - admin——管理员组，FEISHU_ADMIN 自动属于；未配置的字段取全量缺省。
+ *   其余组名任取（团队组暂定 group_1、group_2……）。
+ *
+ * 组成员在 .env 中通过 FEISHU_GROUP_<组名>=成员1,成员2,... 配置；
+ * 纯数字后缀简写为团队组：FEISHU_GROUP_1 → group_1、FEISHU_GROUP_2 → group_2。
  *
  * 生效范围 = common ∪ 所属各组并集。组文件 mtime 热重载，新会话生效。
  * 名单之外的调用一律交授权卡（非允许即 ask）；read 范围外交直接拦截（能力问题不问人）。
  * 文件缺失或解析失败时按保守默认处理（仅技能目录可读、无工具、无命令）。
+ *
+ * deny（第 0 层）：与内置默认模式（.env 等环境配置与密钥/凭据文件）合并，
+ * 先于一切 allow 规则判定，对所有人（含管理员）生效——
+ * 敏感配置不允许经智能体读或写（read 路径 / write·edit 路径 / bash 命令引用均拦截）。
  */
 
 export interface GroupFields {
@@ -44,9 +54,24 @@ export interface GroupPolicy {
   writeAllowed(path: string): boolean;
   /** 自定义工具（.agent/tools/ 中的 Python/TS 脚本）是否对该组可用 */
   toolsAllowed(name: string): boolean;
+  /** deny 规则（第 0 层）：路径引用命中禁止清单时返回命中的模式，未命中返回 undefined */
+  deniedPath(pathRef: string): string | undefined;
   /** 生效范围（/perm 展示用） */
   describe(): Required<Omit<GroupFields, "tools">> & { tools: string[] };
 }
+
+/**
+ * 内置 deny 模式（路径 glob，无目录分隔符的条目匹配任意层级，与 Read/Write 同语义）：
+ * .env 等环境配置与密钥/凭据文件一律禁止经智能体读写，零配置即生效；
+ * permissions.json 顶层 "deny" 数组可追加自定义模式（与内置合并去重）。
+ */
+export const DEFAULT_DENY_PATTERNS: readonly string[] = [
+  ".env", ".env.*", "*.env",                              // 环境变量/密钥配置
+  "*.key", "*.pem", "*.p12", "*.pfx", "*.jks",            // 密钥与证书
+  "id_rsa*", "id_ed25519*", "id_ecdsa*",                  // SSH 私钥
+  "*credential*", "*secret*",                             // 凭据类文件名
+  ".git-credentials", ".netrc",                           // 版本控制/网络凭据
+];
 
 /** 不在任何组时的保守缺省：仅技能目录可读（零配置行为） */
 const UNGROUPED_READ = [".agent/skills/**"];
@@ -63,6 +88,8 @@ export class PermissionPolicy {
   private groups: Record<string, GroupFields> = {};
   /** common 默认层：所有人自动叠加的基础权限 */
   private common: GroupFields = {};
+  /** deny 追加模式（permissions.json 顶层 "deny"，与内置默认合并为第 0 层） */
+  private denyExtras: string[] = [];
   private groupMembership: Record<string, string[]>;
   private loadedMtimeMs = -1;
   private warned = false;
@@ -73,6 +100,11 @@ export class PermissionPolicy {
     this.groupMembership = options.groupMembership ?? {};
     this.usersFile = options.usersFile;
     this.cwd = options.cwd ?? process.cwd();
+  }
+
+  /** 当前生效的 deny 模式全集（内置默认 ∪ 配置追加，去重）。 */
+  private get denyPatterns(): string[] {
+    return [...new Set([...DEFAULT_DENY_PATTERNS, ...this.denyExtras])];
   }
 
   /**
@@ -142,6 +174,7 @@ export class PermissionPolicy {
     );
 
     const toolsAll = merged.tools.includes("*");
+    const denyGlobs = this.denyPatterns;
 
     return {
       groups,
@@ -156,13 +189,15 @@ export class PermissionPolicy {
       readAllowed: (path) => matchGlobs(merged.read, path, cwd),
       writeAllowed: (path) => matchGlobs(merged.write, path, cwd),
       toolsAllowed: (name) => toolsAll || merged.tools.includes(name),
+      deniedPath: (pathRef) => denyGlobs.find((pattern) => matchGlobs([pattern], pathRef, cwd)),
       describe: () => ({ ...merged }),
     };
   }
 
-  /** 全部组概览（/perm 展示用）：每组生效范围。 */
+  /** 全部组概览（/perm 展示用）：每组生效范围 + deny 模式全集。 */
   async describe(): Promise<{
     groups: Record<string, GroupFields & { effective: Required<Omit<GroupFields, "tools">> & { tools: string[] } }>;
+    deny: string[];
   }> {
     await this.ensureLoaded();
     const names = new Set<string>(["admin", "common", ...Object.keys(this.groups)]);
@@ -172,10 +207,10 @@ export class PermissionPolicy {
       const sources = name === "common" ? [this.common] : [this.common, this.fieldsFor(name)];
       out[name] = { ...own, effective: this.mergeFields(sources) };
     }
-    return { groups: out };
+    return { groups: out, deny: this.denyPatterns };
   }
 
-  /** 组文件加载；mtime 变化时重载。缺失/非法时按空组处理（fail-safe）。 */
+  /** 组文件加载；mtime 变化时重载。缺失/非法时按空组处理（fail-safe），deny 仍有内置默认兜底。 */
   private async ensureLoaded(): Promise<void> {
     let mtimeMs: number;
     try {
@@ -183,6 +218,7 @@ export class PermissionPolicy {
     } catch {
       this.groups = {};
       this.common = {};
+      this.denyExtras = [];
       this.loadedMtimeMs = -1;
       return;
     }
@@ -192,16 +228,20 @@ export class PermissionPolicy {
       const raw = JSON.parse(await readFile(this.filePath, "utf8")) as Record<string, unknown>;
       this.groups = {};
       this.common = {};
-      for (const [name, fields] of Object.entries(raw)) {
+      this.denyExtras = sanitizeDeny(raw.deny);
+
+      // allow：各身份组的规则数组（保留组名 common/admin + 任意命名用户组）
+      const allow = (typeof raw.allow === "object" && raw.allow !== null ? raw.allow : {}) as Record<string, unknown>;
+      for (const [name, fields] of Object.entries(allow)) {
         if (name.startsWith("_")) continue;  // _ 开头视为注释
         if (name === "common") {
-          this.common = sanitize(fields);  // 保留组名：所有人默认叠加
+          this.common = sanitizeGroup(fields);  // 保留组名：所有人默认叠加
           continue;
         }
-        this.groups[name] = sanitize(fields);
+        this.groups[name] = sanitizeGroup(fields);
       }
       this.loadedMtimeMs = mtimeMs;
-      logger.info(`[Policy] 已加载权限策略（${this.filePath}）`);
+      logger.info(`[Policy] 已加载权限策略（${this.filePath}），deny 保护 ${this.denyPatterns.length} 条模式`);
     } catch (error) {
       if (!this.warned) {
         this.warned = true;
@@ -209,6 +249,7 @@ export class PermissionPolicy {
       }
       this.groups = {};
       this.common = {};
+      this.denyExtras = [];
       this.loadedMtimeMs = -1;
     }
   }
@@ -257,29 +298,15 @@ function parseRuleEntries(entries: unknown[], out: GroupFields): void {
   }
 }
 
-function sanitize(fields: unknown): GroupFields {
+/** deny 清单解析：字符串数组，其余类型忽略。 */
+function sanitizeDeny(fields: unknown): string[] {
+  return Array.isArray(fields) ? fields.filter((item): item is string => typeof item === "string") : [];
+}
+
+/** 组规则解析：条目必须是 "前导词(模式)" 字符串数组，其余形态按空组处理。 */
+function sanitizeGroup(fields: unknown): GroupFields {
   const out: GroupFields = {};
-
-  // 新格式：组的值直接是数组
-  if (Array.isArray(fields)) {
-    parseRuleEntries(fields, out);
-    return out;
-  }
-
-  // 向下兼容旧格式：{ bash: [...], read: [...], ... } 或 { allow: [...] }
-  if (typeof fields !== "object" || fields === null) return {};
-  const obj = fields as Record<string, unknown>;
-
-  // 兼容 { allow: [...] } 过渡格式
-  if (Array.isArray(obj.allow)) {
-    parseRuleEntries(obj.allow, out);
-    return out;
-  }
-
-  for (const key of ["bash", "read", "write", "tools"] as const) {
-    const value = obj[key];
-    if (Array.isArray(value)) out[key] = value.filter((item): item is string => typeof item === "string");
-  }
+  if (Array.isArray(fields)) parseRuleEntries(fields, out);
   return out;
 }
 

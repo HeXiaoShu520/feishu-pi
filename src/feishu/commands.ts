@@ -364,6 +364,12 @@ export class PermCommand implements CommandHandler {
       lines.push(`**${name}**`, entries.length ? entries.join("\n") : "（空）", "");
     }
 
+    lines.push(
+      "**deny**（第 0 层：禁止读写，对所有人含管理员生效）",
+      policy.deny.map((pattern) => `Deny(${pattern})`).join("\n"),
+      "",
+    );
+
     lines.push("ℹ️ 名单外的调用由智能体参考本策略综合判断，仍不放行则弹授权卡。");
 
     return { card: markdownCard(lines.join("\n")) };
