@@ -102,7 +102,7 @@ export class ReplyParts {
 const TOOL_CALL_MAX_CHARS = 300;
 
 /**
- * 格式化一次工具调用的展示文本（卡片工具段 + 日志），把关键参数带出来：
+ * 格式化一次工具调用的展示文本（卡片工具段 + 日志）：工具名加粗，命令/参数放代码块。
  * bash 显示命令本身，read/write/edit 显示目标路径，
  * 其余（自定义工具）按常见字段兜底提取，最终回退展示整包参数 JSON（单行、截断）。
  */
@@ -133,10 +133,12 @@ export function formatToolCall(toolName: string, args: unknown): string {
       detail = undefined;
     }
   }
-  if (!detail) return `正在调用 **${toolName}** …`;
+  if (!detail) return `**${toolName}**`;
   if (detail.length > TOOL_CALL_MAX_CHARS) detail = `${detail.slice(0, TOOL_CALL_MAX_CHARS)}…`;
-  const escaped = detail.replace(/\n/g, " ").replace(/`/g, "'");
-  return `正在调用 **${toolName}**：\`${escaped}\``;
+  // 代码块围栏内出现 ``` 会破坏渲染，替换为单引号；换行原样保留（命令可读性更好）
+  const safe = detail.replace(/```/g, "'''");
+  const lang = toolName === "bash" ? "bash" : "";
+  return `**${toolName}**\n\n\`\`\`${lang}\n${safe}\n\`\`\``;
 }
 
 /**

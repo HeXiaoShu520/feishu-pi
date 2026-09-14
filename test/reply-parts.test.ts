@@ -89,18 +89,22 @@ describe("ReplyParts 详细模式（全量保留）", () => {
 });
 
 describe("formatToolCall 工具行格式化", () => {
-  it("bash 提取命令，read/write 提取路径", () => {
-    expect(formatToolCall("bash", { command: "git status" })).toContain("`git status`");
-    expect(formatToolCall("read", { path: "docs/a.md" })).toContain("`docs/a.md`");
-    expect(formatToolCall("edit", { file_path: "src/x.ts" })).toContain("`src/x.ts`");
+  it("bash：工具名加粗 + 命令进 bash 代码块", () => {
+    expect(formatToolCall("bash", { command: "git status" })).toBe("**bash**\n\n```bash\ngit status\n```");
   });
 
-  it("未知字段回退整包参数 JSON；超长截断", () => {
+  it("read/write/edit：目标路径进代码块", () => {
+    expect(formatToolCall("read", { path: "docs/a.md" })).toBe("**read**\n\n```\ndocs/a.md\n```");
+    expect(formatToolCall("edit", { file_path: "src/x.ts" })).toBe("**edit**\n\n```\nsrc/x.ts\n```");
+  });
+
+  it("未知字段回退整包参数 JSON；超长截断；围栏内三反引号被替换", () => {
     expect(formatToolCall("my_tool", { foo: "bar" })).toContain('"foo"');
     const long = "x".repeat(400);
     const line = formatToolCall("bash", { command: long });
-    expect(line.length).toBeLessThan(400);
-    expect(line.endsWith("…`")).toBe(true);
+    expect(line.length).toBeLessThan(420);
+    expect(line.endsWith("…\n```")).toBe(true);
+    expect(formatToolCall("bash", { command: "a```b" })).not.toContain("a```b");
   });
 });
 

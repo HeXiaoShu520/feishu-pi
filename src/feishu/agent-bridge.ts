@@ -183,7 +183,7 @@ export class FeishuAgentBridge {
           if (event.type === "tool_started") {
             activeToolName = event.toolName;
             if (!hasRealContent) await startRealContent();
-            await replyParts.appendTool(`\n\n> ⚙ ${formatToolCall(event.toolName, event.args)}`);
+            await replyParts.appendTool(`\n\n${formatToolCall(event.toolName, event.args)}`);
           }
           if (event.type === "tool_finished") {
             activeToolName = "";
