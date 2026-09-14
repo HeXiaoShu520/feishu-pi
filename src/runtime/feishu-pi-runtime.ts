@@ -144,10 +144,10 @@ export class FeishuPiRuntime {
     if (skills.length > 0) {
       logger.info(`[Runtime] 已加载 ${colors.bright}${colors.magenta}${skills.length}${colors.reset} 个 Skills（对所有人开放）:`);
       skills.forEach((skill) => {
-        // 每行（含名字）最多显示 100 个可见字符，超长描述截断
+        // 每行（含名字）最多显示 90 个可见字符，超长描述截断
         const head = `  ✆ ${skill.name}: `;
         const desc = String(skill.description ?? "").replace(/\s+/g, " ").trim();
-        const maxDesc = Math.max(0, 100 - head.length);
+        const maxDesc = Math.max(0, 90 - head.length);
         const shown = desc.length > maxDesc ? `${desc.slice(0, maxDesc)}…` : desc;
         logger.info(`  ${colors.magenta}✆${colors.reset} ${colors.cyan}${skill.name}${colors.reset}: ${shown}`);
       });
