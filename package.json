@@ -9,12 +9,15 @@
     "config": "tsx src/config-server.ts",
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "vitest --run --config vitest.config.ts",
-    "postinstall": "node src/scripts/patch-pi-ai.js"
+    "postinstall": "node src/scripts/patch-pi-ai.js",
+    "setup": "tsx src/scripts/setup-wizard.ts"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.84.2",
     "@earendil-works/pi-ai": "^0.84.2",
     "@earendil-works/pi-coding-agent": "^0.84.2",
+    "@lark-project/meegle": "^1.0.23",
+    "@larksuite/cli": "^1.0.95",
     "@larksuiteoapi/node-sdk": "1.73.0",
     "body-parser": "^2.3.0",
     "croner": "^10.0.1",
@@ -25,6 +28,8 @@
     "@types/body-parser": "^1.19.6",
     "@types/express": "^5.0.6",
     "@types/node": "22.19.19",
+    "@types/qrcode-terminal": "^0.12.2",
+    "qrcode-terminal": "^0.12.0",
     "tsx": "4.22.1",
     "typescript": "5.9.3",
     "vite": "^6.4.1",
