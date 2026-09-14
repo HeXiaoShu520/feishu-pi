@@ -14,6 +14,13 @@
 - [types.ts](file://src/runtime/types.ts)
 </cite>
 
+## 更新摘要
+**变更内容**
+- 新增可配置的 WebSocket 连接参数（handshakeTimeoutMs、pingTimeout）
+- 支持自定义源标识（source）用于连接识别和监控
+- 增强连接弹性和错误处理机制
+- 改进连接生命周期管理和重连策略
+
 ## 目录
 1. [简介](#简介)
 2. [项目结构](#项目结构)
@@ -35,7 +42,7 @@
 - 客户端（Agent）集成方式、状态管理与性能优化建议
 
 ## 项目结构
-本项目围绕“传输层 + 桥接层 + 运行时”的三层设计组织代码：
+本项目围绕"传输层 + 桥接层 + 运行时"的三层设计组织代码：
 - 传输层：LarkTransport 基于 WSClient 管理飞书长连接、事件分发、资源下载与卡片更新
 - 桥接层：FeishuAgentBridge 将入站消息转换为 Pi 会话请求，驱动 CardKit 流式卡片渲染，并处理指令与工具调用事件
 - 运行时：FeishuPiRuntime 负责创建 Agent 会话、权限策略、工具守卫、统计与定时任务
@@ -126,16 +133,20 @@ PB-->>BR : "允许/拒绝/超时/取消"
 
 ### 连接建立与生命周期
 - 连接入口：LarkTransport.connect() 创建 EventDispatcher，注册 im.message.receive_v1 与 card.action.trigger 处理器，使用 WSClient.start() 启动长连接
-- 握手与心跳：配置 handshakeTimeoutMs 与 wsConfig.pingTimeout；连接成功/失败/重连均有日志
-- 自动重连：WSClient 内部自带重连逻辑；应用层无需自行实现指数退避
-- 断开：disconnect() 调用 WSClient.close()；主进程优雅退出时触发
+- **可配置握手超时**：支持通过 handshakeTimeoutMs 参数自定义握手超时时间（默认 15000ms），适应不同网络环境
+- **心跳检测**：通过 wsConfig.pingTimeout 配置心跳间隔（默认 30 秒），确保连接活跃性
+- **源标识定制**：支持 source 参数自定义连接标识（默认 "feishu-pi"），便于多实例部署时的连接识别和监控
+- **自动重连**：WSClient 内部自带重连逻辑；应用层无需自行实现指数退避
+- **断开**：disconnect() 调用 WSClient.close()；主进程优雅退出时触发
+
+**更新** 新增了连接参数的可配置性，提升了连接弹性和运维可控性
 
 ```mermaid
 flowchart TD
 Start(["connect()"]) --> CheckConn{"已连接?"}
 CheckConn -- 是 --> Return["直接返回"]
 CheckConn -- 否 --> CreateDisp["创建 EventDispatcher<br/>注册事件处理器"]
-CreateDisp --> NewWS["new WSClient(...)"]
+CreateDisp --> NewWS["new WSClient({<br/>appId, appSecret,<br/>source, handshakeTimeoutMs,<br/>wsConfig: { pingTimeout }})"]
 NewWS --> StartWS["wsClient.start({ eventDispatcher })"]
 StartWS --> OnConnected{"连接成功?"}
 OnConnected -- 是 --> LogOK["记录连接成功"]
@@ -195,7 +206,7 @@ Fire --> End
   - 非授权类：如 /model 切换，仅管理员可执行；成功后更新卡片并持久化模型名
   - 授权类：tool_approval/forward_approval，交由 PermissionBroker 在服务端校验 token、来源与管理员身份
 - 授权卡
-  - 发送授权卡，等待管理员点击“允许一次”或“拒绝”，支持转发到管理员私聊
+  - 发送授权卡，等待管理员点击"允许一次"或"拒绝"，支持转发到管理员私聊
   - 超时或会话中断则收尾卡片（精简模式撤回，详细模式更新结果卡）
 
 ```mermaid
@@ -255,6 +266,8 @@ class CardKitStream {
 - 卡片层：CardKit 流式更新失败时尝试重新开启流式模式并恢复；最终关闭失败不影响内容发送
 - 授权层：回调参数非法、token 不匹配、非管理员操作均拒绝；超时与中断收尾卡片
 - 消息去重：MessageStore 防止重复执行；清理卡住消息与过期数据
+
+**更新** 增强了连接弹性和错误处理能力，包括更完善的超时处理和重连机制
 
 章节来源
 - [lark-transport.ts:87-133](file://src/feishu/lark-transport.ts#L87-L133)
@@ -320,17 +333,20 @@ AB --> MS["MessageStore"]
 - 连接问题
   - 检查 appId/appSecret 是否正确；查看 WSClient 的错误日志与重连日志
   - 若长时间未恢复，确认网络与防火墙策略
+  - **新增**：检查 handshakeTimeoutMs 和 pingTimeout 配置是否适合当前网络环境
 - 消息未处理
   - 检查 MessageStore.claim 是否返回 false（可能已被处理或仍在处理）
   - 查看 normalize 与 dispatchMessage 的日志，确认是否被机器人自发自收过滤
 - 卡片回调无响应
   - 使用底层 EventDispatcher 而非 LarkChannel，避免 handler 返回值丢失与去重吞事件
-  - 确认 card.action.trigger 处理器返回 toast，避免客户端弹出“目标回调服务超时未响应”
+  - 确认 card.action.trigger 处理器返回 toast，避免客户端弹出"目标回调服务超时未响应"
 - 流式卡片失败
   - 关注 CardKit 流式模式关闭后的重试逻辑；若仍失败，检查网络与服务端配额
 - 授权卡失效
   - 检查 approvalId/token/chatId 是否一致；确认操作者为管理员
   - 服务重启后旧授权卡会被拒绝，需重新发起任务
+
+**更新** 增加了连接参数相关的故障排查指导
 
 章节来源
 - [lark-transport.ts:87-133](file://src/feishu/lark-transport.ts#L87-L133)
@@ -340,13 +356,19 @@ AB --> MS["MessageStore"]
 - [message-store.ts:23-49](file://src/feishu/message-store.ts#L23-L49)
 
 ## 结论
-本项目以 WSClient 为基础，构建了稳定可靠的飞书消息实时通信能力。通过事件归一化、会话收敛、CardKit 流式渲染与授权中枢，实现了高可用、可扩展的 Agent 交互体验。推荐在生产环境启用消息去重、合理配置节流与渲染参数，并结合清理策略保障长期运行稳定性。
+本项目以 WSClient 为基础，构建了稳定可靠的飞书消息实时通信能力。通过事件归一化、会话收敛、CardKit 流式渲染与授权中枢，实现了高可用、可扩展的 Agent 交互体验。**新增的可配置连接参数和增强的连接弹性**进一步提升了系统的稳定性和运维友好性。推荐在生产环境启用消息去重、合理配置节流与渲染参数，并结合清理策略保障长期运行稳定性。
 
 ## 附录
 
 ### 连接示例与配置
 - 启动流程：main.ts 中创建 Client、LarkTransport、FeishuAgentBridge，调用 transport.connect() 建立连接
+- **新增配置选项**：
+  - `handshakeTimeoutMs`：握手超时时间（毫秒），默认 15000
+  - `pingTimeout`：心跳间隔（秒），默认 30
+  - `source`：连接源标识，默认 "feishu-pi"
 - 配置服务器：config-server.ts 提供 Web 界面修改 .env，端口 3456，仅限本机访问
+
+**更新** 新增了连接参数的配置说明
 
 章节来源
 - [main.ts:61-104](file://src/main.ts#L61-L104)
@@ -386,7 +408,32 @@ AB --> MS["MessageStore"]
 - 状态：MessageStore 维护消息处理状态（processing/completed/failed），防止重复执行
 - 优雅退出：主进程捕获 SIGINT/SIGTERM/SIGBREAK，延迟断开连接并退出
 
+**更新** 连接弹性的改进使得重连机制更加可靠，减少了手动干预的需求
+
 章节来源
 - [lark-transport.ts:114-133](file://src/feishu/lark-transport.ts#L114-L133)
 - [message-store.ts:23-49](file://src/feishu/message-store.ts#L23-L49)
 - [main.ts:252-283](file://src/main.ts#L252-L283)
+
+### 连接参数配置详解
+**新增** 本节详细说明可配置的 WebSocket 连接参数：
+
+- **handshakeTimeoutMs**：握手超时时间（毫秒）
+  - 默认值：15000ms
+  - 作用：控制 WSClient 握手阶段的超时时间
+  - 适用场景：网络不稳定或需要更长握手时间的生产环境
+
+- **pingTimeout**：心跳间隔（秒）
+  - 默认值：30秒
+  - 作用：设置 WebSocket 心跳检测间隔
+  - 适用场景：需要根据网络质量调整连接保活策略
+
+- **source**：连接源标识
+  - 默认值："feishu-pi"
+  - 作用：标识连接来源，便于多实例部署时的监控和管理
+  - 适用场景：多实例部署、连接监控和故障排查
+
+章节来源
+- [lark-transport.ts:11-31](file://src/feishu/lark-transport.ts#L11-31)
+- [lark-transport.ts:67-86](file://src/feishu/lark-transport.ts#L67-86)
+- [lark-transport.ts:120-129](file://src/feishu/lark-transport.ts#L120-129)

@@ -3,28 +3,12 @@ schema_version: 1
 locale: zh-CN
 branch: main
 nodes_managed: true
-exported_at: "2026-09-11T19:13:38Z"
+exported_at: "2026-09-13T17:44:49Z"
 modules:
     "":
-        dir_name: 飞书 Pi Agent 服务入口与配置界面
-        title: 飞书 Pi Agent 服务入口与配置界面
-        scope:
-            - src/main.ts
-            - src/config.ts
-            - src/config-server.ts
-            - src/config-page.html
-            - src/stats-page.html
-            - scripts/
-            - docs/
-            - .env.example
-            - .gitignore
-            - LICENSE
-            - README.md
-            - ROADMAP.md
-            - package-lock.json
-            - package.json
-            - tsconfig.json
-            - vitest.config.ts
+        dir_name: 飞书 Pi 智能体运行时（feishu-pi）
+        title: 飞书 Pi 智能体运行时（feishu-pi）
+        scope: []
         source_files: []
         children: []
         depends_on: []
