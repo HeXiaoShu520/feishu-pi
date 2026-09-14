@@ -197,7 +197,7 @@ export class UserAuthService {
     const openId = message.context.userOpenId;
     // 仅私聊可用：群聊中授权链接可能被他人代点，存在身份冒用风险
     if (message.context.chatMode !== "p2p") {
-      return { card: markdownCard("❌ 用户身份授权仅支持在**私聊**中进行（群聊中授权链接可能被他人代点）。请私聊机器人发送 /login。") };
+      return { card: markdownCard("❌ 用户身份授权仅支持在**私聊**中进行（群聊中授权链接可能被他人代点）。请私聊机器人发送 /login lark。") };
     }
     if (this.pending.has(openId)) {
       return { card: markdownCard("⏳ 你已有一个进行中的授权，请先在浏览器完成，或稍后再试。") };
@@ -297,7 +297,7 @@ export class UserAuthService {
       if (current && current.updatedAt === token.updatedAt) {
         await this.store.delete(openId);
         this.memToken.delete(openId);
-        logger.warn(`[UserAuth] 用户 ${openId} 刷新 token 失败（${str(res.error) || "未知错误"}），需要重新 /login`);
+        logger.warn(`[UserAuth] 用户 ${openId} 刷新 token 失败（${str(res.error) || "未知错误"}），需要重新 /login lark`);
         return undefined;
       }
       logger.warn(`[UserAuth] 用户 ${openId} 刷新失败但记录已被并发更新，采用最新记录`);
@@ -450,10 +450,10 @@ export class UserAuthService {
           waitMs += 5000;
           break;
         case "access_denied":
-          await this.finishCard(messageId, markdownCard("❌ 你拒绝了本次授权。需要用户身份能力时请重新 /login。"));
+          await this.finishCard(messageId, markdownCard("❌ 你拒绝了本次授权。需要用户身份能力时请重新 /login lark。"));
           return;
         case "expired_token":
-          await this.finishCard(messageId, markdownCard("❌ 授权链接已过期，请重新 /login。"));
+          await this.finishCard(messageId, markdownCard("❌ 授权链接已过期，请重新 /login lark。"));
           return;
         default: {
           const reason = str(res.error_description) || str(res.error) || "未知错误";
@@ -462,7 +462,7 @@ export class UserAuthService {
         }
       }
     }
-    await this.finishCard(messageId, markdownCard("❌ 等待授权超时，请重新 /login。"));
+    await this.finishCard(messageId, markdownCard("❌ 等待授权超时，请重新 /login lark。"));
   }
 
   private async finishCard(messageId: string | undefined, card: object): Promise<void> {
@@ -499,9 +499,10 @@ const LOGIN_PROVIDERS: Record<string, ProviderEntry> = {
   },
 };
 
-/** /login：统一多应用登录入口。
- *  - `/login` 或 `/login lark`：飞书 Device Flow 授权（向后兼容：无参数默认 lark）；
- *  - `/login <其他 provider>`：暂未接入的返回说明卡；
+/** /login <provider>：统一多应用登录入口，必须显式指定应用。
+ *  - `/login lark`：飞书 Device Flow 授权；
+ *  - `/login meegle` / `/login bbt`：暂未接入的返回说明卡；
+ *  - `/login`（无参数）：不猜测默认应用，返回支持清单引导。
  *  发起后卡片后台轮询，完成时原地更新结果。 */
 export class LoginCommand implements CommandHandler {
   private readonly auth: UserAuthService;
@@ -515,7 +516,11 @@ export class LoginCommand implements CommandHandler {
   }
 
   execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
-    const provider = message.text.trim().split(/\s+/)[1]?.toLowerCase() ?? "lark";
+    const provider = message.text.trim().split(/\s+/)[1]?.toLowerCase();
+    if (!provider) {
+      const known = Object.entries(LOGIN_PROVIDERS).map(([id, e]) => `- \`/login ${id}\`：${e.label}`).join("\n");
+      return Promise.resolve({ card: markdownCard(`请指定要登录的应用（必须带应用后缀）：\n${known}\n\n例如：\`/login lark\``) });
+    }
     const entry = LOGIN_PROVIDERS[provider];
     if (!entry) {
       const known = Object.entries(LOGIN_PROVIDERS).map(([id, e]) => `- \`/login ${id}\`：${e.label}`).join("\n");
@@ -547,7 +552,7 @@ export class LogoutCommand implements CommandHandler {
     }
     const removed = await this.auth.logout(message.context.userOpenId);
     return {
-      card: markdownCard(removed ? "✅ 已退出登录，用户授权已清除。需要用户身份能力时请重新 /login。" : "你当前没有登录记录。"),
+      card: markdownCard(removed ? "✅ 已退出登录，用户授权已清除。需要用户身份能力时请重新 /login lark。" : "你当前没有登录记录。"),
     };
   }
 }
