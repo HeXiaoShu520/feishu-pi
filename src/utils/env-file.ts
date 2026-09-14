@@ -94,5 +94,6 @@ export function upsertEnvLine(content: string, key: string, value: string): stri
   const line = `${key}=${value}`;
   const pattern = new RegExp(`^${key}=.*$`, "m");
   if (pattern.test(content)) return content.replace(pattern, line);
-  return `${content.trimEnd()}\n${line}\n`;
+  const base = content.trimEnd();
+  return base ? `${base}\n${line}\n` : `${line}\n`;
 }

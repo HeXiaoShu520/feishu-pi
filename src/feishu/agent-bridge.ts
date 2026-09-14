@@ -8,7 +8,7 @@ import { ReactionController } from "./reaction-controller.ts";
 import { Spinner } from "./spinner.ts";
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "../utils/logger.ts";
-import { createDefaultRegistry, DetailCommand, NewCommand, StopCommand, type CommandRegistry, type CommandHandler } from "./commands.ts";
+import { createDefaultRegistry, DetailCommand, NewCommand, StopCommand, markdownCard, type CommandRegistry, type CommandHandler } from "./commands.ts";
 import { randomUUID } from "node:crypto";
 import { formatStatsLine, formatToolCall, ReplyParts } from "./reply-parts.ts";
 
@@ -285,6 +285,9 @@ export class FeishuAgentBridge {
     } catch (error) {
       await this.messages?.fail(message.messageId);
       logger.error("[Command] 执行失败:", error);
+      // 尽力给用户一张错误卡（失败原因不能只留在日志里）；发卡再失败则静默
+      const detail = formatLogText(error instanceof Error ? error.message : String(error), 200);
+      await this.sendCommandCard(message, markdownCard(`❌ 指令执行失败：${detail}`)).catch(() => undefined);
     }
   }
 

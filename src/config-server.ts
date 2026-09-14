@@ -8,6 +8,7 @@ import { readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 import { logger } from "./utils/logger.ts";
 import { parseEnvFile, stringifyEnv } from "./utils/env-file.ts";
+import { isLocalWriteAllowed } from "./utils/request-origin.ts";
 import type { SkillUsageStore } from "./stats/skill-usage-store.ts";
 
 const app = express();
@@ -42,7 +43,14 @@ app.get("/api/config", (req, res) => {
 });
 
 // 路由：保存配置（保留 .env 中本表单不管理的键）
+// 写请求防跨源：浏览器里的恶意网页可向本机端口发跨源表单 POST（无 CORS 预检）重写 .env，
+// 因此携带 Origin 的写请求必须是本机来源（详见 utils/request-origin.ts）
 app.post("/api/config", (req, res) => {
+  if (!isLocalWriteAllowed(req.get("origin"))) {
+    logger.warn(`[ConfigServer] 已拒绝跨源写请求: Origin=${req.get("origin")}`);
+    res.status(403).send("拒绝跨源写请求");
+    return;
+  }
   try {
     const config = req.body;
     const existing = readFileSync(ENV_FILE, "utf-8");

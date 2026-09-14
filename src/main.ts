@@ -64,10 +64,12 @@ export async function main(): Promise<void> {
   logger.info("[DataCleaner] 清理过期数据（保留 7 天）...");
   await logCleanupStats(cleaner.cleanup());
 
-  // 定期清理（每天一次）
+  // 定期清理（每天一次）；conversations 在下方声明，回调首次触发时早已初始化
   const cleanupTimer = setInterval(async () => {
     logger.info("[DataCleaner] 执行定期清理...");
     await logCleanupStats(cleaner.cleanup());
+    // 空闲超过 24 小时的会话驱逐出内存（历史在磁盘，下次消息自动恢复），防长驻内存增长
+    await conversations.evictIdle(24 * 60 * 60 * 1000);
   }, 24 * 60 * 60 * 1000); // 24 小时
 
   // ---------- 飞书基础通道：Client（所有 API 调用）与 Bot 身份 ----------

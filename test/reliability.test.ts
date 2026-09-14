@@ -53,4 +53,20 @@ describe("reliability stores", () => {
     const restored = new ConversationStore(filePath);
     expect(await restored.get("chat:a")).toBe("data/sessions/a.jsonl");
   });
+
+  it("evicts idle conversations; session is recreated on next message", async () => {
+    const runtime = new FakeRuntime();
+    const manager = new ConversationManager(runtime as never);
+    await manager.prompt({ conversationId: "chat:a", prompt: { text: "hi" } }, () => undefined);
+    expect(manager.size).toBe(1);
+
+    // 刚活跃的会话不驱逐；空闲阈值归零后驱逐
+    expect(await manager.evictIdle(60_000)).toBe(0);
+    expect(await manager.evictIdle(0)).toBe(1);
+    expect(manager.size).toBe(0);
+
+    // 驱逐后再来消息：从磁盘映射重建会话（createCount 增加）
+    await manager.prompt({ conversationId: "chat:a", prompt: { text: "back" } }, () => undefined);
+    expect(runtime.createCount).toBe(2);
+  });
 });

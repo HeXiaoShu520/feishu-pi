@@ -318,3 +318,49 @@ describe("getUserAccessToken 刷新", () => {
     expect(await service.getUserAccessToken("ou_test")).toBeUndefined();
   });
 });
+
+describe("/login 去重锁生命周期", () => {
+  it("卡片发送失败不残留锁；发出后锁定去重；轮询结束释放", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "uauth-lock-"));
+    // 手工构造：sleep 用门控（不放行就不轮询），保证断言时序确定
+    let releaseNextSleep: () => void = () => undefined;
+    const postForm = vi.fn()
+      .mockResolvedValueOnce(BEGIN_OK)                          // 第一次发起
+      .mockResolvedValueOnce(BEGIN_OK)                          // 第二次发起（重试）
+      .mockResolvedValueOnce({ error: "authorization_pending" }) // 轮询 1：继续等待
+      .mockResolvedValueOnce({ error: "access_denied" })         // 轮询 2：拒绝 → 终止并释放锁
+      .mockResolvedValueOnce(BEGIN_OK);                          // 场景 3：重新发起
+    const service = new UserAuthService({
+      appId: "cli_test",
+      appSecret: "secret",
+      scopes: ["contact:user.base:readonly"],
+      storeFile: join(dir, "user-tokens.json"),
+      updateCard: async () => {},
+      postForm,
+      getIdentity: async () => ({ openId: "ou_test", name: "测试用户" }),
+      now: () => Date.now(),
+      sleep: () => new Promise<void>((resolve) => { releaseNextSleep = resolve; }),
+    });
+
+    const first = await service.startLogin(message());
+    // 场景 1：第一次卡片发送失败（afterSend 未被调用）→ 立即重试不得被锁死
+    const retry = await service.startLogin(message());
+    expect(JSON.stringify(retry.card)).not.toContain("进行中的授权");
+
+    // 场景 2：重试卡片发出 → 锁定去重（轮询卡在 sleep，锁保持）
+    retry.afterSend?.("om_retry");
+    const during = await service.startLogin(message());
+    expect(JSON.stringify(during.card)).toContain("进行中的授权");
+
+    // 放行轮询：pending → 继续等待 → 拒绝 → 轮询终止并释放锁
+    releaseNextSleep();
+    await new Promise((r) => setTimeout(r, 0)); // 让轮询消费完本轮、挂到下一次 sleep
+    releaseNextSleep();
+    await vi.waitFor(() => expect(postForm).toHaveBeenCalledTimes(4));
+
+    // 场景 3：锁已释放（无 token，走正常重新发起而非"进行中"提示）
+    const after = await service.startLogin(message());
+    expect(JSON.stringify(after.card)).not.toContain("进行中的授权");
+    void first;
+  });
+});

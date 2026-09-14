@@ -15,6 +15,8 @@ interface ConversationState {
   queue: Promise<void>;
   /** 当前是否有在途请求（新消息到达时据此打断） */
   busy?: boolean;
+  /** 最近一次活跃时刻（epoch 毫秒）：空闲驱逐的依据 */
+  lastActiveAt: number;
   /** 已持久化到 store 的 sessionFile，避免重复写入 */
   persistedSessionFile?: string;
 }
@@ -28,6 +30,28 @@ export class ConversationManager {
   constructor(runtime: FeishuPiRuntime, store?: ConversationStore) {
     this.runtime = runtime;
     this.store = store;
+  }
+
+  /** 当前驻留内存的会话数（监控与测试用）。 */
+  get size(): number {
+    return this.conversations.size;
+  }
+
+  /**
+   * 驱逐空闲会话，释放内存中的 Pi Session（历史在磁盘上，下次消息到达自动从 sessionFile 恢复）。
+   * 忙碌（在途请求）的会话不驱逐。返回驱逐数量。
+   */
+  async evictIdle(maxIdleMs: number, now = Date.now()): Promise<number> {
+    let evicted = 0;
+    for (const [id, statePromise] of this.conversations) {
+      const state = await statePromise.catch(() => undefined);
+      if (!state || state.busy) continue;
+      if (now - state.lastActiveAt < maxIdleMs) continue;
+      this.conversations.delete(id);
+      evicted++;
+    }
+    if (evicted > 0) logger.info(`[Conversation] 已驱逐 ${evicted} 个空闲会话（空闲 ≥ ${Math.round(maxIdleMs / 60_000)} 分钟）`);
+    return evicted;
   }
 
   /** 获取或创建一个会话，并合并并发的首次初始化。 */
@@ -48,7 +72,7 @@ export class ConversationManager {
     const sessionFile = await this.store?.get(conversationId);
     let session = sessionFile ? await this.runtime.createSession(sessionFile, userId, context).catch(() => undefined) : undefined;
     if (!session) session = await this.runtime.createSession(undefined, userId, context);
-    const state: ConversationState = { session, queue: Promise.resolve() };
+    const state: ConversationState = { session, queue: Promise.resolve(), lastActiveAt: Date.now() };
     await this.persistSessionFile(conversationId, state);
     return state;
   }
@@ -85,6 +109,7 @@ export class ConversationManager {
         await state.session.waitForIdle();
       } finally {
         state.busy = false;
+        state.lastActiveAt = Date.now();
         unsubscribe();
         // 兜底：响应结束后再检查一次
         await this.persistSessionFile(message.conversationId, state);

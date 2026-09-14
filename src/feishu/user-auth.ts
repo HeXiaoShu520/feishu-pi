@@ -182,12 +182,12 @@ export class UserAuthService {
     lines.push("", `⏱️ 约 ${Math.round(expiresInMs / 60_000)} 分钟内有效；授权完成后此卡片会自动更新结果。`);
 
     const entry: PendingLogin = { deviceCode };
-    // pending 在卡片真正发出后才登记（afterSend 内），发送失败不会把去重锁留在原地
-    this.pending.set(openId, entry);
+    // 去重锁在卡片真正发出后（afterSend 内）才登记：发送失败不会把用户锁死在"已有进行中的授权"里
 
     return {
       card: markdownCard(lines.join("\n")),
       afterSend: (sentMessageId) => {
+        this.pending.set(openId, entry); // 卡片已发出：锁定去重并开始轮询，完成/异常时释放
         // 后台轮询：结果经 updateCard 原地落卡，指令回复流程不被阻塞
         void this.pollUntilDone(openId, entry, sentMessageId, this.now() + expiresInMs, intervalMs)
           .catch((error) => {

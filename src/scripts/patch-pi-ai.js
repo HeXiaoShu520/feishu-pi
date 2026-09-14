@@ -14,7 +14,7 @@ import { dirname } from 'path';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
-const targetFile = join(__dirname, '../node_modules/@earendil-works/pi-ai/dist/api/anthropic-messages.js');
+const targetFile = join(__dirname, '../../node_modules/@earendil-works/pi-ai/dist/api/anthropic-messages.js');
 
 try {
   let content = readFileSync(targetFile, 'utf-8');
