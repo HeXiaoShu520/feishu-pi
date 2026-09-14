@@ -9,7 +9,7 @@
     "config": "tsx src/config-server.ts",
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "vitest --run --config vitest.config.ts",
-    "postinstall": "node scripts/patch-pi-ai.js"
+    "postinstall": "node src/scripts/patch-pi-ai.js"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "^0.84.2",

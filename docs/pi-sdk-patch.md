@@ -21,11 +21,11 @@
 
 ## 解决方案
 
-项目使用自动补丁脚本 `scripts/patch-pi-ai.js`，在每次 `npm install` 后自动删除该请求头。
+项目使用自动补丁脚本 `src/scripts/patch-pi-ai.js`，在每次 `npm install` 后自动删除该请求头。
 
 ## 补丁原理
 
-**补丁脚本路径：** `scripts/patch-pi-ai.js`
+**补丁脚本路径：** `src/scripts/patch-pi-ai.js`
 
 **作用：**
 - 自动修改 `node_modules/@earendil-works/pi-ai/dist/api/anthropic-messages.js`
@@ -33,7 +33,7 @@
 
 **触发时机：**
 - `npm install` 后自动运行（通过 `postinstall` 脚本）
-- 可手动运行：`node scripts/patch-pi-ai.js`
+- 可手动运行：`node src/scripts/patch-pi-ai.js`
 
 ## 升级兼容性
 
@@ -93,7 +93,7 @@ OpenAI 的实现不需要补丁，可以直接使用。
 **补丁未生效：**
 ```bash
 # 手动运行补丁脚本
-node scripts/patch-pi-ai.js
+node src/scripts/patch-pi-ai.js
 
 # 检查输出
 ✅ [patch-pi-ai] 已删除 anthropic-dangerous-direct-browser-access 请求头
