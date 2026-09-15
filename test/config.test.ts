@@ -47,10 +47,8 @@ describe("parseGroupMembership（FEISHU_GROUP 配置语义）", () => {
     expect(groups["group_1"]).toBeUndefined();
   });
 
-  it("FEISHU_GROUP_ADMIN 被静默忽略（不产生 admin 组、无输出）", () => {
+  it("任意组名一律走通用规则（admin 也不特判）", () => {
     const groups = parseGroupMembership({ FEISHU_GROUP_ADMIN: "张三" });
-    expect(groups["admin"]).toBeUndefined();
-    expect(Object.keys(groups)).toHaveLength(0);
-    expect(warn).not.toHaveBeenCalled();
+    expect(groups["admin"]).toEqual(["张三"]);
   });
 });
