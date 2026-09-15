@@ -11,6 +11,7 @@ import { logger } from "../utils/logger.ts";
 import { createDefaultRegistry, DetailCommand, NewCommand, StopCommand, markdownCard, type CommandRegistry, type CommandHandler } from "./commands.ts";
 import { randomUUID } from "node:crypto";
 import { formatStatsLine, formatToolCall, ReplyParts } from "./reply-parts.ts";
+import type { PeopleRoster } from "./people-roster.ts";
 
 /** 将飞书消息转换为 Pi 会话，并把增量文本交给飞书传输层。 */
 export class FeishuAgentBridge {
@@ -25,6 +26,8 @@ export class FeishuAgentBridge {
   private readonly detailMode = new Map<string, boolean>();
   /** 回复末尾是否显示模型统计小字；关闭时只影响终态小字，工具过程状态照常显示 */
   private readonly showModelStats: boolean;
+  /** 预制人员名单（可选）：把消息中按名字提到的人补成提示词，模型才能识别/@ 到人 */
+  private readonly peopleRoster?: PeopleRoster;
 
   /** 查询某会话是否开启详细模式（供授权卡撤回等外部逻辑判断）。 */
   isDetailMode(chatId: string): boolean {
@@ -45,6 +48,8 @@ export class FeishuAgentBridge {
       showModelStats?: boolean;
       /** 模型信息提供器（/model 指令展示用）；返回运行中的实时值 */
       modelInfo?: () => { baseUrl?: string; modelName: string; apiKey: string };
+      /** 预制人员名单（可选）：按名字提到的人自动补 open_id 提示 */
+      peopleRoster?: PeopleRoster;
     },
   ) {
     this.conversations = conversations;
@@ -53,6 +58,7 @@ export class FeishuAgentBridge {
     this.messages = options?.messages;
     this.client = options?.client;
     this.showModelStats = options?.showModelStats ?? true;
+    this.peopleRoster = options?.peopleRoster;
     this.reactionController = options?.client && (options?.enableReaction ?? true)
       ? new ReactionController(options.client)
       : undefined;
@@ -165,10 +171,18 @@ export class FeishuAgentBridge {
         await reply.replace("");
       };
 
+      // 预制人员名单：消息里按名字提到的人在 prompt 末尾补 open_id 提示（仅影响发给模型的内容，
+      // 指令路由/日志/消息原文不受影响）；名单查询失败按无提示处理
+      let promptText = message.text;
+      if (this.peopleRoster) {
+        const hint = await this.peopleRoster.buildHint(message.text, message.context.userOpenId).catch(() => undefined);
+        if (hint) promptText = `${message.text}\n\n${hint}`;
+      }
+
       session = await this.conversations.prompt(
         {
           conversationId,
-          prompt: { text: message.text, images: message.images },
+          prompt: { text: promptText, images: message.images },
           context: message.context, // 调用者身份（权限组判定、会话目录归属的依据）
         },
         async (event) => {

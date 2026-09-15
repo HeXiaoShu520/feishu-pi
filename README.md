@@ -269,6 +269,8 @@ FEISHU_ADMIN=管理员标识
 
 用户信息会在首次聊天时自动查询并缓存到 `data/users/{appId}_users.json`，3 天后自动刷新。缓存文件包含 `appId` 前缀，避免多机器人混用。
 
+**预制人员名单**：这份缓存同时是"按名字识人"的名单——用户在消息里写"让张三看一下"（而不是 @）时，服务会在 prompt 末尾自动补一段人员提示（张三 → open_id / 英文名 / 部门），模型据此就能正确识别身份并 @ 到人。名单随资料查询自然增长，无需任何配置；被 @ 的人（标签内）不会重复提示，发送者本人也不提示。
+
 **排障：公司网络下启动报 `UNABLE_TO_VERIFY_LEAF_SIGNATURE`**
 
 部分公司网络的 TLS 中间代理使用自签根证书，而 Node 默认只信任内置 CA 列表，导致扫码向导/飞书 API 的 HTTPS 请求握手失败。项目根目录的 `.npmrc` 已配置 `node-options=--use-system-ca`：经 `npm start`、`npm run setup`、`npm run dev` 启动时自动改用操作系统证书库，无需额外处理。如果绕过 npm 直接运行（如 `tsx src/main.ts` 或 IDE 调试），请自行设置 `NODE_OPTIONS=--use-system-ca`；低版本 Node 不支持该开关时，改用 `NODE_EXTRA_CA_CERTS` 指向公司根证书。**不要**使用 `NODE_TLS_REJECT_UNAUTHORIZED=0`（会完全关闭证书校验）。

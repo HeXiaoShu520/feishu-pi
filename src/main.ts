@@ -15,6 +15,7 @@ import { ScheduleService } from "./schedule/service.ts";
 import { PermissionPolicy } from "./permission/policy.ts";
 import { PermCommand } from "./feishu/commands.ts";
 import { LoginCommand, LogoutCommand, UserAuthService } from "./feishu/user-auth.ts";
+import { PeopleRoster } from "./feishu/people-roster.ts";
 import { createIdentityBashTool } from "./runtime/identity-bash.ts";
 import { runSetupWizard } from "./feishu/setup-wizard.ts";
 import { MeegleCredentialService } from "./feishu/meegle-auth.ts";
@@ -443,6 +444,8 @@ ${trimmed}` }] },
       ],
       // 回复末尾的模型统计小字开关（工具过程状态不受影响）
       showModelStats: config.showModelStats,
+      // 预制人员名单：消息里按名字提到的人补 open_id 提示（与权限策略/管理员识别共用 data/users 名单）
+      peopleRoster: new PeopleRoster(usersFile),
       // /model 指令的运行时模型信息（config 对象即 runtime 热切换的同一引用，取到的是实时值）
       modelInfo: () => ({
         baseUrl: config.modelBaseUrl,
