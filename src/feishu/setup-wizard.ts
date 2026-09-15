@@ -78,6 +78,25 @@ export interface SetupWizardOptions {
 }
 
 /**
+ * 组装扫码链接：与官方 SDK 的 registerApp 线协议一致（对齐 @larksuiteoapi/node-sdk）——
+ * 在 verification_uri_complete 上追加 from/source/tp 与 addons（预置权限，gzip+base64url）；
+ * 传入 existingAppId 时追加 clientID，扫码确认页即为"更新已有应用"模式（不创建新应用）。
+ * 纯函数，供单测。
+ */
+export function buildQrLink(
+  verificationUri: string,
+  opts: { source?: string; addons?: Record<string, unknown>; existingAppId?: string } = {},
+): string {
+  const url = new URL(verificationUri);
+  url.searchParams.set("from", "sdk");
+  url.searchParams.set("source", `node-sdk/${opts.source ?? "feishu-pi"}`);
+  url.searchParams.set("tp", "sdk");
+  if (opts.addons) url.searchParams.set("addons", encodeAddons(opts.addons));
+  if (opts.existingAppId) url.searchParams.set("clientID", opts.existingAppId);
+  return url.toString();
+}
+
+/**
  * 运行扫码向导：展示二维码 → 用户授权 → 轮询换取凭证 → 写入 .env。
  * 抛错（拒绝授权/超时/网络失败）时由调用方决定退出或重试。
  */
@@ -90,12 +109,18 @@ export async function runSetupWizard(options: SetupWizardOptions = {}): Promise<
     request_user_info: "open_id",
   });
   const deviceCode = str(begin.device_code);
-  const link = str(begin.verification_uri_complete) || str(begin.verification_uri);
-  if (!deviceCode || !link) {
+  const rawLink = str(begin.verification_uri_complete) || str(begin.verification_uri);
+  if (!deviceCode || !rawLink) {
     throw new Error(str(begin.error_description) || str(begin.error) || "发起注册失败：未返回 device_code");
   }
+  // 预置权限挂到二维码链接上（SDK 线协议）：确认页可见、创建/更新应用时自动应用
+  const addons = buildAddons();
+  const link = buildQrLink(rawLink, { addons, existingAppId: options.existingAppId });
 
+  const scopeList = (addons.scopes as { tenant?: string[] }).tenant ?? [];
   console.log("\n🔐 请用飞书扫描二维码完成授权（或打开下方链接）：\n");
+  console.log(`将预置以下权限（确认页可见，可取消勾选）：\n  ${scopeList.join("\n  ")}`);
+  console.log(`事件订阅：im.message.receive_v1；卡片回调：card.action.trigger\n`);
   qr.generate(link, { small: true });
   console.log(link, "\n");
   console.log(`⏱️  约 ${Math.round((num(begin.expires_in) || 600) / 60)} 分钟内有效；权限确认页请点击同意。\n`);
