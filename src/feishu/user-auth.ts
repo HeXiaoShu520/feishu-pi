@@ -383,6 +383,83 @@ export class UserAuthService {
   }
 
   /**
+   * 终端侧登录（启动部署向导用）：发起 Device Flow → onLink 展示链接/二维码 →
+   * 阻塞轮询至完成。成功返回登录者身份（token 已入库并触发 onLoginBound）。
+   * 与卡片流程互不影响（pending 用独立键）。
+   */
+  async loginOnTerminal(opts: {
+    onLink: (info: { link: string; userCode: string; expiresInMin: number }) => void;
+    onPolling?: () => void;
+  }): Promise<{ ok: boolean; identity?: (LoginIdentity & { openId: string }); reason?: string }> {
+    const begin = await this.postForm(
+      DEVICE_AUTHORIZATION_URL,
+      { client_id: this.options.appId, scope: withOfflineAccess(this.options.scopes) },
+      { Authorization: `Basic ${Buffer.from(`${this.options.appId}:${this.options.appSecret}`).toString("base64")}` },
+    ).catch(() => undefined);
+    const deviceCode = str(begin?.device_code);
+    const link = str(begin?.verification_uri_complete) || str(begin?.verification_uri);
+    if (!deviceCode || !link) {
+      return { ok: false, reason: str(begin?.error_description) || str(begin?.error) || "发起授权失败" };
+    }
+    opts.onLink({
+      link,
+      userCode: str(begin!.user_code),
+      expiresInMin: Math.round((num(begin!.expires_in) || 300) / 60_000),
+    });
+
+    const intervalMs = (num(begin!.interval) || this.options.pollIntervalSec || 5) * 1000;
+    const deadline = this.now() + (num(begin!.expires_in) || 300) * 1000;
+    let waitMs = intervalMs;
+    while (this.now() < deadline) {
+      await this.sleep(waitMs);
+      const res = await this.postForm(TOKEN_URL, {
+        grant_type: DEVICE_CODE_GRANT,
+        device_code: deviceCode,
+        client_id: this.options.appId,
+        client_secret: this.options.appSecret,
+      });
+      const accessToken = str(res.access_token);
+      if (accessToken) {
+        // 核实实际授权者：谁扫码，token 归谁
+        const identity = await this.getIdentity(accessToken).catch(() => undefined);
+        if (!identity?.openId) return { ok: false, reason: "无法核实授权者身份（authen 接口无 open_id）" };
+        const token: StoredUserToken = {
+          accessToken,
+          refreshToken: str(res.refresh_token),
+          expiresAt: this.now() + (num(res.expires_in) || 7200) * 1000,
+          refreshExpiresAt: this.now() + (num(res.refresh_token_expires_in) || num(res.refresh_expires_in) || 30 * 86_400) * 1000,
+          scope: str(res.scope) || this.options.scopes.join(" "),
+          updatedAt: this.now(),
+        };
+        await this.store.put(identity.openId, token);
+        this.memToken.set(identity.openId, { accessToken: token.accessToken, expiresAt: token.expiresAt });
+        logger.info(`[UserAuth] 终端登录完成：${identity.name || identity.openId}（scope: ${token.scope || "默认"}）`);
+        if (this.options.onLoginBound) {
+          void Promise.resolve(this.options.onLoginBound({
+            openId: identity.openId, name: identity.name, en_name: identity.en_name, email: identity.email,
+          })).catch((error) => logger.warn("[UserAuth] onLoginBound 回调失败:", error));
+        }
+        return { ok: true, identity: { openId: identity.openId, name: identity.name, en_name: identity.en_name, email: identity.email } };
+      }
+      switch (str(res.error)) {
+        case "authorization_pending":
+          opts.onPolling?.();
+          break;
+        case "slow_down":
+          waitMs += 5000;
+          break;
+        case "access_denied":
+          return { ok: false, reason: "你拒绝了本次授权" };
+        case "expired_token":
+          return { ok: false, reason: "授权链接已过期" };
+        default:
+          if (str(res.error)) return { ok: false, reason: str(res.error_description) || str(res.error) };
+      }
+    }
+    return { ok: false, reason: "等待授权超时" };
+  }
+
+  /**
    * 确保用户具备所需 scope（增量授权）：token 已含全部所需 → 返回 access token；
    * 缺失 → 向当前会话**自动发起新一轮 Device Flow**（合并现有与新增 scope）并立即返回
    * undefined——用户在卡片上同意后 token 更新，调用方下次调用即生效。

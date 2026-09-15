@@ -24,6 +24,7 @@ import { CredentialVault } from "./utils/credential-vault.ts";
 import { delimiter, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@larksuiteoapi/node-sdk";
+import qr from "qrcode-terminal";
 import { logger } from "./utils/logger.ts";
 import { PermissionBroker } from "./guard/broker.ts";
 import { ToolGuard } from "./guard/tool-guard.ts";
@@ -170,16 +171,40 @@ export async function main(): Promise<void> {
   });
 
   // 冷启动兜底：姓名/邮箱在通讯录侧解析不出（缓存为空、权限未批）时，从已 /login
-  // 用户的登录身份识别管理员——即"管理员先 /login lark、再重启一遍服务"的运维流程。
+  // 用户的登录身份识别管理员。
   if (!adminOpenId && config.feishuAdmin) {
     adminOpenId = await resolveAdminFromLogins(userAuth, config.feishuAdmin, usersFile);
     if (adminOpenId) {
       logger.info(`[Main] 管理员已从已登录用户中识别: ${adminOpenId}（资料已入缓存，下次启动直接解析）`);
-    } else {
+    }
+  }
+
+  // 启动流程第 2 步：管理员 lark 登录检查——尚未登录则直接在终端发起扫码授权，
+  // 扫完立即绑定管理员（无需再去飞书发 /login，也无需重启），一步完成环境部署。
+  if (!adminOpenId && config.feishuAdmin) {
+    if (!process.stdout.isTTY) {
       logger.warn(
         `[Main] 暂无法识别管理员（FEISHU_ADMIN=${config.feishuAdmin}）：` +
-          "请管理员在飞书**私聊**机器人发送 /login lark 完成登录，然后重启一次服务即可自动识别；识别前管理员专属能力不可用",
+          "请在交互终端启动一次服务，按提示完成管理员扫码授权；识别前管理员专属能力不可用",
       );
+    } else {
+      console.log("\n🔐 管理员（FEISHU_ADMIN）尚未登录 lark-cli：请用【管理员本人】的飞书扫码完成授权。");
+      console.log("    授权后即完成环境部署：团队名单解析、用户身份能力立即就绪，无需重启。\n");
+      const login = await userAuth.loginOnTerminal({
+        onLink: ({ link, expiresInMin }) => {
+          qr.generate(link, { small: true });
+          console.log(link, "\n");
+          console.log(`⏱️  约 ${expiresInMin} 分钟内有效，等待扫码中…\n`);
+        },
+      });
+      if (login.ok && login.identity) {
+        const info = login.identity;
+        adminOpenId = info.openId;
+        await persistUserProfile(usersFile, info.openId, { name: info.name, en_name: info.en_name }).catch(() => undefined);
+        logger.info(`[Main] 管理员已绑定并立即生效: ${info.name ?? info.openId}（${info.openId}）`);
+      } else {
+        console.log(`⚠️ 管理员登录未完成：${login.reason ?? "未知原因"}。部署完成后可私聊机器人 /login lark 补做。`);
+      }
     }
   }
 
@@ -495,6 +520,15 @@ ${trimmed}` }] },
   await transport.connect();
   // 恢复定时任务调度（任务持久化在 data/schedules.json）
   await scheduleService.start();
+
+  // 启动流程第 3 步：团队名单上电解析（后台）。先预热已登录用户的 token
+  //（search-user 可用），再遍历机器人所在会话的成员，全员过一遍统一解析规则入库——
+  // 后续任何人请求，资料（姓名/部门）直接命中缓存。
+  void (async () => {
+    await userAuth?.refreshAllKnown().catch(() => undefined);
+    const stats = await transport.ingestChatRoster({ botOpenId });
+    logger.info(`[Main] 团队名单已就绪: ${stats.members} 位成员入缓存（${stats.ingested} 人本次解析，其余命中缓存）`);
+  })().catch((error) => logger.warn("[Main] 团队名单解析失败:", error));
 
   // 打印配置页面地址
   console.log(`\n配置页面: http://localhost:3456\n`);
