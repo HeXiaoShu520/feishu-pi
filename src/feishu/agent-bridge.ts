@@ -215,14 +215,12 @@ export class FeishuAgentBridge {
 
       // 终态统计小字在 close 内部（正文渲染完成后）才写入；配置关闭时不生成，
       // 工具过程状态（工具段 + 小字动画）不经过这里，照常显示
-      const usage = session?.getContextUsage?.();
       const statsLine = this.showModelStats
         ? formatStatsLine({
             modelName: session?.getModelName?.(),
             stats: session?.getStats?.(),
             baselineTotalTokens: statsBefore?.tokens?.total ?? 0,
             elapsedMs: Date.now() - requestStartedAt,
-            contextPercent: usage?.percent,
           })
         : undefined;
       if (this.showModelStats && !statsLine) {

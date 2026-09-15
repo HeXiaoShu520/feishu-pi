@@ -174,7 +174,7 @@ export function formatToolCall(toolName: string, args: unknown): string {
 
 /**
  * 格式化回复末尾的统计小字：
- * `模型 · 累计token（新增 x） · ctx ~n% · $费用 · 耗时 · 会话别名`。
+ * `模型 · 累计token（新增 x） · $费用 · 耗时 · 会话别名`。
  * 新增 token = 当前上下文累计 - prompt 前基线；缺失的字段自动省略；无统计时返回 undefined。
  */
 export function formatStatsLine(input: {
@@ -184,8 +184,6 @@ export function formatStatsLine(input: {
   baselineTotalTokens?: number;
   /** 本轮请求耗时（毫秒） */
   elapsedMs: number;
-  /** 当前上下文占用百分比（模型窗口口径，区别于累计计费 token） */
-  contextPercent?: number | null;
 }): string | undefined {
   const { stats } = input;
   if (!stats) return undefined;
@@ -198,13 +196,11 @@ export function formatStatsLine(input: {
   const total = stats.tokens?.total || 0;
   const deltaTokens = Math.max(0, total - (input.baselineTotalTokens || 0));
   const cost = typeof stats.cost === "number" ? `$${stats.cost.toFixed(4)}` : "";
-  const ctx = input.contextPercent != null ? `ctx ~${Math.round(input.contextPercent)}%` : "";
   const elapsed = `${(input.elapsedMs / 1000).toFixed(1)}s`;
 
   return [
     input.modelName || "模型未知",
     `${formatTokens(total)}（新增 ${formatTokens(deltaTokens)}）`,
-    ctx,
     cost,
     elapsed,
     sessionAlias(stats.sessionId),

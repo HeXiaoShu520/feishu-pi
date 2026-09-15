@@ -169,15 +169,14 @@ describe("formatStatsLine 统计小字", () => {
     expect(line).toContain("1.04M（新增 29.0K）");
   });
 
-  it("完整字段：模型 · token（新增） · ctx · 费用 · 耗时 · 别名", () => {
+  it("完整字段：模型 · token（新增） · 费用 · 耗时 · 别名", () => {
     const line = formatStatsLine({
       modelName: "claude-sonnet-4-6",
       stats: { tokens: { total: 24_600 }, cost: 0.0884, sessionId: "aaaaaaaa-bbbb-cccc" },
       baselineTotalTokens: 6_900,
       elapsedMs: 6_700,
-      contextPercent: 2.4,
     });
-    expect(line).toMatch(/^claude-sonnet-4-6 · 24\.6K（新增 17\.7K） · ctx ~2% · \$0\.0884 · 6\.7s · /);
+    expect(line).toMatch(/^claude-sonnet-4-6 · 24\.6K（新增 17\.7K） · \$0\.0884 · 6\.7s · /);
   });
 
   it("无统计返回 undefined；缺字段自动省略（无会话 ID 时别名显示 未知）", () => {
