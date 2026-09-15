@@ -144,7 +144,7 @@ export class FeishuPiRuntime {
   async printAvailableResources(): Promise<void> {
     const baseResourceLoader = await this.loadBaseLoaderOnce();
     const { skills } = baseResourceLoader.getSkills();
-  
+
     if (skills.length > 0) {
       logger.info(`[Runtime] 已加载 ${colors.bright}${colors.magenta}${skills.length}${colors.reset} 个 Skills（对所有人开放）:`);
       skills.forEach((skill) => {
@@ -158,7 +158,27 @@ export class FeishuPiRuntime {
     } else {
       logger.warn(`[Runtime] 未找到任何 Skills`);
     }
-  
+
+    // 自定义 Tools：Skills 之后加载，逐行打印（与 Skills 同款格式；描述超长截断）
+    let customTools: FeishuPiTool[] = [];
+    try {
+      customTools = await this.loadCustomToolsOnce();
+    } catch (error) {
+      logger.warn("[Runtime] 自定义 Tools 加载失败（不影响启动，下个会话重试）:", error);
+    }
+    if (customTools.length > 0) {
+      logger.info(`[Runtime] 已加载 ${colors.bright}${colors.cyan}${customTools.length}${colors.reset} 个 Tools（.agent/tools，随组策略注册）:`);
+      customTools.forEach((tool) => {
+        const head = `  ⚙ ${tool.name}: `;
+        const desc = String(tool.description ?? "").replace(/\s+/g, " ").trim();
+        const maxDesc = Math.max(0, 90 - head.length);
+        const shown = desc.length > maxDesc ? `${desc.slice(0, maxDesc)}…` : desc;
+        logger.info(`  ${colors.cyan}⚙${colors.reset} ${colors.cyan}${tool.name}${colors.reset}: ${shown}`);
+      });
+    } else {
+      logger.info(`[Runtime] 未找到自定义 Tools（.agent/tools/ 为空）`);
+    }
+
     // 打印内置工具列表
     logger.info(`[Runtime] 内置工具(按组策略注册): ${colors.gray}${DEFAULT_BUILTIN_TOOLS.join(", ")}${colors.reset}`);
   }

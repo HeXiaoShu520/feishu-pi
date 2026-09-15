@@ -169,7 +169,9 @@ async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
   if (signature !== _lastToolSignature) {
     const isFirst = _lastToolSignature === null;
     _lastToolSignature = signature;
-    logger.info(`[Registry] ${isFirst ? "已加载" : "工具集变化，重新加载"}自定义工具: ${signature || "无"}`);
+    // 首次加载的逐行清单由 Runtime.printAvailableResources 统一打印（Skills 之后）；
+    // 这里只在工具集发生变化（热更新）时打一条简短通知
+    if (!isFirst) logger.info(`[Registry] 工具集变化，已重新加载 ${entries.length} 个自定义工具`);
   }
 
   return tools;
