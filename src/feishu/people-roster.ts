@@ -45,6 +45,23 @@ function escapeRegExp(text: string): string {
   return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+/**
+ * 从归一化消息的 mentions 里提取"应入库"的被提及者 openId 列表（纯函数，供单测）：
+ * 剔除无 openId 的项（@所有人）、机器人、发送者本人；按出现顺序去重。
+ */
+export function mentionedUserIds(
+  mentions: Array<{ openId?: string; isBot?: boolean }>,
+  senderOpenId?: string,
+): string[] {
+  const result: string[] = [];
+  for (const m of mentions) {
+    if (!m.openId || m.isBot) continue;
+    if (senderOpenId && m.openId === senderOpenId) continue;
+    if (!result.includes(m.openId)) result.push(m.openId);
+  }
+  return result;
+}
+
 export class PeopleRoster {
   private readonly usersFile: string;
   private entries: Array<{ openId: string; name: string; enName: string; departments: string[] }> = [];

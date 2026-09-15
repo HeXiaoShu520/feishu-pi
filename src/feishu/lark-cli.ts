@@ -108,6 +108,9 @@ export class LarkCli {
    * 避免重复打接口（应对"刚入群名单未同步"等临时失败）。消费方自行判断空字段并做兜底展示（如 openId 直显）。
    * prefetch 模式例外：失败不落冷却档案（见 UserProfileQueryOptions）。
    */
+  /** 同一用户的并发查询合并（如多条消息同时 @ 同一新人）：共享同一条查询链路 */
+  private readonly inflight = new Map<string, Promise<LarkUserProfile>>();
+
   async getUserProfile(openId: string, chatId?: string, queryOptions?: UserProfileQueryOptions): Promise<LarkUserProfile> {
     await this.loadCache();
 
@@ -125,6 +128,18 @@ export class LarkCli {
       logger.info(`[LarkCli] 用户 ${openId} 缓存已过期（${ageInDays.toFixed(1)} 天），重新查询`);
     }
 
+    const inflight = this.inflight.get(openId);
+    if (inflight) return inflight;
+    const task = this.queryAndCache(openId, chatId, queryOptions).finally(() => {
+      this.inflight.delete(openId);
+    });
+    this.inflight.set(openId, task);
+    return task;
+  }
+
+  /** 实际查询 + 缓存写入（经 getUserProfile 的 inflight 合并进入，同一用户串行）。 */
+  private async queryAndCache(openId: string, chatId?: string, queryOptions?: UserProfileQueryOptions): Promise<LarkUserProfile> {
+    const now = new Date();
     // 部分合并：姓名 + 部门凑齐即提前收工；via 记录有贡献的通道（日志用）
     const resolved: ProfileName = {};
     const via: string[] = [];

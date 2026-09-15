@@ -9,6 +9,7 @@ import { attachmentsDir, sanitizeFileName } from "../utils/session-paths.ts";
 import { upsertEnvLine } from "../utils/env-file.ts";
 import { toBuffer } from "./resource-buffer.ts";
 import { extractCredentialFields } from "./credential-card.ts";
+import { mentionedUserIds } from "./people-roster.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -149,7 +150,7 @@ export class LarkTransport implements FeishuTransport {
             includeRaw: true,
           } as never);
           if (!message) return;
-          await this.dispatchMessage(message as unknown as { messageId: string; chatId: string; threadId?: string; senderId: string; content: string; resources?: Array<{ type: string; fileKey: string; fileName?: string }> });
+          await this.dispatchMessage(message as unknown as { messageId: string; chatId: string; threadId?: string; senderId: string; content: string; resources?: Array<{ type: string; fileKey: string; fileName?: string }>; mentions?: Array<{ openId?: string; name?: string; isBot?: boolean }> });
         } catch (error) {
           logger.error("[LarkTransport] 消息归一化/分发失败:", error);
         }
@@ -201,6 +202,7 @@ export class LarkTransport implements FeishuTransport {
     senderId: string;
     content: string;
     resources?: Array<{ type: string; fileKey: string; fileName?: string }>;
+    mentions?: Array<{ openId?: string; name?: string; isBot?: boolean }>;
   }): Promise<void> {
     if (this.botOpenId && message.senderId === this.botOpenId) return;
     const chatId = message.chatId;
@@ -209,6 +211,13 @@ export class LarkTransport implements FeishuTransport {
       const chatMode = await this.getChatModeCached(chatId);
       const profile = await this.larkCli.getUserProfile(message.senderId, chatId);
       const displayName = profile.name || profile.en_name || message.senderId;
+
+      // @ 提及入库（后台，不阻塞消息处理）：被 @ 的人也走资料查询链路写入用户名单
+      // （data/users/{appId}_users.json，人员提示/权限分组/管理员识别共用）。
+      // 查询链路自带 3 天缓存与并发合并：已入库的人零 API 开销。
+      for (const mentioned of mentionedUserIds(message.mentions ?? [], message.senderId)) {
+        void this.larkCli.getUserProfile(mentioned, chatId).catch(() => undefined);
+      }
 
       // 构造 conversationId：
       // - 话题群：同一话题内所有用户共享一个会话；首条消息没有 threadId，

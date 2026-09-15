@@ -240,3 +240,34 @@ describe("LarkCli 用户资料查询（用户态搜索通道补全）", () => {
     expect(profile.department_name).toEqual([]);
   });
 });
+
+describe("LarkCli 并发查询合并（inflight）", () => {
+  it("同一用户的并发 getUserProfile 共享一次查询链路，缓存写回不重复", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "larkcli-"));
+    let adminGetCalls = 0;
+    let releaseAdminGet: () => void = () => undefined;
+    const gate = new Promise<void>((resolve) => { releaseAdminGet = resolve; });
+    const larkCli = new LarkCli(
+      { im: { chatMembers: { get: async () => ({ data: { items: [] } }) } } } as unknown as ConstructorParameters<typeof LarkCli>[0],
+      "cli_test",
+      dir,
+      {
+        adminTokenProvider: async () => "admin_uat",
+        adminGet: async () => {
+          adminGetCalls += 1;
+          await gate;
+          return { user: { name: "并发用户", en_name: "Racer" } };
+        },
+      },
+    );
+
+    // 同时发起两次查询（都卡在 adminGet 的门闩上）
+    const p1 = larkCli.getUserProfile("ou_race", "oc_group");
+    const p2 = larkCli.getUserProfile("ou_race", "oc_group");
+    releaseAdminGet();
+    const [r1, r2] = await Promise.all([p1, p2]);
+    expect(r1.name).toBe("并发用户");
+    expect(r2.name).toBe("并发用户");
+    expect(adminGetCalls).toBe(1);
+  });
+});
