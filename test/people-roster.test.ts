@@ -102,3 +102,14 @@ describe("mentionedUserIds（@ 提及入库的提取）", () => {
     expect(mentionedUserIds([], "ou_me")).toEqual([]);
   });
 });
+
+describe("match 扫描上限（每条消息最多检索前 1000 字）", () => {
+  it("名字出现在前 1000 字内 → 命中；被截断到 1000 字之外 → 不命中", async () => {
+    const roster = await makeRoster(ROSTER);
+    const inside = "x".repeat(900) + " 张三在范围内";
+    expect((await roster.match(inside)).map((h) => h.openId)).toEqual(["ou_zhang"]);
+
+    const outside = "x".repeat(1000) + " 张三在范围外";
+    expect(await roster.match(outside)).toEqual([]);
+  });
+});

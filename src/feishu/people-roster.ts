@@ -37,6 +37,8 @@ export interface RosterMatchOptions {
 /** 名字参与匹配的最小长度（单字中文名如"王"会满屏误命中，跳过） */
 const MIN_NAME_CHARS = 2;
 const DEFAULT_LIMIT = 8;
+/** 每条消息最多参与匹配的字符数（超长消息只扫前 1000 字，开销恒定可控） */
+const SCAN_MAX_CHARS = 1000;
 
 /** at 标签整体剔除：被 @ 的人身份已在标签里，其展示文本（名字）不应再按名字命中 */
 const AT_TAG_RE = /<at[^>]*>[\s\S]*?<\/at>|<at[^>]*\/?>/gi;
@@ -93,12 +95,13 @@ export class PeopleRoster {
   /**
    * 扫描文本，返回命中人员（按文中首次出现位置排序，按 openId 去重）。
    * 中文名子串匹配、英文名按词边界不区分大小写；名字长度 < 2 不参与。
+   * 只扫前 SCAN_MAX_CHARS（1000）字，超长部分不参与匹配。
    */
   async match(text: string, opts: RosterMatchOptions = {}): Promise<RosterHit[]> {
     await this.ensureLoaded();
     if (!text || this.entries.length === 0) return [];
 
-    const cleaned = text.replace(AT_TAG_RE, " ");
+    const cleaned = text.replace(AT_TAG_RE, " ").slice(0, SCAN_MAX_CHARS);
     const limit = opts.limit ?? DEFAULT_LIMIT;
     const hits: Array<RosterHit & { at: number }> = [];
     const seen = new Set<string>();
