@@ -14,6 +14,39 @@ import type { GroupPolicy } from "../permission/policy.ts";
 /** .agent/tools/ 里的脚本可在导出对象上附带 risk: "high"（强制走授权卡） */
 type RiskyToolDefinition = ToolDefinition & { risk?: "high" };
 
+/** pi 原始事件的最小结构（结构化类型，避免耦合 pi 内部的事件联合类型） */
+export interface PiRawEvent {
+  type: string;
+  message?: { role: string; content: Array<{ type: string; text?: string }> };
+  toolName?: string;
+  args?: unknown;
+  isError?: boolean;
+}
+
+/**
+ * pi 原始事件 → 桥接事件映射（纯函数，供单测）。
+ *
+ * 关键点：assistant 正文除了监听 message_update（流式增量），**必须同时兜住
+ * message_start / message_end**——pi 的 agent-loop 在模型一次性返回完整消息
+ * （流里没有任何增量事件）时只发 start + end、不发 update，只监听 update 会导致
+ * 这类"一次就出结果"的回复一个正文事件都收不到（卡片正文为空、小字却正常）。
+ * 同一条消息 start/end 重复给出全文是安全的：桥接层按"新文本是旧文本前缀"去重，等长全文是空操作。
+ */
+export function mapPiEvent(event: PiRawEvent): FeishuPiEvent | undefined {
+  const message = event.message;
+  if (message && message.role === "assistant" && (event.type === "message_update" || event.type === "message_start" || event.type === "message_end")) {
+    const text = message.content.filter((item) => item.type === "text").map((item) => item.text).join("");
+    // message_start 的 partial 常为空内容：空文本不产生事件
+    if (!text) return undefined;
+    return { type: "assistant_text", text };
+  }
+  const toolName = "toolName" in event && typeof event.toolName === "string" ? event.toolName : "unknown";
+  if (event.type === "tool_execution_start") return { type: "tool_started", toolName, args: "args" in event ? event.args : undefined };
+  if (event.type === "tool_execution_update") return { type: "tool_updated", toolName };
+  if (event.type === "tool_execution_end") return { type: "tool_finished", toolName, isError: "isError" in event && event.isError === true };
+  return undefined;
+}
+
 class SessionWrapper implements FeishuPiSession {
   private readonly raw: AgentSession;
 
@@ -41,17 +74,8 @@ class SessionWrapper implements FeishuPiSession {
 
   subscribe(listener: (event: FeishuPiEvent) => void): () => void {
     return this.raw.subscribe((event) => {
-      if (event.type === "message_update" && event.message.role === "assistant") {
-        const text = event.message.content.filter((item) => item.type === "text").map((item) => item.text).join("");
-        listener({ type: "assistant_text", text });
-        return;
-      }
-      if (event.type === "tool_execution_start" || event.type === "tool_execution_update" || event.type === "tool_execution_end") {
-        const toolName = "toolName" in event && typeof event.toolName === "string" ? event.toolName : "unknown";
-        if (event.type === "tool_execution_start") listener({ type: "tool_started", toolName, args: "args" in event ? event.args : undefined });
-        if (event.type === "tool_execution_update") listener({ type: "tool_updated", toolName });
-        if (event.type === "tool_execution_end") listener({ type: "tool_finished", toolName, isError: "isError" in event && event.isError === true });
-      }
+      const mapped = mapPiEvent(event as unknown as PiRawEvent);
+      if (mapped) listener(mapped);
     });
   }
 
@@ -253,7 +277,7 @@ export class FeishuPiRuntime {
     // 项目内置交互工具（ask_user_question 等）：随会话注册，并把调用者身份注入参数，
     // 工具执行时经 params._caller 拿到提问对象与会话（见 bindCallers）
     // identityBash（可选）：同名覆盖内置 bash，spawn 前按会话用户注入 CLI 凭证环境变量
-    const identityBashTool = this.config.identityBash?.(userId);
+    const identityBashTool = this.config.identityBash?.(userId, context);
     const sessionTools = [
       ...bindCallers(this.tools, { openId: userId, chatId: context?.chatId ?? "" }),
       ...customTools,

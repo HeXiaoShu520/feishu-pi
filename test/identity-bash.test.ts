@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyCredentialInjections } from "../src/runtime/identity-bash.ts";
+import { applyCredentialInjections, extractMissingScopes } from "../src/runtime/identity-bash.ts";
 
 /** 与 identity-bash.ts 内置规则同构的最小规则集（getToken 由测试注入） */
 function makeRules(opts: { token?: string; appId?: string; meegleToken?: string } = {}) {
@@ -74,5 +74,23 @@ describe("applyCredentialInjections（会话 bash 身份注入）", () => {
     applyCredentialInjections("ls -la", env, makeRules({ token: "uat_x" }));
     // 第二次命令不匹配 → 保留第一次的值不变（env 是本次 spawn 专属对象）
     expect(env.LARKSUITE_CLI_USER_ACCESS_TOKEN).toBe("uat_x");
+  });
+});
+
+describe("extractMissingScopes（lark-cli 缺权限识别）", () => {
+  it("missing_scopes 数组：提取全部候选 scope，去重", () => {
+    const output = `{"code":99991672,"msg":"Permission denied","error":{"missing_scopes":["docs:doc:readonly","docs:doc:readonly","drive:drive:readonly"]}}`;
+    expect(extractMissingScopes(output)).toEqual(["docs:doc:readonly", "drive:drive:readonly"]);
+  });
+
+  it("hint 中的 auth login --scope 写法兜底；offline_access 不需要补授权", () => {
+    const output = `权限不足。hint: lark-cli auth login --scope "calendar:calendar:readonly" --no-wait --json`;
+    expect(extractMissingScopes(output)).toEqual(["calendar:calendar:readonly"]);
+    expect(extractMissingScopes('"missing_scopes":["offline_access"]')).toEqual([]);
+  });
+
+  it("普通输出/成功输出 → 空列表（不触发补授权）", () => {
+    expect(extractMissingScopes('{"ok":true,"data":{"items":[]}}')).toEqual([]);
+    expect(extractMissingScopes("命令执行完成")).toEqual([]);
   });
 });

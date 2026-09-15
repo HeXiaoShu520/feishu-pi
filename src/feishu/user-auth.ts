@@ -345,6 +345,14 @@ export class UserAuthService {
     return this.store.get(openId);
   }
 
+  /** /login 状态总览用：登录态摘要（none=未登录 / expired=登录已过期 / active=有效）。 */
+  async loginStatus(openId: string): Promise<{ state: "none" | "expired" | "active"; scope: string; refreshExpiresAt: number }> {
+    const token = await this.store.get(openId);
+    if (!token) return { state: "none", scope: "", refreshExpiresAt: 0 };
+    const active = token.refreshExpiresAt - 60_000 > this.now();
+    return { state: active ? "active" : "expired", scope: token.scope, refreshExpiresAt: token.refreshExpiresAt };
+  }
+
   /**
    * 确保用户具备所需 scope（增量授权）：token 已含全部所需 → 返回 access token；
    * 缺失 → 向当前会话**自动发起新一轮 Device Flow**（合并现有与新增 scope）并立即返回
@@ -503,16 +511,18 @@ const LOGIN_PROVIDERS: Record<string, ProviderEntry> = {
   },
 };
 
-/** Meegle 凭证提交/清除的最小接口（由 MeegleCredentialService 实现）。 */
+/** Meegle 凭证提交/清除/查询的最小接口（由 MeegleCredentialService 实现）。 */
 export interface MeegleLoginHandler {
   submitToken(openId: string, token: string): Promise<void>;
   logout(openId: string): Promise<boolean>;
+  /** 同步查询是否已有凭证（/login 状态总览用，不返回内容） */
+  peekToken?(openId: string): string | undefined;
 }
 
 /** /login <provider>：统一多应用登录入口，必须显式指定应用。
+ *  - `/login`（无参数）：展示各 CLI 的登录状态总览（不猜测默认应用）；
  *  - `/login lark`：飞书 Device Flow 授权；
  *  - `/login meegle [token]`：仅私聊。无 token 发引导卡；携带 token 则加密入库（不进会话记录）；
- *  - `/login`（无参数）：不猜测默认应用，返回支持清单引导。
  *  发起后卡片后台轮询，完成时原地更新结果。 */
 export class LoginCommand implements CommandHandler {
   private readonly auth: UserAuthService;
@@ -527,25 +537,48 @@ export class LoginCommand implements CommandHandler {
     return /^\/login(\s+\S+)?$/.test(text.trim());
   }
 
-  execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
+  async execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
     const parts = message.text.trim().split(/\s+/);
     const provider = parts[1]?.toLowerCase();
     if (!provider) {
-      const known = Object.entries(LOGIN_PROVIDERS).map(([id, e]) => `- \`/login ${id}\`：${e.label}`).join("\n");
-      return Promise.resolve({ card: markdownCard(`请指定要登录的应用（必须带应用后缀）：\n${known}\n\n例如：\`/login lark\``) });
+      return this.statusCard(message.context.userOpenId);
     }
     const entry = LOGIN_PROVIDERS[provider];
     if (!entry) {
       const known = Object.entries(LOGIN_PROVIDERS).map(([id, e]) => `- \`/login ${id}\`：${e.label}`).join("\n");
-      return Promise.resolve({ card: markdownCard(`❓ 未知的应用「${provider}」。当前支持：\n${known}`) });
+      return { card: markdownCard(`❓ 未知的应用「${provider}」。当前支持：\n${known}`) };
     }
     if (provider === "meegle") {
-      return Promise.resolve(this.loginMeegle(message, parts[2]));
+      return this.loginMeegle(message, parts[2]);
     }
     if (entry.pending) {
-      return Promise.resolve({ card: markdownCard(`⏳ ${entry.label}：${entry.pending}`) });
+      return { card: markdownCard(`⏳ ${entry.label}：${entry.pending}`) };
     }
     return this.auth.startLogin(message);
+  }
+
+  /** /login（无参数）：各 CLI 登录状态总览（仅本人视角，不展示任何凭证内容）。 */
+  private async statusCard(openId: string): Promise<CommandResult> {
+    const lines = ["🔑 **各应用登录状态**", ""];
+
+    const status = await this.auth.loginStatus(openId);
+    if (status.state === "none") {
+      lines.push("- **lark**（飞书 CLI）：⚪ 未登录 —— `/login lark` 开启");
+    } else if (status.state === "expired") {
+      lines.push("- **lark**（飞书 CLI）：🔴 登录已过期 —— 重新 `/login lark`");
+    } else {
+      const validUntil = new Date(status.refreshExpiresAt).toLocaleString("zh-CN");
+      lines.push(`- **lark**（飞书 CLI）：🟢 已登录（scope：${status.scope || "默认"}，有效期至 ${validUntil}）`);
+    }
+
+    const meegleReady = this.meegle?.peekToken?.(openId) !== undefined;
+    lines.push(meegleReady
+      ? "- **meegle**（飞书项目）：🟢 已配置凭证"
+      : "- **meegle**（飞书项目）：⚪ 未配置 —— `/login meegle <token>` 提交");
+
+    lines.push("- **bbt**（Bitbucket）：⚪ 尚未开放登录");
+    lines.push("", "发起登录：`/login <应用名>`，如 `/login lark`。");
+    return { card: markdownCard(lines.join("\n")) };
   }
 
   /** /login meegle [token]：无 token 发引导卡；携带 token 且在私聊中则加密入库。

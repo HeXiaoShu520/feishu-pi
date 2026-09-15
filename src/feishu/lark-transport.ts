@@ -42,6 +42,8 @@ export interface LarkTransportConfig {
    * 提供后启用用户资料的"管理员身份查询"通道：补群成员英文名/部门，并兜底查应用可用范围外的用户。
    */
   adminTokenProvider?: () => Promise<string | undefined>;
+  /** lark-cli 用户态搜索通道（contact +search-user，见 lark-cli-search.ts）：部门信息的来源 */
+  searchUserProfile?: (openId: string) => Promise<{ name?: string; en_name?: string; department_name?: string[] } | undefined>;
   /** 模型切换回调（/model 指令确认后触发，用于运行时热切换） */
   onModelSwitch?: (modelName: string) => void;
 }
@@ -98,6 +100,7 @@ export class LarkTransport implements FeishuTransport {
     }
     this.larkCli = new LarkCli(config.client, config.appId, config.userProfileDir, {
       adminTokenProvider: config.adminTokenProvider,
+      searchUser: config.searchUserProfile,
     });
     this.imageProcessor = new LarkImageProcessor(config.client, {
       cacheDir: config.imageCacheDir,

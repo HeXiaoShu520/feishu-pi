@@ -6,6 +6,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { SkillUsageStore } from "../stats/skill-usage-store.ts";
 import type { GroupPolicy, PermissionPolicy } from "../permission/policy.ts";
 import type { ScheduleService } from "../schedule/service.ts";
+import type { FeishuContext } from "../context/types.ts";
 
 /** Pi 会话事件（订阅转发给飞书卡片渲染） */
 export type FeishuPiEvent =
@@ -49,9 +50,9 @@ export interface FeishuPiConfig {
   /**
    * 会话级"带身份"bash 工厂（可选）；提供时以同名自定义工具覆盖内置 bash，
    * 在每次命令 spawn 前按会话用户注入 CLI 凭证环境变量（lark-cli 等，见 identity-bash.ts）。
-   * 参数为该会话的用户 openId——管理员与普通用户同流程。
+   * 参数为该会话的用户 openId 与会话上下文（chatId 用于缺权限时把授权卡发到当前会话）。
    */
-  identityBash?: (userId: string) => ToolDefinition;
+  identityBash?: (userId: string, context?: FeishuContext) => ToolDefinition;
 }
 
 /** 对 Pi AgentSession 的最小接口封装（供会话管理与卡片渲染使用） */

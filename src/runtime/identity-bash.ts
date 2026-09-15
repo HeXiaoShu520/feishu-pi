@@ -1,4 +1,5 @@
 import { createBashTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
+import { logger } from "../utils/logger.ts";
 
 /**
  * 会话级"带身份"的 bash 工具：以同名自定义工具覆盖 Pi 内置 bash（pi 的工具注册为
@@ -12,6 +13,11 @@ import { createBashTool, type ToolDefinition } from "@earendil-works/pi-coding-a
  * - 用户未登录 / token 过期 → 不注入，lark-cli 走默认身份（调用方以 99991668 等错误提示 /login）。
  *
  * 进程级隔离：env 只作用于本次 spawn 的子进程，无全局状态，多用户并发互不可见。
+ *
+ * 缺权限自动补授权：lark-cli 以用户身份调用时若遇到 missing_scopes 类错误
+ * （用户 token 缺少该业务 scope，且该 scope 不在已授权白名单内），自动触发
+ * onMissingScopes 回调（main.ts 接 UserAuthService.ensureScopes 增量 Device Flow，
+ * 授权卡片发到当前会话），并把提示文案追加到工具输出，让模型转告用户完成授权后重试。
  */
 
 /** 单个 CLI provider 的凭证注入规则（lark 内置；meegle / bitbucket … 走 extraInjections 扩展） */
@@ -36,6 +42,15 @@ export interface IdentityBashOptions {
   appId: string;
   /** 当前会话用户的飞书 user token（同步读内存缓存）；undefined 表示未登录，不注入 */
   getLarkToken?: () => string | undefined;
+  /**
+   * lark-cli 因用户 token 缺少 scope 而失败时的回调：发起增量授权（发授权卡到当前会话），
+   * 返回追加到工具输出的提示文案（undefined = 不追加）。
+   */
+  onMissingScopes?: (userId: string, chatId: string | undefined, scopes: string[]) => string | undefined;
+  /** 当前会话用户 openId（增量授权定位用户） */
+  userId?: string;
+  /** 当前会话 chatId（授权卡片的目的会话） */
+  chatId?: string;
   /** 扩展位：其他 CLI 接入时追加各自的匹配与 env 映射 */
   extraInjections?: ProviderInjection[];
 }
@@ -71,17 +86,90 @@ export function applyCredentialInjections(
   }
 }
 
+/**
+ * 从 lark-cli 输出中提取缺失的用户 scope（纯函数，供单测）。
+ * 命中依据：JSON 错误体中的 missing_scopes 数组（N 选 1），或 hint 里的 auth login --scope 写法。
+ * 返回去重后的 scope 列表（offline_access 这类授权流程 scope 不在其中，无需补授权）。
+ */
+export function extractMissingScopes(output: string): string[] {
+  const scopes: string[] = [];
+  const add = (scope: string): void => {
+    if (scope && scope !== "offline_access" && !scopes.includes(scope)) scopes.push(scope);
+  };
+  const arrayMatch = output.match(/"missing_scopes"\s*:\s*\[([^\]]*)\]/);
+  if (arrayMatch) {
+    for (const m of arrayMatch[1].matchAll(/"([^"]+)"/g)) add(m[1]);
+  }
+  if (scopes.length === 0) {
+    for (const m of output.matchAll(/auth\s+login\s+--scope\s+"?([a-z0-9_.:+-]+)"?/gi)) add(m[1]);
+  }
+  return scopes.slice(0, 5);
+}
+
+/** lark-cli 用户态未登录/凭证失效的错误特征（此时补授权没用，应提示 /login）。 */
+const NOT_LOGGED_IN_PATTERN = /99991668|token_invalid|user_access_token.{0,40}(invalid|expired|缺失|无效)/i;
+
+/** 从 AgentToolResult 中拼接文本 content（缺权限提示追加用）。 */
+function resultText(content: Array<{ type: string; text?: string }>): string {
+  return content.filter((c) => c.type === "text").map((c) => c.text ?? "").join("\n");
+}
+
 export function createIdentityBashTool(options: IdentityBashOptions): ToolDefinition {
   const rules: Array<ProviderInjection & { appId?: string }> = [
     { ...LARK_INJECTION, getToken: options.getLarkToken, appId: options.appId },
     ...(options.extraInjections ?? []).map((rule) => ({ ...rule, appId: options.appId })),
   ];
 
-  return createBashTool(options.cwd, {
+  const tool = createBashTool(options.cwd, {
     spawnHook: (context) => {
       // 每次执行现取快照（规则内 getToken 读内存缓存，O(1) 同步），不长期持有旧 token
       applyCredentialInjections(context.command, context.env, rules);
       return context;
     },
-  }) as ToolDefinition;
+  }) as ToolDefinition & {
+    execute: (
+      toolCallId: string,
+      params: { command?: string },
+      signal: AbortSignal | undefined,
+      onUpdate: unknown,
+      ctx: unknown,
+    ) => Promise<{ content: Array<{ type: string; text?: string }>; details?: unknown }>;
+  };
+
+  if (!options.onMissingScopes) return tool;
+
+  // 包装 execute：lark-cli 权限类失败时触发增量授权，并把提示追加给模型
+  const rawExecute = tool.execute.bind(tool);
+  const wrapped: typeof tool = {
+    ...tool,
+    execute: async (toolCallId: string, params: { command?: string }, signal: AbortSignal | undefined, onUpdate: unknown, ctx: unknown) => {
+      const result = await rawExecute(toolCallId, params, signal, onUpdate as never, ctx as never);
+      try {
+        const command = typeof params?.command === "string" ? params.command : "";
+        if (!command.match(LARK_INJECTION.commandPattern) || command.match(LARK_INJECTION.excludePattern ?? /$^/)) {
+          return result;
+        }
+        const output = resultText(result.content ?? []);
+        const scopes = extractMissingScopes(output);
+        if (scopes.length > 0) {
+          const note = options.onMissingScopes!(options.userId ?? "", options.chatId, scopes);
+          if (note) return { ...result, content: [...(result.content ?? []), { type: "text", text: note }] };
+        }
+        // 未登录（99991668）：补授权无从谈起，提示引导 /login
+        if (NOT_LOGGED_IN_PATTERN.test(output)) {
+          return {
+            ...result,
+            content: [...(result.content ?? []), {
+              type: "text",
+              text: "该 lark-cli 调用没有可用的用户凭证（未 /login 或 token 已失效）。请提醒用户在**私聊**中发送 /login lark 完成飞书用户授权后重试；若命令本应以机器人身份执行，请改用 `--as bot`。",
+            }],
+          };
+        }
+      } catch (error) {
+        logger.warn(`[IdentityBash] 缺权限提示处理失败（不影响命令结果）: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      return result;
+    },
+  };
+  return wrapped;
 }

@@ -1,5 +1,5 @@
 {
-  "_说明": "两个输入：deny=全局禁止读写的路径 glob 数组（第 0 层，先于一切 allow，对所有人含管理员生效），与内置默认（.env 等环境配置、密钥/证书、SSH 私钥、凭据类文件）合并，可自行追加；allow=各身份组的规则数组，保留组名 common（所有人自动叠加）与 admin（FEISHU_ADMIN 自动属于，未配置字段取全量缺省），其余组名任取——团队组暂定 group_1、group_2……组员在 .env 中配置：纯数字后缀可简写，FEISHU_GROUP_1=成员1,成员2 对应组 group_1（FEISHU_GROUP_2 对应 group_2），非数字组名用全名 FEISHU_GROUP_<组名>。allow 内每条规则为 Read(路径glob)、Write(路径glob)、Tools(工具名)、Bash(命令) 格式；_ 开头的键视为注释。修改即时生效（新会话起作用），/perm 可查看当前策略。",
+  "_说明": "两个输入：deny=全局禁止读写的路径 glob 数组（第 0 层，先于一切 allow，对所有人含管理员生效），与内置默认（.env 等环境配置、密钥/证书、SSH 私钥、凭据类文件）合并，可自行追加；allow=各身份组的规则数组，保留组名 common（所有人自动叠加）与 admin（FEISHU_ADMIN 自动属于，未配置字段取全量缺省），其余组名任取。组成员在 .env 配置：FEISHU_GROUP=成员 对应主团队组 group_1，FEISHU_GROUP_1/2…对应 group_1/2…，自定义组用 FEISHU_GROUP_<组名>；成员可以是 open_id、中文名、英文名或组织架构部门名（用户部门路径含该名称即入组）。allow 内每条规则为 Read(路径glob)、Write(路径glob)、Tools(工具名)、Bash(命令) 格式；_ 开头的键视为注释。修改即时生效（新会话起作用），/perm 可查看当前策略。",
   "deny": [],
   "allow": {
     "common": [

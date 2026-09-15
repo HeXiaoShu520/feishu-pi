@@ -111,7 +111,8 @@ export class PermissionPolicy {
   /**
    * 解析调用者所属的组集合：FEISHU_ADMIN → admin；
    * 其余按环境变量 FEISHU_GROUP_<NAME> 配置的成员匹配
-   * （全套标识：openId + 中文名 + 英文名，英文名从用户缓存补充）。
+   * （全套标识：openId + 中文名 + 英文名 + 组织架构部门名，姓名/部门从用户缓存补充——
+   * 成员项写部门名（如 系统工程部）时，用户缓存中的部门路径包含该名称即视为命中）。
    * 不在任何组 → 空集合（保守：仅技能目录可读）。
    */
   async groupsFor(userId: string, userName?: string): Promise<string[]> {
@@ -127,7 +128,19 @@ export class PermissionPolicy {
     if (profile?.en_name) identifiers.add(profile.en_name);
 
     for (const [name, members] of Object.entries(this.groupMembership)) {
-      if (members.some((member) => identifiers.has(member))) groups.add(name);
+      if (members.some((member) => identifiers.has(member))) {
+        groups.add(name);
+        continue;
+      }
+      // 部门名匹配：成员项不是 open_id，且用户缓存的任一部门路径包含该名称（大小写不敏感）
+      const departmentPaths = profile?.department_name ?? [];
+      if (departmentPaths.some((path) =>
+        members.some((member) =>
+          !member.startsWith("ou_") && member.length >= 2 && path.toLowerCase().includes(member.toLowerCase()),
+        ),
+      )) {
+        groups.add(name);
+      }
     }
     return [...groups];
   }
@@ -255,16 +268,16 @@ export class PermissionPolicy {
     }
   }
 
-  /** 用户缓存（openId → 中文名/英文名），mtime 缓存，供成员名匹配。 */
-  private profileCache = new Map<string, { name?: string; en_name?: string }>();
+  /** 用户缓存（openId → 中文名/英文名/部门路径），mtime 缓存，供成员名与部门名匹配。 */
+  private profileCache = new Map<string, { name?: string; en_name?: string; department_name?: string[] }>();
   private profileMtimeMs = -1;
 
-  private async loadProfile(openId: string): Promise<{ name?: string; en_name?: string } | undefined> {
+  private async loadProfile(openId: string): Promise<{ name?: string; en_name?: string; department_name?: string[] } | undefined> {
     if (!this.usersFile) return undefined;
     try {
       const mtimeMs = (await stat(this.usersFile)).mtimeMs;
       if (mtimeMs !== this.profileMtimeMs) {
-        const parsed = JSON.parse(await readFile(this.usersFile, "utf8")) as Record<string, { name?: string; en_name?: string }>;
+        const parsed = JSON.parse(await readFile(this.usersFile, "utf8")) as Record<string, { name?: string; en_name?: string; department_name?: string[] }>;
         this.profileCache = new Map(Object.entries(parsed));
         this.profileMtimeMs = mtimeMs;
       }

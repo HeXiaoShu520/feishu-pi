@@ -15,7 +15,7 @@ export interface LarkUserProfile {
 }
 
 /** 单次查询通道的返回：命中的资料字段（各通道按能力尽量填充） */
-interface ProfileName {
+export interface ProfileName {
   name?: string;
   en_name?: string;
   department_name?: string[];
@@ -33,6 +33,12 @@ export interface LarkCliOptions {
   adminTokenProvider?: () => Promise<string | undefined>;
   /** 测试注入：管理员身份的 HTTP GET 实现（默认全局 fetch 直连 open.feishu.cn） */
   adminGet?: AdminGet;
+  /**
+   * lark-cli 用户态搜索通道（contact +search-user）：用已 /login 用户的 token 按 open_id
+   * 反查姓名与现成中文部门路径，不依赖需审核的部门权限。作为兜底补全通道在最后调用，
+   * 只填前面通道缺失的字段（见 lark-cli-search.ts）。
+   */
+  searchUser?: (openId: string) => Promise<ProfileName | undefined>;
 }
 
 async function defaultAdminGet(pathAndQuery: string, token: string): Promise<Record<string, unknown>> {
@@ -76,24 +82,27 @@ export class LarkCli {
   private readonly client: Client;
   private readonly adminTokenProvider?: () => Promise<string | undefined>;
   private readonly adminGet: AdminGet;
+  private readonly searchUser?: (openId: string) => Promise<ProfileName | undefined>;
 
   constructor(client: Client, appId: string, dataDir = join(process.cwd(), "data", "users"), options?: LarkCliOptions) {
     this.client = client;
     this.cacheFilePath = join(dataDir, `${appId}_users.json`);
     this.adminTokenProvider = options?.adminTokenProvider;
     this.adminGet = options?.adminGet ?? defaultAdminGet;
+    this.searchUser = options?.searchUser;
   }
 
   /**
    * 查询用户资料，带缓存和过期机制。
    *
-   * 通道顺序：
-   * 0. 机器人身份——tenant token 直查 contact v3（应用开通 contact 只读权限即可），
-   *    上电预取管理员资料不依赖任何用户登录；
-   * 1. 管理员用户身份——FEISHU_ADMIN 通过 /login 授权的 user_access_token 调用 contact API。
-   *    数据范围 = 管理员的组织架构可见范围（管理员默认全组织可见），应用可见范围外的内部成员同样可查；
-   * 2. 前两通道未命中 → 该用户是跨租户外部用户（不在本组织通讯录）→ 用**群成员名单**（机器人身份）
-   *    分页查找拿中文名（群名单必含消息发送者）。
+   * 通道顺序（部分合并：后一通道只补前一通道缺失的字段，凑齐"姓名+部门"即止）：
+   * 1. 管理员用户身份——FEISHU_ADMIN 通过 /login 授权的 user_access_token 调用 contact API；
+   *    数据范围 = 管理员的组织架构可见范围。姓名通常可得，部门字段常因需审核权限而缺失；
+   * 2. 机器人身份——tenant token 直查 contact v3。姓名通常可得（应用可见范围内），部门同样常缺；
+   * 3. 群成员名单（机器人身份）——前两通道都查不到时（如跨租户外部用户），分页拉群名单拿显示名；
+   * 4. lark-cli 用户态搜索（contact +search-user）——用已 /login 用户（目标本人优先，其次管理员）
+   *    的 token 按 open_id 反查：姓名 + 现成中文部门路径，**不依赖需审核的部门权限**。
+   *    这是部门信息的主要来源。
    *
    * 缓存：成功档案 3 天；全部通道失败也落盘冷却档案（openId + 旧资料），冷却 1 天后自动重试，
    * 避免重复打接口（应对"刚入群名单未同步"等临时失败）。消费方自行判断空字段并做兜底展示（如 openId 直显）。
@@ -116,23 +125,41 @@ export class LarkCli {
       logger.info(`[LarkCli] 用户 ${openId} 缓存已过期（${ageInDays.toFixed(1)} 天），重新查询`);
     }
 
-    let resolved: ProfileName | undefined = await this.queryNameByAdmin(openId);
-    let via = "管理员";
+    // 部分合并：姓名 + 部门凑齐即提前收工；via 记录有贡献的通道（日志用）
+    const resolved: ProfileName = {};
+    const via: string[] = [];
+    const complete = (): boolean => Boolean(resolved.name && resolved.department_name?.length);
+    const merge = (partial: ProfileName | undefined, tag: string): void => {
+      if (!partial) return;
+      let contributed = false;
+      if (!resolved.name && partial.name) {
+        resolved.name = partial.name;
+        contributed = true;
+      }
+      if (!resolved.en_name && partial.en_name) {
+        resolved.en_name = partial.en_name;
+        contributed = true;
+      }
+      if (!resolved.department_name?.length && partial.department_name?.length) {
+        resolved.department_name = partial.department_name;
+        contributed = true;
+      }
+      if (contributed) via.push(tag);
+    };
 
-    // 通道 0（机器人身份）兜底：无 admin user token 时也能查（tenant 权限范围内）
-    if (!resolved) {
-      resolved = await this.queryNameByBot(openId);
-      if (resolved) via = "机器人";
-    }
-
-    // 通道 2（外部用户兜底）：群成员名单（机器人身份）拿中文名
-    if (!resolved && chatId) {
-      resolved = await this.queryNameByGroupMembers(openId, chatId);
-      if (resolved) via = "群名单";
+    merge(await this.queryNameByAdmin(openId), "管理员");
+    if (!complete()) merge(await this.queryNameByBot(openId), "机器人");
+    if (!complete() && chatId) merge(await this.queryNameByGroupMembers(openId, chatId), "群名单");
+    if (!complete() && this.searchUser) {
+      try {
+        merge(await this.searchUser(openId), "搜索");
+      } catch (error) {
+        logger.warn(`[LarkCli] 用户态搜索通道失败（不影响其他通道结果）：${error instanceof Error ? error.message : String(error)}`);
+      }
     }
 
     // 全部通道失败：常规语义落冷却档案（1 天）；预取模式不落盘，避免冻住真实首条消息的查询
-    if (!resolved) {
+    if (!via.length) {
       if (queryOptions?.prefetch) {
         logger.info(`[LarkCli] 预取 ${openId} 资料未命中（不落冷却档案），留待真实消息时再查`);
         const prev = this.cache[openId];
@@ -171,15 +198,15 @@ export class LarkCli {
     const displayName = profile.name || profile.en_name;
     const englishInfo = profile.en_name ? `, 英文名: ${profile.en_name}` : "";
     const deptInfo = profile.department_name?.length ? `, 部门: ${profile.department_name.join(" / ")}` : "";
-    logger.info(`[LarkCli] 🆕 新用户入库[${via}]: ${displayName}${englishInfo}${deptInfo}`);
+    logger.info(`[LarkCli] 🆕 新用户入库[${via.join("+")}]: ${displayName}${englishInfo}${deptInfo}`);
 
     return profile;
   }
 
   /**
    * 管理员通道：以 FEISHU_ADMIN 的 user token（/login 获得）直查 contact v3，
-   * 拿中文名/英文名/部门名——覆盖机器人应用身份查不到的用户（可用范围外的外部成员）。
-   * 管理员未登录或查询失败返回 undefined（调用方保留已有结果）。部门名需二次调用部门接口换取。
+   * 拿中文名/英文名。部门字段（department_path）普遍需要管理员审核的权限、常常拿不到，
+   * 缺失不在此告警——部门由 lark-cli 用户态搜索通道兜底补全。
    */
   private async queryNameByAdmin(openId: string): Promise<ProfileName | undefined> {
     const getToken = this.adminTokenProvider;
@@ -195,31 +222,19 @@ export class LarkCli {
       const user = userRes.user as {
         name?: string;
         en_name?: string;
-        department_ids?: string[];
-        /** user token 调用时返回：完整部门路径（含部门名，需 contact:user.department_path:readonly + 后台名片页设置） */
+        /** user token 调用且权限齐备时返回：完整部门路径（多数租户未开通，缺失走搜索通道） */
         department_path?: Array<{ department_name?: { name?: string }; department_path?: { name?: string } }>;
       } | undefined;
       if (!user && !userRes.name) {
         const detail = str(userRes.msg) || str(userRes.error_description) || str(userRes.error) || "响应无 user 字段";
         logger.warn(`[LarkCli] 管理员通道未查到用户 ${openId}：${detail}`);
-        logger.warn("[LarkCli] 该接口需要通讯录调用权限（contact:contact.base:readonly 等），请在开发者后台开通并发布版本，然后重新 /login");
         return undefined;
       }
 
       const name = (user?.name || (userRes.name as string | undefined)) ?? undefined;
       const en_name = user?.en_name || undefined;
 
-      // 部门字段诊断：scope 未开通/未发布版本时，响应里不会有 department_path / department_ids，
-      // 部门名会留空——这里显式提示，避免"为什么没有部门"无从排查
-      const hasDepartmentField = Array.isArray(user?.department_path) || Array.isArray(user?.department_ids);
-      if (!hasDepartmentField) {
-        logger.warn(
-          "[LarkCli] 响应未包含部门字段：请确认已开通并发布 contact:user.department:readonly / " +
-            "contact:user.department_path:readonly，且管理后台已开启名片页部门路径展示；未开通时部门名留空",
-        );
-      }
-
-      // 部门名：department_path.name（完整路径，包含直属部门）优先，缺失留空（不二次调部门接口）
+      // 部门名：department_path.name（完整路径）有则用，缺失留空（交给搜索通道补全）
       const department_name = Array.isArray(user?.department_path)
         ? user.department_path
             .map((d) => d.department_path?.name || d.department_name?.name)
@@ -251,6 +266,7 @@ export class LarkCli {
       const user = res.data?.user as {
         name?: string;
         en_name?: string;
+        /** 应用身份通常拿不到部门字段（需审核权限），缺失时部门交给搜索通道 */
         department_path?: Array<{ department_path?: { name?: string }; department_name?: { name?: string } }>;
       } | undefined;
       const name = user?.name ?? undefined;

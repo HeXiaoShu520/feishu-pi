@@ -328,13 +328,43 @@ describe("getUserAccessToken 刷新", () => {
 });
 
 describe("/login 指令路由（provider 后缀必填）", () => {
-  it("无参数 /login 不默认任何应用，返回支持清单引导", async () => {
+  it("无参数 /login 返回各 CLI 登录状态总览（未登录引导对应 /login 命令）", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-route-"));
     const { service } = makeService({ dir, postForm: vi.fn(), updateCard: async () => {} });
     const cmd = new LoginCommand(service);
     const result = await cmd.execute(message());
-    expect(JSON.stringify(result?.card)).toContain("/login lark");
-    expect(JSON.stringify(result?.card)).toContain("/login meegle");
+    const card = JSON.stringify(result?.card);
+    expect(card).toContain("登录状态");
+    expect(card).toContain("未登录");
+    expect(card).toContain("/login lark");
+    expect(card).toContain("/login meegle");
+  });
+
+  it("/login 状态总览展示已登录用户的 scope 与有效期", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "uauth-route-"));
+    const updates: Array<{ messageId: string; card: object }> = [];
+    const postForm = vi.fn()
+      .mockResolvedValueOnce(BEGIN_OK)
+      .mockResolvedValueOnce({ error: "authorization_pending" })
+      .mockResolvedValueOnce(TOKEN_OK);
+    const { service } = makeService({
+      dir,
+      postForm,
+      updateCard: async (messageId, card) => {
+        updates.push({ messageId, card });
+      },
+    });
+    const login = await service.startLogin(message());
+    login.afterSend?.("om_card");
+    await vi.waitFor(() => expect(updates).toHaveLength(1));
+
+    const cmd = new LoginCommand(service);
+    const msg = message();
+    msg.text = "/login";
+    const result = await cmd.execute(msg);
+    const card = JSON.stringify(result?.card);
+    expect(card).toContain("已登录");
+    expect(card).toContain("contact:user.base:readonly");
   });
 
   it("/login 未知应用返回支持清单", async () => {

@@ -1,3 +1,4 @@
+import "./bootstrap-env.ts"; // 最早执行：.env 缺失自动拷贝 + 凭证库主密钥写入 .env（必须在 dotenv 之前）
 import "dotenv/config";
 import { registerSkillStatsRoutes } from "./config-server.ts"; // 启动配置服务器（模块加载即监听 127.0.0.1:3456）
 import { ConversationManager } from "./runtime/conversation-manager.ts";
@@ -17,6 +18,7 @@ import { LoginCommand, LogoutCommand, UserAuthService } from "./feishu/user-auth
 import { createIdentityBashTool } from "./runtime/identity-bash.ts";
 import { runSetupWizard } from "./feishu/setup-wizard.ts";
 import { MeegleCredentialService } from "./feishu/meegle-auth.ts";
+import { createCliSearchUser } from "./feishu/lark-cli-search.ts";
 import { CredentialVault } from "./utils/credential-vault.ts";
 import { delimiter, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
@@ -141,8 +143,16 @@ export async function main(): Promise<void> {
     sessionDataDir: config.sessionDir,
     adminOpenId,
     topicRootsFile: join(config.sessionDir, "topic-roots.json"),
-    // 管理员 /login 后其 user token 是用户资料查询的唯一通道（补英文名/部门，覆盖可用范围外用户）
+    // 管理员 /login 后其 user token 是用户资料查询的通道之一（补英文名，覆盖可用范围外用户）
     adminTokenProvider: async () => (adminOpenId && userAuth ? userAuth.getUserAccessToken(adminOpenId) : undefined),
+    // lark-cli 用户态搜索通道（contact +search-user）：部门信息的主要来源，不依赖需审核权限；
+    // 优先用查询目标本人的 token（查自己必然可见），其次管理员的
+    searchUserProfile: createCliSearchUser({
+      appId: config.feishuAppId,
+      cwd: config.cwd,
+      tokenCandidates: (target) => [target, adminOpenId],
+      peekToken: (openId) => userAuth?.peekUserAccessToken(openId),
+    }),
     // /model 切换时通知运行时热切换（持久化到 .env 仍在 transport 内完成）
     onModelSwitch: (name) => runtime?.setModelName(name),
   });
@@ -344,16 +354,27 @@ ${trimmed}` }] },
     // 会话级带身份 bash：按发起人（含管理员）注入 lark-cli 凭证 env；
     // 同步读内存缓存，未登录时不注入（lark-cli 走默认身份，调用方提示 /login）。
     // 工厂调用即异步预热该用户的内存缓存（快路径命中时零开销），保证首条 bash 前缓存就绪。
-    identityBash: (userId) => {
+    identityBash: (userId, context) => {
       void userAuth?.getUserAccessToken(userId).catch(() => undefined);
       return createIdentityBashTool({
         cwd: config.cwd,
         appId: config.feishuAppId,
+        userId,
+        chatId: context?.chatId,
         getLarkToken: () => userAuth?.peekUserAccessToken(userId),
+        // lark-cli 用户态命令缺 scope 时：发起增量 Device Flow（授权卡发到当前会话），
+        // 同意后 token 自动入库并刷新，重试即生效——用户无需手动 /login
+        onMissingScopes: (uid, chatId, scopes) => {
+          void userAuth?.ensureScopes(uid, scopes).catch((error) => {
+            logger.warn(`[Main] 增量授权发起失败（${scopes.join(", ")}）:`, error);
+          });
+          logger.info(`[Main] lark-cli 缺少用户 scope，已发起增量授权: ${scopes.join(", ")}（用户 ${uid}）`);
+          return `【补充授权已发起】本次调用缺少用户授权 scope：${scopes.join("、")}。已向当前会话发送补充授权卡片，请提醒用户点击完成授权后重试本命令；授权完成后无需其他操作。`;
+        },
         extraInjections: [
           {
             // Meegle（飞书项目）：/login meegle 提交的静态 token，命令命中 meegle 时注入
-            commandPattern: /meegle/,
+            commandPattern: /meegle/,
             envToken: "MEEGLE_USER_ACCESS_TOKEN",
             staticEnv: { MEEGLE_HOST: process.env.MEEGLE_HOST ?? "project.feishu.cn" },
             getToken: () => meegleAuth?.peekToken(userId),

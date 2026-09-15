@@ -183,3 +183,39 @@ describe("PermissionPolicy deny + allow 两输入", () => {
     expect(admin.deniedPath("docs/guide.md")).toBeUndefined();
   });
 });
+
+describe("组成员按组织架构部门名匹配", () => {
+  it("用户缓存部门路径包含配置的部门名 → 视为组成员", async () => {
+    const { dir, file } = await writePolicy({
+      allow: { group_1: ["Bash(npm run test:*)", "Read(.agent/skills/**)"] },
+    });
+    const usersFile = join(dir, "users.json");
+    await writeFile(usersFile, JSON.stringify({
+      ou_in: { name: "张内部", department_name: ["自动驾驶研发部-系统工程交付部-基础功能部"] },
+      ou_out: { name: "李外部", department_name: ["销售部"] },
+      ou_none: { name: "王无部门" },
+    }), "utf8");
+
+    const policy = new PermissionPolicy(file, {
+      groupMembership: { group_1: ["系统工程交付部"] },
+      usersFile,
+    });
+    expect(await policy.groupsFor("ou_in")).toContain("group_1");
+    expect(await policy.groupsFor("ou_out")).not.toContain("group_1");
+    expect(await policy.groupsFor("ou_none")).not.toContain("group_1");
+  });
+
+  it("open_id 形式的成员项不做部门名包含匹配（避免误命中）", async () => {
+    const { dir, file } = await writePolicy({ allow: { group_1: [] } });
+    const usersFile = join(dir, "users.json");
+    await writeFile(usersFile, JSON.stringify({
+      ou_x: { department_name: ["ou_member_as_dept-子系统"] },
+    }), "utf8");
+    const policy = new PermissionPolicy(file, {
+      groupMembership: { group_1: ["ou_member_as_dept"] },
+      usersFile,
+    });
+    // ou_x 的部门路径包含字符串 ou_member_as_dept，但成员项以 ou_ 开头 → 只按 openId 精确匹配
+    expect(await policy.groupsFor("ou_x")).not.toContain("group_1");
+  });
+});

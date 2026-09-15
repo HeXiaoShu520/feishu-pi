@@ -35,6 +35,52 @@ function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
   return ["1", "true", "on", "yes"].includes(value.trim().toLowerCase());
 }
 
+/** 主团队组名：FEISHU_GROUP（无后缀）与 FEISHU_GROUP_1 都落到这里（与 permissions.json 的 group_1 对应） */
+const PRIMARY_GROUP = "group_1";
+
+/**
+ * 解析组成员配置：
+ * - FEISHU_GROUP=x,y        → group_1（主团队组）
+ * - FEISHU_GROUP_<数字>      → group_<数字>（与 permissions.json 的组名对应）
+ * - FEISHU_GROUP_<组名>      → 组名小写（自定义组）
+ * - FEISHU_GROUP_USER1      → 并入 group_1（旧写法，启动时提示替换）
+ * - FEISHU_GROUP_ADMIN      → 忽略（管理员由 FEISHU_ADMIN 统一配置，启动时提示删除）
+ * 同组多来源成员合并去重，保持首次出现顺序。
+ */
+export function parseGroupMembership(env: NodeJS.ProcessEnv, warn: (msg: string) => void = (msg) => console.warn(msg)): Record<string, string[]> {
+  const groups = new Map<string, string[]>();
+  const add = (name: string, members: string[]): void => {
+    const list = groups.get(name) ?? [];
+    for (const member of members) if (!list.includes(member)) list.push(member);
+    groups.set(name, list);
+  };
+  const toMembers = (value: string | undefined): string[] =>
+    (value ?? "").split(",").map((s) => s.trim()).filter(Boolean);
+
+  for (const [key, value] of Object.entries(env)) {
+    if (!key.startsWith("FEISHU_GROUP")) continue;
+    const raw = key.slice("FEISHU_GROUP".length);
+    if (raw === "") {
+      // 主团队组：FEISHU_GROUP → group_1
+      add(PRIMARY_GROUP, toMembers(value));
+      continue;
+    }
+    if (!raw.startsWith("_")) continue; // 非 FEISHU_GROUP 家族的变量（防御）
+    const suffix = raw.slice(1);
+    if (suffix === "ADMIN") {
+      warn("[Config] FEISHU_GROUP_ADMIN 已废弃：管理员统一由 FEISHU_ADMIN 配置（自动属于 admin 组），请从 .env 中删除该项");
+    } else if (/^\d+$/.test(suffix)) {
+      add(`group_${suffix}`, toMembers(value));
+    } else if (suffix === "USER1") {
+      warn("[Config] FEISHU_GROUP_USER1 为旧写法，已等同 FEISHU_GROUP（主团队组 group_1），请改用 FEISHU_GROUP");
+      add(PRIMARY_GROUP, toMembers(value));
+    } else {
+      add(suffix.toLowerCase(), toMembers(value));
+    }
+  }
+  return Object.fromEntries(groups);
+}
+
 /** 从环境变量读取 feishu-pi 启动配置。 */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppConfig {
   const required = (name: string): string => {
@@ -52,8 +98,10 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     cwd: env.FEISHU_PI_CWD ?? process.cwd(),
     sessionDir: `${process.cwd()}/data/sessions`,
     dataDir: `${process.cwd()}/data`,
-    // 用户身份授权 scope（Device Flow）：默认内置"用户资料查询"所需最小集合；FEISHU_USER_AUTH_SCOPES 可覆盖
-    userAuthScopes: parsedUserAuthScopes.length > 0 ? parsedUserAuthScopes : ["contact:contact.base:readonly", "contact:user.base:readonly", "contact:user.department:readonly", "contact:user.department_path:readonly", "contact:department.base:readonly"],
+    // 用户身份授权 scope（Device Flow）：默认内置"用户资料查询"所需最小集合；FEISHU_USER_AUTH_SCOPES 可覆盖。
+    // 注意：部门路径类 scope（contact:user.department(:_path):readonly）需要管理员审核、极难开通，
+    // 默认不申请——部门信息改由 lark-cli 用户态搜索通道（contact +search-user）获得
+    userAuthScopes: parsedUserAuthScopes.length > 0 ? parsedUserAuthScopes : ["contact:contact.base:readonly", "contact:user.base:readonly", "contact:department.base:readonly"],
     modelProvider: env.FEISHU_PI_MODEL_PROVIDER ?? "anthropic",
     modelName: env.FEISHU_PI_MODEL_NAME ?? "claude-sonnet-4-6",
     modelBaseUrl: env.FEISHU_PI_MODEL_BASE_URL,
@@ -65,20 +113,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     guardModels: (env.FEISHU_GUARD_MODELS ?? env.FEISHU_GUARD_MODEL ?? "").split(",").map((m) => m.trim()).filter(Boolean),
     guardApiKey: env.FEISHU_GUARD_API_KEY ?? env.FEISHU_PI_MODEL_API_KEY,
     guardTimeoutMs: Number(env.FEISHU_GUARD_TIMEOUT_MS) > 0 ? Number(env.FEISHU_GUARD_TIMEOUT_MS) : 15_000,
-    // 各组归属关系：解析 FEISHU_GROUP_<NAME>=成员1,成员2,... 格式；
-    // 纯数字后缀映射为团队组名（FEISHU_GROUP_1 → group_1，与 permissions.json 的 group_1/group_2 对应）
-    groupMembership: Object.fromEntries(
-      Object.entries(env)
-        .filter(([key]) => key.startsWith("FEISHU_GROUP_"))
-        .map(([key, value]) => {
-          const suffix = key.slice("FEISHU_GROUP_".length);
-          const groupName = /^\d+$/.test(suffix) ? `group_${suffix}` : suffix.toLowerCase();
-          return [
-            groupName,
-            (value ?? "").split(",").map((s) => s.trim()).filter(Boolean),
-          ];
-        }),
-    ),
+    // 各组归属关系：解析 FEISHU_GROUP[<_N>]=成员1,成员2,... 格式；
+    // FEISHU_GROUP（无后缀）与 FEISHU_GROUP_1 都映射到主团队组 group_1（成员合并去重），
+    // FEISHU_GROUP_2..N 对应 group_2..N；成员除 open_id/中英文名外还支持组织架构部门名
+    // （用户缓存的部门路径包含该部门名即视为组成员，见 PermissionPolicy.groupsFor）。
+    // 旧写法处理：FEISHU_GROUP_USER1 等同 FEISHU_GROUP；FEISHU_GROUP_ADMIN 已废弃——
+    // 管理员统一由 FEISHU_ADMIN 配置，自动属于 admin 组，无需（也不应）再单独配组。
+    groupMembership: parseGroupMembership(env),
     approvalTimeoutMs: Number(env.FEISHU_APPROVAL_TIMEOUT_MS) > 0 ? Number(env.FEISHU_APPROVAL_TIMEOUT_MS) : 5 * 60_000,
     // 回复末尾的模型统计小字：默认显示；FEISHU_SHOW_MODEL_STATS=0/false/off 关闭（工具过程状态不受影响）
     showModelStats: parseBoolEnv(env.FEISHU_SHOW_MODEL_STATS, true),

@@ -29,11 +29,10 @@ export function buildAddons(): Record<string, unknown> {
         "im:resource",
         "im:message.group_msg",
         "im:message.reactions:write_only",
-        // 通讯录只读（上电机器人身份预取管理员资料）
+        // 通讯录只读基础集（姓名/英文名）。部门路径类 scope 需要管理员审核、极难开通，
+        // 故意不申请——部门信息走 lark-cli 用户态搜索（contact +search-user）获得
         "contact:contact.base:readonly",
         "contact:user.base:readonly",
-        "contact:user.department:readonly",
-        "contact:user.department_path:readonly",
         "contact:department.base:readonly",
       ],
     },

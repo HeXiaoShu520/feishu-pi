@@ -184,3 +184,59 @@ describe("LarkCli 用户资料查询（管理员通道 + 外部用户群名单�
     expect(refreshed.department_name).toEqual(["公司/技术部"]);
   });
 });
+
+describe("LarkCli 用户资料查询（用户态搜索通道补全）", () => {
+  it("机器人通道只有姓名时，searchUser 通道补上部门并合并入库", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "larkcli-"));
+    const chatMembersGet = vi.fn(async () => ({ data: { items: [] } }));
+    const contactGet = vi.fn(async () => ({
+      code: 0,
+      data: { user: { name: "机器人查到的名字", en_name: "Robot Name" } }, // 无部门字段（需审核权限，常态）
+    }));
+    const searchUser = vi.fn(async () => ({
+      name: undefined,
+      en_name: undefined,
+      department_name: ["自动驾驶研发部-系统工程交付部-基础功能部"],
+    }));
+    const larkCli = new LarkCli(
+      { contact: { user: { get: contactGet } }, im: { chatMembers: { get: chatMembersGet } } } as unknown as ConstructorParameters<typeof LarkCli>[0],
+      "cli_test",
+      dir,
+      {
+        adminTokenProvider: async () => undefined,
+        adminGet: async () => ({}),
+        searchUser: searchUser as never,
+      },
+    );
+
+    const profile = await larkCli.getUserProfile("ou_merge", "oc_group");
+    expect(profile.name).toBe("机器人查到的名字");
+    expect(profile.department_name).toEqual(["自动驾驶研发部-系统工程交付部-基础功能部"]);
+    expect(searchUser).toHaveBeenCalledTimes(1);
+
+    // 已凑齐（姓名+部门）后缓存生效：3 天内不再调用任何通道
+    const again = await larkCli.getUserProfile("ou_merge", "oc_group");
+    expect(again.department_name).toEqual(["自动驾驶研发部-系统工程交付部-基础功能部"]);
+    expect(searchUser).toHaveBeenCalledTimes(1);
+    expect(contactGet).toHaveBeenCalledTimes(1);
+  });
+
+  it("searchUser 通道失败不影响已有部分结果（姓名保留，部门留空）", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "larkcli-"));
+    const larkCli = new LarkCli(
+      { contact: { user: { get: async () => ({ code: 0, data: { user: { name: "只有名字" } } }) } } } as unknown as ConstructorParameters<typeof LarkCli>[0],
+      "cli_test",
+      dir,
+      {
+        adminTokenProvider: async () => undefined,
+        adminGet: async () => ({}),
+        searchUser: async () => {
+          throw new Error("cli 崩了");
+        },
+      },
+    );
+    const profile = await larkCli.getUserProfile("ou_fail", "oc_group");
+    expect(profile.name).toBe("只有名字");
+    expect(profile.department_name).toEqual([]);
+  });
+});
