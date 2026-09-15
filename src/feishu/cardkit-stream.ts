@@ -114,9 +114,9 @@ export class CardKitStream {
       await this.enqueueWrite(() => this.pushUpdate(fullText));
 
       // 1. 等待客户端打字机把正文打完：速率 = print_step / print_frequency_ms
-      //    （默认 3 字符 / 30ms = 100 字符/秒），再加 1s 分发余量
+      //    （默认 3 字符 / 30ms = 100 字符/秒），再加 300ms 分发余量即出小字
       const typewriterMs = fullText.length * (this.printFrequencyMs / this.printStep);
-      const renderWaitMs = renderWaitMsOverride ?? typewriterMs + 1_000;
+      const renderWaitMs = renderWaitMsOverride ?? typewriterMs + 300;
       await new Promise((resolve) => setTimeout(resolve, renderWaitMs));
 
       // 2. 正文打完后写入统计小字（必须在关闭流式前，关闭后元素不能再更新）
