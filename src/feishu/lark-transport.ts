@@ -202,7 +202,11 @@ export class LarkTransport implements FeishuTransport {
       // @ 提及入库（后台，不阻塞消息处理）：被 @ 的人也走资料查询链路写入用户名单
       // （data/users/{appId}_users.json，人员提示/权限分组/管理员识别共用）。
       // 查询链路自带 3 天缓存与并发合并：已入库的人零 API 开销。
-      for (const mentioned of mentionedUserIds(message.mentions ?? [], message.senderId)) {
+      // 机器人自身双保险排除：isBot 标记 + botOpenId 直接比对（@机器人 不得入名单）
+      for (const mentioned of mentionedUserIds(message.mentions ?? [], {
+        senderOpenId: message.senderId,
+        botOpenId: this.botOpenId,
+      })) {
         void this.larkCli.getUserProfile(mentioned).catch(() => undefined);
       }
 

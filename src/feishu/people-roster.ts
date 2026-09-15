@@ -50,15 +50,17 @@ function escapeRegExp(text: string): string {
 /**
  * 从归一化消息的 mentions 里提取"应入库"的被提及者 openId 列表（纯函数，供单测）：
  * 剔除无 openId 的项（@所有人）、机器人、发送者本人；按出现顺序去重。
+ * 机器人双保险：SDK 的 isBot 标记 + 与 botOpenId 直接比对（任一命中即剔除）。
  */
 export function mentionedUserIds(
   mentions: Array<{ openId?: string; isBot?: boolean }>,
-  senderOpenId?: string,
+  opts: { senderOpenId?: string; botOpenId?: string } = {},
 ): string[] {
   const result: string[] = [];
   for (const m of mentions) {
     if (!m.openId || m.isBot) continue;
-    if (senderOpenId && m.openId === senderOpenId) continue;
+    if (opts.botOpenId && m.openId === opts.botOpenId) continue;
+    if (opts.senderOpenId && m.openId === opts.senderOpenId) continue;
     if (!result.includes(m.openId)) result.push(m.openId);
   }
   return result;
