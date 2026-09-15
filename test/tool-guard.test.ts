@@ -36,7 +36,7 @@ const allowAllPolicy: GroupPolicy = {
 class FakeBroker extends PermissionBroker {
   calls: Array<{ toolName: string; reason: string }> = [];
   constructor() {
-    super({ adminOpenIds: [], timeoutMs: 10, sendCard: async () => "m", updateCard: async () => {} });
+    super({ adminOpenIds: [], timeoutMs: 10, sendCard: async () => "m", sendCardToUser: async () => "m", updateCard: async () => {} });
   }
   async requestApproval(params: { toolName: string; reason: string }) {
     this.calls.push({ toolName: params.toolName, reason: params.reason });

@@ -494,6 +494,22 @@ export class LarkTransport implements FeishuTransport {
     return messageId;
   }
 
+  /** 向指定用户私聊发卡片：receive_id_type=open_id，飞书自动投递到与该用户的会话
+   *  （无需事先知道 oc_ 会话 ID；转发授权卡到管理员私聊用）。 */
+  async sendCardToUser(openId: string, card: object): Promise<string> {
+    const res = await this.client.im.v1.message.create({
+      params: { receive_id_type: "open_id" },
+      data: {
+        receive_id: openId,
+        msg_type: "interactive",
+        content: JSON.stringify(card),
+      },
+    });
+    const messageId = (res.data as { message_id?: string } | undefined)?.message_id;
+    if (!messageId) throw new Error(`发送卡片失败：响应缺少 message_id`);
+    return messageId;
+  }
+
   /** 按 messageId 更新已发送的卡片。 */
   async updateCardById(messageId: string, card: object): Promise<void> {
     await this.client.im.v1.message.patch({

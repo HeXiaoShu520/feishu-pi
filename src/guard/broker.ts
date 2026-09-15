@@ -9,6 +9,8 @@ export interface BrokerOptions {
   timeoutMs: number;
   /** 向会话发送卡片，返回 messageId（用于后续更新为结果卡） */
   sendCard: (chatId: string, card: object) => Promise<string>;
+  /** 向指定用户私聊发送卡片（receive_id_type=open_id，转发授权卡到管理员用） */
+  sendCardToUser: (openId: string, card: object) => Promise<string>;
   /** 按 messageId 更新已发送的卡片 */
   updateCard: (messageId: string, card: object) => Promise<void>;
   /** 按 messageId 撤回消息（精简模式下授权确认后撤回卡片，减少占用） */
@@ -177,10 +179,11 @@ export class PermissionBroker {
     }
     if (pending.forwarded) return { accepted: false, detail: "该请求已转发过" };
 
-    const target = this.options.adminOpenIds[0];
+    const target = this.options.adminOpenIds[0]!;
     const card = buildPermissionCard({ toolName: pending.toolName, args: pending.toolArgs, approvalId, token });
     try {
-      const fwdMessageId = await this.options.sendCard(target, card);
+      // open_id 私聊投递（receive_id_type=open_id）——管理员的 open_id 不能当 chat_id 用
+      const fwdMessageId = await this.options.sendCardToUser(target, card);
       pending.forwarded = { messageId: fwdMessageId };
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);

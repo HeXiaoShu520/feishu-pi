@@ -266,6 +266,8 @@ export async function main(): Promise<void> {
     adminOpenIds: adminOpenId ? [adminOpenId] : [],
     timeoutMs: config.approvalTimeoutMs,
     sendCard: (chatId, card) => transport.sendCardToChat(chatId, card),
+    // 转发授权卡到管理员私聊：open_id 投递（chat_id 通道不认 ou_ 前缀）
+    sendCardToUser: (openId, card) => transport.sendCardToUser(openId, card),
     updateCard: (messageId, card) => transport.updateCardById(messageId, card),
     // 精简模式下授权确认后撤回卡片，减少会话占用
     recallCard: (messageId) => transport.recallMessageById(messageId),
@@ -290,8 +292,12 @@ export async function main(): Promise<void> {
         logger.info(`[Main] 授权请求已转发给管理员私聊（点击者 ${action.operatorOpenId}）`);
       } else {
         logger.warn(`[Main] 转发请求被拒绝: ${result.detail}（点击者 ${action.operatorOpenId}）`);
-        // 服务重启等导致请求失效：就地更新点击的卡片，给点击者明确提示
-        await transport.updateCardById(action.messageId, buildNoticeCard(APPROVAL_STALE_NOTICE)).catch(() => {});
+        // 请求确实已失效（服务重启/已处理）才提示失效；转发通道类失败给出真实原因——
+        // 此时请求仍有效，管理员仍可在原卡上直接授权
+        const stale = result.detail.includes("不存在") || result.detail.includes("已转发过");
+        await transport
+          .updateCardById(action.messageId, buildNoticeCard(stale ? APPROVAL_STALE_NOTICE : `❌ 转发管理员失败：${result.detail}（请求仍有效，可在原卡直接授权或稍后重试）`))
+          .catch(() => {});
       }
       return;
     }
