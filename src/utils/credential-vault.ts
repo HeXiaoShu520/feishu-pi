@@ -7,7 +7,7 @@ import { logger } from "./logger.ts";
 /**
  * 加密凭证库：所有 CLI（lark-cli / meegle / bitbucket …）按用户隔离的密钥统一落盘层。
  *
- * 线上格式（data/credentials.vault.json）：整个记录表序列化为 JSON 后整体 AES-256-GCM 加密，
+ * 线上格式（data/credentials/<provider>.vault.json）：整个记录表序列化为 JSON 后整体 AES-256-GCM 加密，
  * 落盘内容为 { version, salt, iv, tag, data }（全部 base64）。防的是"主体文件单独泄漏"
  * （备份 / 网盘同步 / 误提交），主密钥独立存放于环境变量或本机密钥文件。
  *
@@ -112,43 +112,6 @@ export class CredentialVault {
     return Array.from(this.records.keys())
       .filter((k) => k.startsWith(prefix))
       .map((k) => k.slice(prefix.length));
-  }
-
-  /**
-   * 旧单库拆分迁移：把历史单文件凭证库（含 provider:userKey 复合键）按 provider
-   * 拆写到 dir/<provider>.vault.json（各自独立加密），成功后删除旧单库文件。
-   * 旧文件不存在返回 0；各 provider 文件已存在时逐条合并覆盖（幂等）。
-   */
-  static async splitLegacyVault(
-    legacyFile: string,
-    dir: string,
-    opts: { keyFile?: string; env?: NodeJS.ProcessEnv } = {},
-  ): Promise<number> {
-    if (!existsSync(legacyFile)) return 0;
-    const legacy = await CredentialVault.open(legacyFile, opts);
-    const byProvider = new Map<string, Array<[string, string, unknown]>>();
-    for (const [compositeKey, secret] of legacy.records) {
-      const sep = compositeKey.indexOf(":");
-      if (sep <= 0) continue;
-      const provider = compositeKey.slice(0, sep);
-      const userKey = compositeKey.slice(sep + 1);
-      const list = byProvider.get(provider) ?? [];
-      list.push([userKey, compositeKey, secret]);
-      byProvider.set(provider, list);
-    }
-    let migrated = 0;
-    for (const [provider, list] of byProvider) {
-      const target = await CredentialVault.open(join(dir, `${provider}.vault.json`), opts);
-      for (const [userKey, , secret] of list) {
-        await target.put(provider, userKey, secret);
-        migrated++;
-      }
-    }
-    if (migrated > 0) {
-      await rm(legacyFile);
-      logger.info(`[Vault] 旧单库已按 provider 拆分迁移至 ${dir}/（共 ${migrated} 条），旧文件已删除`);
-    }
-    return migrated;
   }
 
   private compositeKey(provider: string, userKey: string): string {

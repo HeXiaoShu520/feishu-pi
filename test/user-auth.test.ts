@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { CredentialVault } from "../src/utils/credential-vault.ts";
 import { LoginCommand, LogoutCommand, UserAuthService } from "../src/feishu/user-auth.ts";
 import type { FeishuInboundMessage } from "../src/feishu/types.ts";
 
@@ -21,7 +22,6 @@ function makeService(opts: {
     scopes: ["contact:user.base:readonly"],
     vaultFile: join(opts.dir, "credentials.vault.json"),
     vaultKeyFile: join(opts.dir, ".vault-key"),
-    legacyTokenFile: join(opts.dir, "user-tokens.json"),
     updateCard: opts.updateCard,
     sendCard: opts.sendCard,
     postForm: opts.postForm,
@@ -159,12 +159,11 @@ describe("UserAuthService 增量授权（ensureScopes）", () => {
     updatedAt: 1_000_000,
   };
 
-  /**
-   * 预置旧明文 token 文件（历史格式）：service 首次访问时自动迁入加密凭证库，
-   * 顺带覆盖"明文迁移"路径的回归。
-   */
+  /** 预置一条有效 token：直接写入加密凭证库（与线上一致的存储形态）。 */
   async function seed(dir: string): Promise<void> {
-    await writeFile(join(dir, "user-tokens.json"), JSON.stringify({ ou_test: VALID_TOKEN }), "utf8");
+    const vault = await CredentialVault.open(join(dir, "credentials.vault.json"), { keyFile: join(dir, ".vault-key") });
+    const { openId: _openId, ...token } = VALID_TOKEN;
+    await vault.put("lark", "ou_test", token);
   }
 
   it("scope 已覆盖 → 直接返回 token，不发起授权", async () => {
@@ -222,8 +221,8 @@ describe("UserAuthService 增量授权（ensureScopes）", () => {
     expect(postForm.mock.calls[0][1].scope).toBe("s1 s2 offline_access");
     // 同意后新 token 入库（scope 合并），下次调用直接返回新 token
     expect(await service.getUserAccessToken("ou_test")).toBe("uat_new");
-    const stored = await service.getStoredUserToken("ou_test");
-    expect(stored?.scope).toBe("s1 s2 offline_access");
+    const status = await service.loginStatus("ou_test");
+    expect(status.scope).toContain("s1 s2 offline_access");
     expect(JSON.stringify(updates[0])).toContain("✅");
   });
 });
@@ -257,19 +256,17 @@ describe("UserAuthService 增量授权（ensureScopes）", () => {
 describe("getUserAccessToken 刷新", () => {
   it("近过期自动刷新（表单编码）；刷新失败清档返回 undefined", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-"));
-    // 旧明文格式写入 legacy 文件：service 首次访问自动迁入加密库（迁移路径回归）
+    // 直接写入加密库：临期 token（10 秒后过期）触发自动刷新
     const nowMs = Date.now();
-    await writeFile(join(dir, "user-tokens.json"), JSON.stringify({
-      ou_test: {
-        openId: "ou_test",
-        accessToken: "uat_old",
-        refreshToken: "urt_old",
-        expiresAt: nowMs + 10_000,
-        refreshExpiresAt: nowMs + 30 * 86_400_000,
-        scope: "s1",
-        updatedAt: nowMs,
-      },
-    }), "utf8");
+    const seedVault = await CredentialVault.open(join(dir, "credentials.vault.json"), { keyFile: join(dir, ".vault-key") });
+    await seedVault.put("lark", "ou_test", {
+      accessToken: "uat_old",
+      refreshToken: "urt_old",
+      expiresAt: nowMs + 10_000,
+      refreshExpiresAt: nowMs + 30 * 86_400_000,
+      scope: "s1",
+      updatedAt: nowMs,
+    });
 
     const postForm = vi.fn().mockResolvedValueOnce({
       access_token: "uat_new",
@@ -284,7 +281,6 @@ describe("getUserAccessToken 刷新", () => {
       scopes: ["s1"],
       vaultFile: join(dir, "credentials.vault.json"),
       vaultKeyFile: join(dir, ".vault-key"),
-      legacyTokenFile: join(dir, "user-tokens.json"),
       updateCard: async () => {},
       postForm,
     });
@@ -294,17 +290,15 @@ describe("getUserAccessToken 刷新", () => {
 
     // 刷新失败 → 清档返回 undefined；再查无记录，不再发请求（第二个独立目录，避免读到上一份加密库）
     const dir2 = await mkdtemp(join(tmpdir(), "uauth-"));
-    await writeFile(join(dir2, "user-tokens.json"), JSON.stringify({
-      ou_test: {
-        openId: "ou_test",
-        accessToken: "uat_old2",
-        refreshToken: "urt_old2",
-        expiresAt: nowMs + 10_000,
-        refreshExpiresAt: nowMs + 30 * 86_400_000,
-        scope: "s1",
-        updatedAt: nowMs,
-      },
-    }), "utf8");
+    const seedVault2 = await CredentialVault.open(join(dir2, "credentials.vault.json"), { keyFile: join(dir2, ".vault-key") });
+    await seedVault2.put("lark", "ou_test", {
+      accessToken: "uat_old2",
+      refreshToken: "urt_old2",
+      expiresAt: nowMs + 10_000,
+      refreshExpiresAt: nowMs + 30 * 86_400_000,
+      scope: "s1",
+      updatedAt: nowMs,
+    });
     const postFormFail = vi.fn().mockResolvedValue({ error: "invalid_grant" });
     const service2 = new UserAuthService({
       appId: "cli_test",
@@ -312,7 +306,6 @@ describe("getUserAccessToken 刷新", () => {
       scopes: ["s1"],
       vaultFile: join(dir2, "credentials.vault.json"),
       vaultKeyFile: join(dir2, ".vault-key"),
-      legacyTokenFile: join(dir2, "user-tokens.json"),
       updateCard: async () => {},
       postForm: postFormFail,
     });
@@ -370,7 +363,6 @@ describe("/login 指令路由（provider 后缀必填）", () => {
       scopes: ["contact:user.base:readonly"],
       vaultFile: join(dir, "credentials.vault.json"),
       vaultKeyFile: join(dir, ".vault-key"),
-      legacyTokenFile: join(dir, "user-tokens.json"),
       updateCard: async (messageId, card) => {
         updates.push({ messageId, card });
       },
@@ -508,7 +500,6 @@ describe("/login 去重锁生命周期", () => {
       scopes: ["contact:user.base:readonly"],
       vaultFile: join(dir, "credentials.vault.json"),
       vaultKeyFile: join(dir, ".vault-key"),
-      legacyTokenFile: join(dir, "user-tokens.json"),
       updateCard: async () => {},
       postForm,
       getIdentity: async () => ({ openId: "ou_test", name: "测试用户" }),

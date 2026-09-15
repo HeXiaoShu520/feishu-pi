@@ -51,7 +51,6 @@ function writeKeyToEnvFile(envFile: string, key: string, env: NodeJS.ProcessEnv)
 export function ensureVaultKeyInEnv(cwd: string, env: NodeJS.ProcessEnv = process.env): void {
   const envFile = join(cwd, ".env");
   const dataDir = join(cwd, "data");
-  const keyFile = join(dataDir, ".vault-key");
 
   const inEnv = (env[VAULT_KEY] ?? "").trim();
   if (HEX64.test(inEnv)) return; // 已有合法密钥（含此前写入过的）：直接使用
@@ -63,30 +62,17 @@ export function ensureVaultKeyInEnv(cwd: string, env: NodeJS.ProcessEnv = proces
     return;
   }
 
-  // 回收旧密钥文件（此前版本的密钥存放方式）：迁入 .env，凭证数据原样可用
-  if (existsSync(keyFile)) {
-    const legacy = readFileSync(keyFile, "utf8").trim();
-    if (HEX64.test(legacy)) {
-      writeKeyToEnvFile(envFile, legacy, env);
-      rmSync(keyFile, { force: true });
-      console.log("[Bootstrap] 主密钥已从 data/.vault-key 迁入 .env（MINICLAW_VAULT_KEY），旧密钥文件已删除。");
-      return;
-    }
-    console.warn("[Bootstrap] data/.vault-key 内容不合法，忽略并重新生成密钥（旧凭证数据将清空）。");
-  }
-
-  // 全新密钥：已存在的凭证数据用旧钥加密、无法解密，按约定清空
-  const hadCredentials =
-    existsSync(join(dataDir, "credentials")) || existsSync(join(dataDir, "credentials.vault.json"));
-  if (hadCredentials) {
-    rmSync(join(dataDir, "credentials"), { recursive: true, force: true });
-    rmSync(join(dataDir, "credentials.vault.json"), { force: true });
-    console.warn("[Bootstrap] 未找到可用主密钥，已生成新密钥写入 .env；旧凭证数据无法解密，已清空（需重新 /login）。");
+  // 生成新密钥；已存在的凭证数据因此无法解密，按约定清空
+  const credentialsDir = join(dataDir, "credentials");
+  const legacyVault = join(dataDir, "credentials.vault.json");
+  if (existsSync(credentialsDir) || existsSync(legacyVault)) {
+    rmSync(credentialsDir, { recursive: true, force: true });
+    rmSync(legacyVault, { force: true });
+    console.warn("[Bootstrap] 未找到主密钥，已生成新密钥写入 .env；旧凭证数据无法解密，已清空（需重新 /login）。");
   } else {
     console.log("[Bootstrap] 已生成加密凭证库主密钥并写入 .env（MINICLAW_VAULT_KEY）。");
   }
   writeKeyToEnvFile(envFile, randomBytes(32).toString("hex"), env);
-  if (existsSync(keyFile)) rmSync(keyFile, { force: true });
 }
 
 /** 进程入口调用：按顺序执行两项自举。 */

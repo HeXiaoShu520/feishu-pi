@@ -20,7 +20,6 @@ import { createIdentityBashTool } from "./runtime/identity-bash.ts";
 import { runSetupWizard } from "./feishu/setup-wizard.ts";
 import { MEEGLE_DEFAULT_HOST, StaticCredentialService } from "./feishu/meegle-auth.ts";
 import { createCliSearchUser } from "./feishu/lark-cli-search.ts";
-import { CredentialVault } from "./utils/credential-vault.ts";
 import { delimiter, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@larksuiteoapi/node-sdk";
@@ -136,11 +135,6 @@ export async function main(): Promise<void> {
 
   const credentialsDir = join(config.dataDir, "credentials");
   const vaultKeyFile = join(config.dataDir, ".vault-key");
-  // 旧单库（data/credentials.vault.json）拆分迁移：按 provider 拆到子目录，成功后删旧文件
-  await CredentialVault.splitLegacyVault(join(config.dataDir, "credentials.vault.json"), credentialsDir, {
-    keyFile: vaultKeyFile,
-  });
-
   // 静态凭证服务（用户经卡片表单提交、无刷新链路）：meegle 单 token / bbt 用户名+应用密码
   const meegleAuth = new StaticCredentialService(
     join(credentialsDir, "meegle.vault.json"),
@@ -162,7 +156,6 @@ export async function main(): Promise<void> {
     scopes: config.userAuthScopes,
     vaultFile: join(credentialsDir, "lark.vault.json"),
     vaultKeyFile: vaultKeyFile,
-    legacyTokenFile: join(config.dataDir, "user-tokens.json"),
     updateCard: (messageId, card) => transport.updateCardById(messageId, card),
     // 增量授权：能力需要新 scope 时自动向该会话发授权卡
     sendCard: (chatId, card) => transport.sendCardToChat(chatId, card),
@@ -432,7 +425,6 @@ ${trimmed}` }] },
     modelName: config.modelName,
     modelBaseUrl: config.modelBaseUrl,
     systemPrompt: config.systemPrompt,
-    adminId: adminOpenId || "",
     permissionPolicy: policy,
     toolGuard: (groupPolicy, params, signal) => toolGuard.check(groupPolicy, params, signal),
     skillUsageStore: usageStore,

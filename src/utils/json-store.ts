@@ -45,19 +45,14 @@ export abstract class JsonMapStore<V> {
     if (this.loaded) return;
     this.loadPromise ??= (async () => {
       try {
-        const parsed = JSON.parse(await readFile(this.filePath, "utf8")) as unknown;
-        this.records = this.deserializeRecords(parsed);
+        const parsed = JSON.parse(await readFile(this.filePath, "utf8")) as Record<string, V>;
+        this.records = new Map(Object.entries(parsed ?? {}));
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
       this.loaded = true;
     })();
     await this.loadPromise;
-  }
-
-  /** 反序列化钩子：默认按"键 → 值"对象解析；子类可覆盖以兼容历史文件格式（如数组存储）。 */
-  protected deserializeRecords(parsed: unknown): Map<string, V> {
-    return new Map(Object.entries((parsed ?? {}) as Record<string, V>));
   }
 
   /** 串行原子写：先写临时文件再 rename 替换，避免写一半被读到。

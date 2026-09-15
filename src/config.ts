@@ -99,7 +99,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     systemPrompt: env.FEISHU_PI_SYSTEM_PROMPT,
     // 智能体审核（策略外调用的综合判断）：OpenAI 兼容接口，支持逗号分隔多模型取安全交集
     guardBaseUrl: env.FEISHU_GUARD_BASE_URL || undefined,
-    guardModels: (env.FEISHU_GUARD_MODELS ?? env.FEISHU_GUARD_MODEL ?? "").split(",").map((m) => m.trim()).filter(Boolean),
+    guardModels: (env.FEISHU_GUARD_MODELS ?? "").split(",").map((m) => m.trim()).filter(Boolean),
     guardApiKey: env.FEISHU_GUARD_API_KEY ?? env.FEISHU_PI_MODEL_API_KEY,
     guardTimeoutMs: Number(env.FEISHU_GUARD_TIMEOUT_MS) > 0 ? Number(env.FEISHU_GUARD_TIMEOUT_MS) : 15_000,
     // 各组归属关系：解析 FEISHU_GROUP[<_N>]=成员1,成员2,... 格式；

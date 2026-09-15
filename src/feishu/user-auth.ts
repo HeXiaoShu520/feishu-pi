@@ -16,7 +16,6 @@
  * - token 落盘在 data/（.gitignore 已排除），对外统一走 getUserAccessToken（近过期静默刷新）；
  *   实际可访问数据 = 应用申请的 scope ∩ 用户本人可见范围，不绕过 Guard 的组策略闸门。
  */
-import { readFile, unlink } from "node:fs/promises";
 import { logger } from "../utils/logger.ts";
 import { CredentialVault } from "../utils/credential-vault.ts";
 import type { FeishuInboundMessage } from "./types.ts";
@@ -83,50 +82,20 @@ export interface StoredUserToken {
 
 /**
  * token 存储：加密凭证库（CredentialVault，provider = "lark"）。
- * 首次访问时把历史明文文件（data/user-tokens.json）一次性迁入库中，迁入成功后删除明文文件。
  */
 class UserTokenStore {
   private vault: CredentialVault | undefined;
   private readonly vaultFile: string;
-  private readonly legacyFile: string;
   private readonly keyFile: string;
-  /** 明文迁移只做一次的哨兵（进程内） */
-  private migrated = false;
 
-  constructor(vaultFile: string, legacyFile: string, keyFile: string) {
+  constructor(vaultFile: string, keyFile: string) {
     this.vaultFile = vaultFile;
-    this.legacyFile = legacyFile;
     this.keyFile = keyFile;
   }
 
   private async backend(): Promise<CredentialVault> {
     this.vault ??= await CredentialVault.open(this.vaultFile, { keyFile: this.keyFile });
-    if (!this.migrated) {
-      this.migrated = true;
-      await this.migrateLegacyPlainFile();
-    }
     return this.vault;
-  }
-
-  /**
-   * 历史明文文件一次性迁入加密库：全部条目写入成功后**删除**旧明文文件。
-   * 保留明文备份会抵消加密的意义（密文旁边躺一份明文），因此不保留。
-   */
-  private async migrateLegacyPlainFile(): Promise<void> {
-    let plain: Record<string, StoredUserToken>;
-    try {
-      plain = JSON.parse(await readFile(this.legacyFile, "utf8")) as Record<string, StoredUserToken>;
-    } catch {
-      return; // 无旧文件或不可读：无迁移需求
-    }
-    const entries = Object.entries(plain).filter(([, v]) => v?.accessToken);
-    for (const [openId, token] of entries) {
-      await this.vault!.put("lark", openId, token);
-    }
-    if (entries.length > 0) {
-      await unlink(this.legacyFile);
-      logger.info(`[UserAuth] 已将 ${entries.length} 条明文 token 迁入加密凭证库，旧明文文件已删除`);
-    }
   }
 
   async get(openId: string): Promise<StoredUserToken | undefined> {
@@ -156,12 +125,8 @@ export interface UserAuthOptions {
   vaultFile: string;
   /** 主密钥文件路径（data/.vault-key）；也可用环境变量 MINICLAW_VAULT_KEY 覆盖 */
   vaultKeyFile: string;
-  /** 历史明文 token 文件路径（data/user-tokens.json）；存在时一次性迁入加密库后废弃 */
-  legacyTokenFile: string;
   /** 指引卡的原地更新（轮询结束后把"待授权"卡更新为结果卡） */
   updateCard: (messageId: string, card: object) => Promise<void>;
-  /** FEISHU_ADMIN 的 openId：其登录 token 用于用户资料查询通道 */
-  adminOpenId?: string;
   /** 向会话发送授权卡（增量按需授权时使用）；提供后 ensureScopes 增量授权可用 */
   sendCard?: (chatId: string, card: object) => Promise<string | undefined>;
   /** 测试注入：用 access token 反查实际授权者（open_id/姓名）；默认 GET authen/v1/user_info */
@@ -208,7 +173,7 @@ export class UserAuthService {
 
   constructor(options: UserAuthOptions) {
     this.options = options;
-    this.store = new UserTokenStore(options.vaultFile, options.legacyTokenFile, options.vaultKeyFile);
+    this.store = new UserTokenStore(options.vaultFile, options.vaultKeyFile);
     this.postForm = options.postForm ?? defaultPostForm;
     this.getIdentity = options.getIdentity ?? defaultGetIdentity;
     this.now = options.now ?? (() => Date.now());
@@ -367,11 +332,6 @@ export class UserAuthService {
   /** 用 access token 反查登录者身份（openId/姓名/英文名/邮箱）；失败返回 undefined。 */
   async describeIdentity(accessToken: string): Promise<LoginIdentity | undefined> {
     return this.getIdentity(accessToken);
-  }
-
-  /** 只读查看某用户的落库记录（scope/过期时间诊断用）；不含明文 token 场景请勿打日志。 */
-  async getStoredUserToken(openId: string): Promise<StoredUserToken | undefined> {
-    return this.store.get(openId);
   }
 
   /** /login 状态总览用：登录态摘要（none=未登录 / expired=登录已过期 / active=有效）。 */
@@ -642,9 +602,8 @@ export interface StaticCredentialHandler {
 /** /login <provider>：统一多应用登录入口，必须显式指定应用。
  *  - `/login`（无参数）：展示各 CLI 的登录状态总览（不猜测默认应用）；
  *  - `/login lark`：飞书 Device Flow 授权；
- *  - `/login meegle [token]` / `/login bbt`：仅私聊。无参数时发表单卡
- *    （密码输入框 + 提交按钮，内容经卡片回调直达服务端加密入库，不落聊天记录）；
- *    meegle 携带 token 为兼容旧用法（聊天明文，不推荐）。
+ *  - `/login meegle` / `/login bbt`：仅私聊，发表单卡
+ *    （密码输入框 + 提交按钮，内容经卡片回调直达服务端加密入库，不落聊天记录）。
  *  发起后卡片后台轮询/等待回调，完成时原地更新结果。 */
 export class LoginCommand implements CommandHandler {
   private readonly auth: UserAuthService;
@@ -673,7 +632,7 @@ export class LoginCommand implements CommandHandler {
       return { card: markdownCard(`❓ 未知的应用「${provider}」。当前支持：\n${known}`) };
     }
     if (provider === "meegle") {
-      return this.loginMeegle(message, parts[2]);
+      return this.loginMeegle(message);
     }
     if (provider === "bbt") {
       return this.loginBbt(message);
@@ -712,16 +671,15 @@ export class LoginCommand implements CommandHandler {
     return { card: markdownCard(lines.join("\n")) };
   }
 
-  /** /login meegle [token]：仅私聊。无 token 发表单卡（密码框，回调直达入库）；
-   *  携带 token 为兼容旧用法（聊天明文提交，不推荐）。 */
-  private loginMeegle(message: FeishuInboundMessage, token: string | undefined): CommandResult {
+  /** /login meegle：仅私聊，发表单卡（密码框，回调直达入库）。 */
+  private loginMeegle(message: FeishuInboundMessage): CommandResult {
     if (message.context.chatMode !== "p2p") {
       return { card: markdownCard("❌ Meegle 凭证提交仅支持在**私聊**中进行（群聊中会暴露给群成员）。请私聊机器人发送 /login meegle。") };
     }
     if (!this.meegle) {
       return { card: markdownCard("⏳ Meegle 凭证服务未就绪，请稍后重试。") };
     }
-    if (!token) {
+    {
       return {
         card: buildCredentialFormCard({
           provider: "meegle",
@@ -734,11 +692,6 @@ export class LoginCommand implements CommandHandler {
         }),
       };
     }
-    void this.meegle
-      .submitToken(message.context.userOpenId, token)
-      .then(() => logger.info("[MeegleAuth] 用户 Meegle 凭证已更新"))
-      .catch((error) => logger.error("[MeegleAuth] 凭证保存失败:", error));
-    return { card: markdownCard("✅ Meegle 凭证已接收并加密保存。之后 meegle 命令将以你的身份执行；凭证失效时重新提交即可。") };
   }
 
   /** /login bbt：仅私聊，发表单卡（用户名 + 应用密码，密码框 • 显示，回调直达入库）。 */

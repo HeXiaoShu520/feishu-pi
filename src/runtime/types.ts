@@ -36,8 +36,6 @@ export interface FeishuPiConfig {
   modelName: string;
   modelBaseUrl?: string;
   systemPrompt?: string;
-  /** 管理员 Open ID；其余所有人均为 user 组 */
-  adminId: string;
   /** 统一权限策略（.agent/permissions.json）：工具注册、调用判定、可读范围全部由它驱动 */
   permissionPolicy: PermissionPolicy;
   /** 工具调用 Guard（beforeToolCall 钩子），可选；signal 中止（/stop）时取消授权等待。

@@ -33,7 +33,6 @@ export interface ScheduleTask {
 
 /**
  * 定时任务持久化：复用 JsonMapStore 的懒加载 + 串行原子写框架（id → 任务）。
- * 历史版本曾以数组格式落盘，deserializeRecords 钩子负责自动迁移为键值结构。
  */
 export class ScheduleStore extends JsonMapStore<ScheduleTask> {
   /** 全部任务，按创建时间升序（展示顺序稳定）。 */
@@ -64,14 +63,6 @@ export class ScheduleStore extends JsonMapStore<ScheduleTask> {
     const existed = this.records.delete(id);
     if (existed) await this.persist();
     return existed;
-  }
-
-  /** 兼容历史数组格式：[{id,...}] → Map；对象格式走默认解析。 */
-  protected override deserializeRecords(parsed: unknown): Map<string, ScheduleTask> {
-    if (Array.isArray(parsed)) {
-      return new Map(parsed.map((task) => [task.id, task]));
-    }
-    return super.deserializeRecords(parsed);
   }
 }
 

@@ -17,7 +17,6 @@ const ENV_FILE = join(process.cwd(), ".env");
 
 // 中间件
 app.use(bodyParser.json());
-app.use(bodyParser.urlencoded({ extended: true }));
 
 // Host 校验（全局，防 DNS rebinding）：绑定 127.0.0.1 后，攻击者仍可把自己的域名
 // 解析到 127.0.0.1——浏览器视角下请求是"同源"，不带 Origin 头，Origin 检查被绕过，
