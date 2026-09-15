@@ -220,8 +220,7 @@ export class LarkCli {
 
   /**
    * 管理员通道：以 FEISHU_ADMIN 的 user token（/login 获得）直查 contact v3，
-   * 拿中文名/英文名。部门字段（department_path）普遍需要管理员审核的权限、常常拿不到，
-   * 缺失不在此告警——部门由 lark-cli 用户态搜索通道兜底补全。
+   * 拿中文名/英文名。部门由 lark-cli 用户态搜索通道负责。
    */
   private async queryNameByAdmin(openId: string): Promise<ProfileName | undefined> {
     const getToken = this.adminTokenProvider;
@@ -234,12 +233,7 @@ export class LarkCli {
       }
 
       const userRes = await this.adminGet(`/open-apis/contact/v3/users/${openId}?user_id_type=open_id`, token);
-      const user = userRes.user as {
-        name?: string;
-        en_name?: string;
-        /** user token 调用且权限齐备时返回：完整部门路径（多数租户未开通，缺失走搜索通道） */
-        department_path?: Array<{ department_name?: { name?: string }; department_path?: { name?: string } }>;
-      } | undefined;
+      const user = userRes.user as { name?: string; en_name?: string } | undefined;
       if (!user && !userRes.name) {
         const detail = str(userRes.msg) || str(userRes.error_description) || str(userRes.error) || "响应无 user 字段";
         logger.warn(`[LarkCli] 管理员通道未查到用户 ${openId}：${detail}`);
@@ -248,16 +242,8 @@ export class LarkCli {
 
       const name = (user?.name || (userRes.name as string | undefined)) ?? undefined;
       const en_name = user?.en_name || undefined;
-
-      // 部门名：department_path.name（完整路径）有则用，缺失留空（交给搜索通道补全）
-      const department_name = Array.isArray(user?.department_path)
-        ? user.department_path
-            .map((d) => d.department_path?.name || d.department_name?.name)
-            .filter((n): n is string => Boolean(n))
-        : undefined;
-
-      logger.info(`[LarkCli] 管理员通道查询成功: 中文名=${name}, 英文名=${en_name ?? "无"}, 部门=${department_name?.join(" / ") ?? "无"}`);
-      return { name, en_name, department_name };
+      logger.info(`[LarkCli] 管理员通道查询成功: 中文名=${name}, 英文名=${en_name ?? "无"}`);
+      return { name, en_name };
     } catch (error) {
       logger.warn(`[LarkCli] 管理员通道查询 ${openId} 失败：${error instanceof Error ? error.message : String(error)}`);
       return undefined;
@@ -278,22 +264,12 @@ export class LarkCli {
         logger.info(`[LarkCli] 机器人通道未查到用户 ${openId}：${res.msg ?? `code ${res.code}`}`);
         return undefined;
       }
-      const user = res.data?.user as {
-        name?: string;
-        en_name?: string;
-        /** 应用身份通常拿不到部门字段（需审核权限），缺失时部门交给搜索通道 */
-        department_path?: Array<{ department_path?: { name?: string }; department_name?: { name?: string } }>;
-      } | undefined;
+      const user = res.data?.user as { name?: string; en_name?: string } | undefined;
       const name = user?.name ?? undefined;
       const en_name = user?.en_name ?? undefined;
-      const department_name = Array.isArray(user?.department_path)
-        ? user.department_path
-            .map((d) => d.department_path?.name || d.department_name?.name)
-            .filter((n): n is string => Boolean(n))
-        : undefined;
       if (!name && !en_name) return undefined;
-      logger.info(`[LarkCli] 机器人通道查询成功: 中文名=${name}, 英文名=${en_name ?? "无"}, 部门=${department_name?.join(" / ") ?? "无"}`);
-      return { name, en_name, department_name };
+      logger.info(`[LarkCli] 机器人通道查询成功: 中文名=${name}, 英文名=${en_name ?? "无"}`);
+      return { name, en_name };
     } catch (error) {
       logger.warn(`[LarkCli] 机器人通道查询 ${openId} 失败：${error instanceof Error ? error.message : String(error)}`);
       return undefined;

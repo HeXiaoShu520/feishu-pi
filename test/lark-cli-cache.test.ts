@@ -34,19 +34,7 @@ describe("LarkCli 用户资料查询（管理员通道 + 外部用户群名单�
       adminGet: async (path) => {
         if (path.includes("/users/")) {
           userCalls += 1;
-          return {
-            user: {
-              name: "外部成员",
-              en_name: "Guest",
-              department_path: [
-                {
-                  department_id: "od_dept1",
-                  department_name: { name: "平台组" },
-                  department_path: { name: "公司/技术部/平台组" },
-                },
-              ],
-            },
-          };
+          return { user: { name: "外部成员", en_name: "Guest" } };
         }
         return {};
       },
@@ -55,8 +43,8 @@ describe("LarkCli 用户资料查询（管理员通道 + 外部用户群名单�
     const profile = await larkCli.getUserProfile("ou_guest", "oc_group");
     expect(profile.name).toBe("外部成员");
     expect(profile.en_name).toBe("Guest");
-    // department_path.name（完整路径）优先于 department_name（直属部门名）
-    expect(profile.department_name).toEqual(["公司/技术部/平台组"]);
+    // 部门不再来自通讯录 API（需审核权限）：管理员通道只出姓名，部门留空走搜索通道
+    expect(profile.department_name).toEqual([]);
     expect(userCalls).toBe(1);
 
     const again = await larkCli.getUserProfile("ou_guest", "oc_group");
@@ -137,7 +125,6 @@ describe("LarkCli 用户资料查询（管理员通道 + 外部用户群名单�
               user: {
                 name: "张三",
                 en_name: "John",
-                department_path: [{ department_name: { name: "技术部" }, department_path: { name: "公司/技术部" } }],
               },
             };
           }
@@ -171,7 +158,6 @@ describe("LarkCli 用户资料查询（管理员通道 + 外部用户群名单�
               user: {
                 name: "张三",
                 en_name: "John",
-                department_path: [{ department_name: { name: "技术部" }, department_path: { name: "公司/技术部" } }],
               },
             };
           }
@@ -181,7 +167,7 @@ describe("LarkCli 用户资料查询（管理员通道 + 外部用户群名单�
     );
     const refreshed = await larkCli2.getUserProfile("ou_known", "oc_group");
     expect(refreshed.en_name).toBe("John");
-    expect(refreshed.department_name).toEqual(["公司/技术部"]);
+    expect(refreshed.department_name).toEqual([]);
   });
 });
 

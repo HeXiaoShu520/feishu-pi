@@ -36,11 +36,14 @@ function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
 /** 主团队组名：FEISHU_GROUP（无后缀）与 FEISHU_GROUP_1 都落到这里（与 permissions.json 的 group_1 对应） */
 const PRIMARY_GROUP = "group_1";
 
+/** 保留组名：不可经环境变量指定（admin=管理员组、common=公共层，二者只能由代码与 FEISHU_ADMIN 决定） */
+const RESERVED_GROUP_NAMES = new Set(["admin", "common"]);
+
 /**
  * 解析组成员配置：
  * - FEISHU_GROUP=x,y        → group_1（主团队组）
  * - FEISHU_GROUP_<数字>      → group_<数字>（与 permissions.json 的组名对应）
- * - FEISHU_GROUP_<组名>      → 组名小写（自定义组）
+ * - FEISHU_GROUP_<组名>      → 组名小写（自定义组；保留组名不可指定）
  * 同组多来源成员合并去重，保持首次出现顺序。
  */
 export function parseGroupMembership(env: NodeJS.ProcessEnv): Record<string, string[]> {
@@ -63,12 +66,13 @@ export function parseGroupMembership(env: NodeJS.ProcessEnv): Record<string, str
     }
     if (!raw.startsWith("_")) continue; // 非 FEISHU_GROUP 家族的变量（防御）
     const suffix = raw.slice(1);
-    if (suffix === "ADMIN") continue; // 已废弃：管理员统一由 FEISHU_ADMIN 配置，静默忽略
     if (/^\d+$/.test(suffix)) {
       add(`group_${suffix}`, toMembers(value));
-    } else {
-      add(suffix.toLowerCase(), toMembers(value));
+      continue;
     }
+    const name = suffix.toLowerCase();
+    if (RESERVED_GROUP_NAMES.has(name)) continue; // 保留组名不可经环境变量指定
+    add(name, toMembers(value));
   }
   return Object.fromEntries(groups);
 }
