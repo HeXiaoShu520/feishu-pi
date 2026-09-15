@@ -85,6 +85,38 @@ describe("ReplyParts 精简模式（滚动回收）", () => {
     await parts.appendTool("> ⚙ 正在调用 **bash**：`cat result.md`");
     expect(parts.composeFinal()).toBe("查到了，我来整理一下。");
   });
+
+  it("精简显示语义：文字1 → 工具1 → 工具2 过程中文字1 保留，工具只替换工具", async () => {
+    const { calls, sink } = makeSink();
+    const parts = new ReplyParts(sink, () => true);
+
+    await parts.appendText("文字1");
+    await parts.appendTool("> ⚙ 工具一");
+    await parts.appendTool("> ⚙ 工具二");
+    // 工具二出现时：文字1 保留，工具一被工具二替换
+    const lastRender = calls.filter((c) => c.op === "render").pop();
+    expect(lastRender).toEqual({ op: "render", text: "文字1> ⚙ 工具二" });
+
+    // 遇到文字2 才整体刷新：文字1 与工具全部消失
+    await parts.appendText("文字2");
+    const render2 = calls.filter((c) => c.op === "render").pop();
+    expect(render2).toEqual({ op: "render", text: "文字2" });
+    expect(parts.composeFinal()).toBe("文字2");
+  });
+
+  it("精简显示语义：文字1 → 工具1 → 文字2（无更多工具）→ 工具2，文字1 保留到文字2 出现", async () => {
+    const { calls, sink } = makeSink();
+    const parts = new ReplyParts(sink, () => true);
+
+    await parts.appendText("文字1");
+    await parts.appendTool("> ⚙ 工具一");
+    await parts.appendText("文字2");
+    await parts.appendTool("> ⚙ 工具二");
+    // 工具二出现时：文字2 保留（文字1 已在文字2 出现时刷新）
+    const lastRender = calls.filter((c) => c.op === "render").pop();
+    expect(lastRender).toEqual({ op: "render", text: "文字2> ⚙ 工具二" });
+    expect(parts.composeFinal()).toBe("文字2");
+  });
 });
 
 describe("ReplyParts 详细模式（全量保留）", () => {
