@@ -12,6 +12,7 @@
  */
 
 import { sessionAlias } from "./session-alias.ts";
+import { redactSecrets } from "../utils/redact.ts";
 
 /** Pi 会话统计的最小结构（与 runtime/types.ts 的 SessionStats 对齐） */
 interface StatsLike {
@@ -160,6 +161,7 @@ export function formatToolCall(toolName: string, args: unknown): string {
     }
   }
   if (!detail) return `**${toolName}**`;
+  detail = redactSecrets(detail);
   if (detail.length > TOOL_CALL_MAX_CHARS) detail = `${detail.slice(0, TOOL_CALL_MAX_CHARS)}…`;
   // 行内代码安全：换行折叠为空格（保持单行），反引号/围栏替换避免破坏行内代码
   const safe = detail

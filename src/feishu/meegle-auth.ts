@@ -100,4 +100,20 @@ export class StaticCredentialService {
   async hasToken(openId: string): Promise<boolean> {
     return Boolean(await (await this.vault()).get(this.provider, openId));
   }
+
+  /** 导出本 provider 全部已知密钥值（历史会话文件清洗用；只进清洗器，不写日志）。 */
+  async exportSecretValues(): Promise<string[]> {
+    const vault = await this.vault();
+    const values: string[] = [];
+    for (const openId of await vault.listUsers(this.provider)) {
+      const record = await vault.get<StoredCredential>(this.provider, openId);
+      if (!record) continue;
+      if (!isFieldsRecord(record)) {
+        if (record.accessToken) values.push(record.accessToken);
+      } else {
+        values.push(...Object.values(record.fields).filter((v) => Boolean(v)));
+      }
+    }
+    return values;
+  }
 }

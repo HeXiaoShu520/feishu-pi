@@ -89,6 +89,19 @@ export function matchesUserIdentityCli(command: string): boolean {
 }
 
 /**
+ * 把 bbt 命令里的明文凭证参数改写为环境变量引用（纯函数，供单测）。
+ * 模型偶尔不守技能约定直接写 `--password 真值`——在工具执行与会话落盘前改写为
+ * `--password "$BBT_PASSWORD"`：spawnHook 注入真实值后执行结果不变，
+ * 而会话记录、卡片展示、终端日志里只剩变量名。$ 开头的引用（已合规）原样保留。
+ */
+export function rewritePlaintextCliCredentials(command: string): string {
+  if (!/\bbbt\b/.test(command)) return command;
+  return command
+    .replace(/(--user(?:name)?\s*=?\s*)("?)((?!\$)[^\s"']{1,})\2/gi, '$1"$BBT_USERNAME"')
+    .replace(/(--(?:password|passwd|pwd)\s*=?\s*)("?)((?!\$)[^\s"']{1,})\2/gi, '$1"$BBT_PASSWORD"');
+}
+
+/**
  * 纯函数：按规则把凭证写入 spawn 环境（供单测）。
  * 逐规则判断：命令匹配、未被排除、且有可用凭证 —— 三者齐备才注入。
  * 单 token 型（envToken + getToken）与多字段型（envFields）可并存；任一凭证注入成功才写 staticEnv。

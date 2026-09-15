@@ -22,6 +22,8 @@ const RULES: Array<{ pattern: RegExp; secretGroup: number }> = [
   { pattern: /\b(Bearer\s+)([A-Za-z0-9._~-]{16,})/gi, secretGroup: 2 },
   // 键值形态：token/password/secret/key/app_password = "值"（覆盖粘贴提交凭证的场景）
   { pattern: /\b(token|password|passwd|secret|api[_-]?key|app[_-]?password|access[_-]?token|refresh[_-]?token)\b(\s*[=:]\s*)(["']?)([^\s"'&,;）)]{12,})/gi, secretGroup: 4 },
+  // CLI flag 形态：--password xxx / --user=yyy（bbt 等明文参数型 CLI；$ 开头的环境变量引用不遮）
+  { pattern: /(--(?:password|passwd|pwd|secret|token|user|username|account)(?:=|\s+))(["']?)(?!\$)([^\s"']{2,})(\2)/gi, secretGroup: 3 },
   // 高熵长串（40+ 位 base64url / hex；阈值取高避免误伤 open_id 等普通标识）
   { pattern: /\b[A-Za-z0-9_-]{40,}\b/g, secretGroup: 0 },
   // 32 位 hex（bitbucket app password 等）

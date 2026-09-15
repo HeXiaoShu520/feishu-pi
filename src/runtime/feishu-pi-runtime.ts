@@ -8,6 +8,7 @@ import { logger, colors } from "../utils/logger.ts";
 import { redactSecrets } from "../utils/redact.ts";
 import { conversationDir } from "../utils/session-paths.ts";
 import { matchSkillRead } from "../stats/skill-usage-store.ts";
+import { rewritePlaintextCliCredentials } from "./identity-bash.ts";
 import type { SkillUsageStore } from "../stats/skill-usage-store.ts";
 import type { GroupPolicy } from "../permission/policy.ts";
 
@@ -331,6 +332,19 @@ export class FeishuPiRuntime {
     const usageStore = this.config.skillUsageStore;
     const chatId = context?.chatId;
     session.agent.beforeToolCall = async (ctx, signal) => {
+      // bash 明文凭证防线（先于一切判定与落盘）：bbt 命令里写了真实账号/密码时，
+      // 原地改写为环境变量引用——执行结果不变（spawnHook 注入真实值），
+      // 而会话 jsonl、卡片展示、终端日志都只剩变量名
+      if (ctx.toolCall.name === "bash") {
+        const command = (ctx.args as { command?: string } | undefined)?.command;
+        if (typeof command === "string") {
+          const rewritten = rewritePlaintextCliCredentials(command);
+          if (rewritten !== command) {
+            (ctx.args as { command: string }).command = rewritten;
+            logger.info("[Runtime] 已将 bbt 明文凭证改写为环境变量引用（不落会话与展示）");
+          }
+        }
+      }
       if (ctx.toolCall.name === "read") {
         const target = extractReadPath(ctx.args);
         if (target !== undefined) {

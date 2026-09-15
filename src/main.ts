@@ -25,6 +25,7 @@ import { pathToFileURL } from "node:url";
 import { Client } from "@larksuiteoapi/node-sdk";
 import qr from "qrcode-terminal";
 import { logger } from "./utils/logger.ts";
+import { scrubSecretsInDir } from "./utils/session-scrub.ts";
 import { PermissionBroker } from "./guard/broker.ts";
 import { ToolGuard } from "./guard/tool-guard.ts";
 import { PolicyJudge } from "./guard/judge.ts";
@@ -162,6 +163,17 @@ export async function main(): Promise<void> {
     // /login 绑定完成时：管理员尚未识别且登录者与管理员配置匹配 → 资料入缓存（重启即生效）
     onLoginBound: (info) => captureAdminFromLogin(info),
   });
+
+  // 存量会话清洗（后台）：用凭证库已知密钥值扫描历史会话 jsonl，命中的明文替换为 ***
+  void (async () => {
+    const secrets = [
+      ...(await meegleAuth.exportSecretValues()),
+      ...(await bbtAuth.exportSecretValues()),
+      ...(await userAuth.exportSecretValues()),
+    ];
+    const replaced = await scrubSecretsInDir(config.sessionDir, secrets);
+    if (replaced > 0) logger.info(`[Main] 已清洗历史会话文件中的明文凭证（处理 ${replaced} 个文件）`);
+  })().catch((error) => logger.warn("[Main] 会话清洗失败:", error));
 
   // 冷启动兜底：姓名/邮箱在通讯录侧解析不出（缓存为空、权限未批）时，从已 /login
   // 用户的登录身份识别管理员。

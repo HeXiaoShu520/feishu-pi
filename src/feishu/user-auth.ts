@@ -329,6 +329,17 @@ export class UserAuthService {
     return this.store.listUsers();
   }
 
+  /** 导出全部已知 access/refresh token 值（历史会话文件清洗用；只进清洗器，不写日志）。 */
+  async exportSecretValues(): Promise<string[]> {
+    const values: string[] = [];
+    for (const openId of await this.store.listUsers()) {
+      const token = await this.store.get(openId);
+      if (token?.accessToken) values.push(token.accessToken);
+      if (token?.refreshToken) values.push(token.refreshToken);
+    }
+    return values;
+  }
+
   /** 用 access token 反查登录者身份（openId/姓名/英文名/邮箱）；失败返回 undefined。 */
   async describeIdentity(accessToken: string): Promise<LoginIdentity | undefined> {
     return this.getIdentity(accessToken);

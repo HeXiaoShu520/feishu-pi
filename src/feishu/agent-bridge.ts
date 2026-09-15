@@ -6,6 +6,7 @@ import { MessageStore } from "./message-store.ts";
 import { formatLogText } from "./log-utils.ts";
 import { ReactionController } from "./reaction-controller.ts";
 import { Spinner, randomFrames } from "./spinner.ts";
+import { redactSecrets } from "../utils/redact.ts";
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "../utils/logger.ts";
 import { createDefaultRegistry, DetailCommand, NewCommand, StopCommand, markdownCard, type CommandRegistry, type CommandHandler } from "./commands.ts";
@@ -190,7 +191,8 @@ export class FeishuAgentBridge {
             textEvents += 1;
             lastTextLength = event.text.length;
             if (!hasRealContent) await startRealContent();
-            await replyParts.appendText(event.text);
+            // 回显脱敏：模型偶尔会把凭证原文带进正文——展示前遮蔽
+            await replyParts.appendText(redactSecrets(event.text));
           }
           // 工具事件：追加工具摘要段（精简模式只留当前一个），小字位置同步显示动画。
           if (event.type === "tool_started") {
@@ -233,7 +235,7 @@ export class FeishuAgentBridge {
       await reply.close(finalText, statsLine);
 
       // 记录最终响应（含耗时；空文本单独特警，便于发现模型无输出/被拦截的情况）
-      const replyPreview: string = formatLogText(finalText) || "";
+      const replyPreview: string = formatLogText(redactSecrets(finalText)) || "";
       const elapsedSec = ((Date.now() - requestStartedAt) / 1000).toFixed(1);
       if (!replyPreview) {
         logger.warn(

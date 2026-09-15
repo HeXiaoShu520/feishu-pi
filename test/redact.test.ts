@@ -53,3 +53,16 @@ describe("redactSecrets（对话历史脱敏）", () => {
     expect(containsSecretLike("今天天气不错")).toBe(false);
   });
 });
+
+describe("CLI flag 形态脱敏（bbt 等明文参数 CLI）", () => {
+    it("--password/--user 的值遮蔽；等号/引号形态同样命中", () => {
+    expect(redactSecrets("bbt pr create --password s3cret!")).not.toContain("s3cret!");
+    expect(redactSecrets('bbt pr create --user alice --password "p@ss w0rd"')).not.toContain("alice");
+    expect(redactSecrets("bbt --token=abcdef1234567890")).not.toContain("abcdef1234567890");
+  });
+
+  it("$ 开头的环境变量引用不遮蔽", () => {
+    const cmd = 'bbt pr create --user "$BBT_USERNAME" --password "$BBT_PASSWORD"';
+    expect(redactSecrets(cmd)).toBe(cmd);
+  });
+});

@@ -10,6 +10,7 @@ import { upsertEnvLine } from "../utils/env-file.ts";
 import { toBuffer } from "./resource-buffer.ts";
 import { extractCredentialFields } from "./credential-card.ts";
 import { mentionedUserIds } from "./people-roster.ts";
+import { redactSecrets } from "../utils/redact.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -242,7 +243,7 @@ export class LarkTransport implements FeishuTransport {
 
       // 记录收到的消息
       const imageInfo = imageCount > 0 ? `（含 ${imageCount} 张图片）` : "";
-      logger.userInput(displayName, `: ${imageInfo}${formatLogText(cleanedText)}`);
+      logger.userInput(displayName, `: ${imageInfo}${formatLogText(redactSecrets(cleanedText))}`);
 
       // 判断是否为管理员
       const isAdmin = this.adminOpenId ? message.senderId === this.adminOpenId : false;

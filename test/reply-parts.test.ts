@@ -144,12 +144,13 @@ describe("formatToolCall 工具行格式化（单行紧凑式）", () => {
     expect(formatToolCall("edit", { file_path: "src/x.ts" })).toBe("**edit** `src/x.ts`");
   });
 
-  it("未知字段回退整包参数 JSON；超长截断；反引号/换行折叠不破坏行内代码", () => {
+  it("未知字段回退整包参数 JSON；超长截断；高熵串/反引号/换行不破坏行内代码", () => {
     expect(formatToolCall("my_tool", { foo: "bar" })).toContain('"foo"');
+    // 400 位长串形似 token：先被脱敏再展示（高熵规则）
     const long = "x".repeat(400);
     const line = formatToolCall("bash", { command: long });
-    expect(line.length).toBeLessThan(420);
-    expect(line.endsWith("…`")).toBe(true);
+    expect(line.length).toBeLessThan(60);
+    expect(line).toContain("***");
     const fenced = formatToolCall("bash", { command: "a```b" });
     expect(fenced).not.toContain("a```b");
     // 多行命令折叠为单行
