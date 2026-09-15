@@ -130,6 +130,16 @@ const SECRET_RULE = [
   "如果某些时候任务确实需要返回密钥、令牌之类的敏感值，返回时一定要用星号遮蔽（只保留前几位，其余用 * 代替），不允许明文输出。",
 ].join(NL);
 
+/**
+ * 内置默认人格：FEISHU_PI_SYSTEM_PROMPT 未配置时生效（配置后由其替换此段）。
+ * 没有它，系统提示开头就是安全规则，模型不知道自己是谁、以什么口吻说话。
+ */
+const DEFAULT_PERSONA = [
+  "你是部署在飞书里的智能助手，通过飞书与用户对话，可以使用工具（bash、读写文件、lark-cli、meegle、bbt 等）帮助用户完成查询与操作。",
+  "默认使用中文交流，用户使用其他语言时跟随用户语言；回答先给结论、简洁直接，必要时分点。",
+  "不确定的信息如实说明，不编造；操作受权限策略与授权卡约束，按流程执行即可，无需向用户复述这些约束。",
+].join(NL);
+
 export class FeishuPiRuntime {
   private readonly config: FeishuPiConfig;
   private readonly tools: FeishuPiTool[];
@@ -159,7 +169,7 @@ export class FeishuPiRuntime {
     const loader = new DefaultResourceLoader({
       cwd: this.config.cwd,
       agentDir: `${this.config.cwd}/.agent`,
-      systemPrompt: [this.config.systemPrompt, SECRET_RULE.trim(), FINAL_REPLY_RULE.trim()].filter(Boolean).join(NL),
+      systemPrompt: [this.config.systemPrompt ?? DEFAULT_PERSONA, SECRET_RULE.trim(), FINAL_REPLY_RULE.trim()].filter(Boolean).join(NL),
     });
     await loader.reload();
     return loader;
