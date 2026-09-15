@@ -113,12 +113,19 @@ export class CardKitStream {
       this.accumulator = fullText;
       await this.enqueueWrite(() => this.pushUpdate(fullText));
 
-      // 1. 等待客户端渲染完成（参考 Python 版本：min(3s, 文本长度 * 0.025)）
-      const renderWaitMs = renderWaitMsOverride ?? Math.min(3000, fullText.length * 25);
-      await new Promise(resolve => setTimeout(resolve, renderWaitMs));
+      // 1. 等待客户端打字机渲染完成。
+      //    打字机速率 = print_step / print_frequency_ms = 100 字符/秒（理论 len*10ms），
+      //    还要叠加服务端分发与客户端启动延迟——估算不可靠，保底 5s（短文本估算值
+      //    只有几百 ms 时经常等不到位，小字/正文会被过早关闭的流式截断）；长文本封顶 15s。
+      const renderWaitMs = renderWaitMsOverride ?? Math.min(15_000, Math.max(5_000, fullText.length * 25));
+      await new Promise((resolve) => setTimeout(resolve, renderWaitMs));
 
       // 2. 正文渲染完成后写入统计小字（必须在关闭流式前，关闭后元素不能再更新）
-      if (statsText) await this.enqueueWrite(() => this.putStats(statsText));
+      if (statsText) {
+        await this.enqueueWrite(() => this.putStats(statsText));
+        // 小字元素写入后稍等片刻再关闭流式，确保客户端已处理完该元素更新
+        await new Promise((resolve) => setTimeout(resolve, 800));
+      }
 
       // 3. 关闭流式模式（不再发送最终内容，避免覆盖正在渲染的文本）
       await this.enqueueWrite(() => this.patchSettings(false));
