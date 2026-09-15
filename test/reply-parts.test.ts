@@ -158,6 +158,16 @@ describe("formatToolCall 工具行格式化（单行紧凑式）", () => {
 });
 
 describe("formatStatsLine 统计小字", () => {
+  it("token 超过 100K 时切换 M 单位", () => {
+    const line = formatStatsLine({
+      modelName: "claude-sonnet-4-6",
+      stats: { tokens: { total: 1_036_900 }, cost: 0.5 },
+      baselineTotalTokens: 1_007_900,
+      elapsedMs: 9_000,
+    });
+    expect(line).toContain("1.04M（新增 29.0K）");
+  });
+
   it("完整字段：模型 · token（新增） · ctx · 费用 · 耗时 · 别名", () => {
     const line = formatStatsLine({
       modelName: "claude-sonnet-4-6",

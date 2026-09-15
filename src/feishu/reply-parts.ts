@@ -188,7 +188,11 @@ export function formatStatsLine(input: {
   const { stats } = input;
   if (!stats) return undefined;
 
-  const formatTokens = (value: number) => `${(value / 1000).toFixed(1)}K`;
+  const formatTokens = (value: number): string => {
+    // 超过 100K 换 M 单位（1036.9K → 1.04M），避免数字越来越长
+    if (value >= 100_000) return `${(value / 1_000_000).toFixed(2)}M`;
+    return `${(value / 1000).toFixed(1)}K`;
+  };
   const total = stats.tokens?.total || 0;
   const deltaTokens = Math.max(0, total - (input.baselineTotalTokens || 0));
   const cost = typeof stats.cost === "number" ? `$${stats.cost.toFixed(4)}` : "";
