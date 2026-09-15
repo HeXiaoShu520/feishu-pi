@@ -15,7 +15,7 @@ async function main(): Promise<void> {
   await runSetupWizard({ existingAppId });
 
   console.log("\n下一步：");
-  console.log("  1. npm start            # 启动服务（WS 长连接，无需公网）");
+  console.log("  1. npm run dev（开发，改码自动重启）或 npm start（稳定运行）");
   console.log("  2. 在飞书私聊机器人发 /login lark，为管理员开启用户身份能力");
   console.log("  3. 如开发者后台显示有待发布版本，请发布后权限方可全量生效");
 }
