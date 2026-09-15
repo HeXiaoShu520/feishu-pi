@@ -257,9 +257,6 @@ export async function main(): Promise<void> {
     usersFile: join(dirname(config.sessionDir), "users", `${config.feishuAppId}_users.json`),
     cwd: config.cwd,
   });
-  if (config.cmdWhitelist.length > 0) {
-    logger.warn(`[Main] FEISHU_CMD_WHITELIST 已废弃，工具规则统一在 .agent/permissions.json 中配置`);
-  }
   // bridge 在下方创建，先用闭包引用（授权卡撤回需查询该会话的详细模式开关）
   let bridgeRef: FeishuAgentBridge | undefined;
   const broker = new PermissionBroker({

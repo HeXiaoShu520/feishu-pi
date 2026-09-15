@@ -31,26 +31,26 @@ describe("loadConfig 模型统计小字开关", () => {
 describe("parseGroupMembership（FEISHU_GROUP 配置语义）", () => {
   const warn = vi.fn();
   it("FEISHU_GROUP（无后缀）与 FEISHU_GROUP_1 都映射到主团队组 group_1，成员合并去重", () => {
-    const groups = parseGroupMembership({ FEISHU_GROUP: "李雷, 韩梅梅", FEISHU_GROUP_1: "韩梅梅,王强" }, warn);
+    const groups = parseGroupMembership({ FEISHU_GROUP: "李雷, 韩梅梅", FEISHU_GROUP_1: "韩梅梅,王强" });
     expect(groups["group_1"]).toEqual(["李雷", "韩梅梅", "王强"]);
   });
 
   it("纯数字后缀映射 group_<N>；自定义组名转小写", () => {
-    const groups = parseGroupMembership({ FEISHU_GROUP_2: "甲", FEISHU_GROUP_VIP: "乙" }, warn);
+    const groups = parseGroupMembership({ FEISHU_GROUP_2: "甲", FEISHU_GROUP_VIP: "乙" });
     expect(groups["group_2"]).toEqual(["甲"]);
     expect(groups["vip"]).toEqual(["乙"]);
   });
 
   it("FEISHU_GROUP_USER1 不再是特殊键：按自定义组名 user1 处理", () => {
-    const groups = parseGroupMembership({ FEISHU_GROUP_USER1: "李雷" }, warn);
+    const groups = parseGroupMembership({ FEISHU_GROUP_USER1: "李雷" });
     expect(groups["user1"]).toEqual(["李雷"]);
     expect(groups["group_1"]).toBeUndefined();
   });
 
-  it("FEISHU_GROUP_ADMIN 已废弃：忽略并提示删除（不产生 admin 组）", () => {
-    const groups = parseGroupMembership({ FEISHU_GROUP_ADMIN: "张三" }, warn);
+  it("FEISHU_GROUP_ADMIN 被静默忽略（不产生 admin 组、无输出）", () => {
+    const groups = parseGroupMembership({ FEISHU_GROUP_ADMIN: "张三" });
     expect(groups["admin"]).toBeUndefined();
     expect(Object.keys(groups)).toHaveLength(0);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("FEISHU_GROUP_ADMIN 已废弃"));
+    expect(warn).not.toHaveBeenCalled();
   });
 });

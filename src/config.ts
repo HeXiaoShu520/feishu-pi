@@ -12,8 +12,6 @@ export interface FeishuPiAppConfig {
   modelName: string;
   modelBaseUrl?: string;
   systemPrompt?: string;
-  /** 已废弃：原正则白名单环境变量。工具规则改用 .agent/permissions.json 的 permissions.allow */
-  cmdWhitelist: string[];
   /** 智能体审核接口（OpenAI 兼容）；未配置则策略外调用直接弹卡 */
   guardBaseUrl?: string;
   /** 审核模型列表（多个时全部 allow 才放行，任一 ask 即弹卡） */
@@ -43,10 +41,9 @@ const PRIMARY_GROUP = "group_1";
  * - FEISHU_GROUP=x,y        → group_1（主团队组）
  * - FEISHU_GROUP_<数字>      → group_<数字>（与 permissions.json 的组名对应）
  * - FEISHU_GROUP_<组名>      → 组名小写（自定义组）
- * - FEISHU_GROUP_ADMIN      → 忽略（管理员由 FEISHU_ADMIN 统一配置，启动时提示删除）
  * 同组多来源成员合并去重，保持首次出现顺序。
  */
-export function parseGroupMembership(env: NodeJS.ProcessEnv, warn: (msg: string) => void = (msg) => console.warn(msg)): Record<string, string[]> {
+export function parseGroupMembership(env: NodeJS.ProcessEnv): Record<string, string[]> {
   const groups = new Map<string, string[]>();
   const add = (name: string, members: string[]): void => {
     const list = groups.get(name) ?? [];
@@ -66,9 +63,8 @@ export function parseGroupMembership(env: NodeJS.ProcessEnv, warn: (msg: string)
     }
     if (!raw.startsWith("_")) continue; // 非 FEISHU_GROUP 家族的变量（防御）
     const suffix = raw.slice(1);
-    if (suffix === "ADMIN") {
-      warn("[Config] FEISHU_GROUP_ADMIN 已废弃：管理员统一由 FEISHU_ADMIN 配置（自动属于 admin 组），请从 .env 中删除该项");
-    } else if (/^\d+$/.test(suffix)) {
+    if (suffix === "ADMIN") continue; // 已废弃：管理员统一由 FEISHU_ADMIN 配置，静默忽略
+    if (/^\d+$/.test(suffix)) {
       add(`group_${suffix}`, toMembers(value));
     } else {
       add(suffix.toLowerCase(), toMembers(value));
@@ -95,15 +91,12 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     sessionDir: `${process.cwd()}/data/sessions`,
     dataDir: `${process.cwd()}/data`,
     // 用户身份授权 scope（Device Flow）：默认内置"用户资料查询"所需最小集合；FEISHU_USER_AUTH_SCOPES 可覆盖。
-    // 注意：部门路径类 scope（contact:user.department(:_path):readonly）需要管理员审核、极难开通，
-    // 默认不申请——部门信息改由 lark-cli 用户态搜索通道（contact +search-user）获得
+    // 部门路径类 scope 需要管理员审核，默认不申请：部门信息走 lark-cli 用户态搜索通道获得
     userAuthScopes: parsedUserAuthScopes.length > 0 ? parsedUserAuthScopes : ["contact:contact.base:readonly", "contact:user.base:readonly", "contact:department.base:readonly"],
     modelProvider: env.FEISHU_PI_MODEL_PROVIDER ?? "anthropic",
     modelName: env.FEISHU_PI_MODEL_NAME ?? "claude-sonnet-4-6",
     modelBaseUrl: env.FEISHU_PI_MODEL_BASE_URL,
     systemPrompt: env.FEISHU_PI_SYSTEM_PROMPT,
-    // 已废弃：保留解析仅为启动时给出弃用提示；规则请配置在 .agent/permissions.json
-    cmdWhitelist: (env.FEISHU_CMD_WHITELIST ?? "").split(/\n|;/).map((s) => s.trim()).filter(Boolean),
     // 智能体审核（策略外调用的综合判断）：OpenAI 兼容接口，支持逗号分隔多模型取安全交集
     guardBaseUrl: env.FEISHU_GUARD_BASE_URL || undefined,
     guardModels: (env.FEISHU_GUARD_MODELS ?? env.FEISHU_GUARD_MODEL ?? "").split(",").map((m) => m.trim()).filter(Boolean),
@@ -113,7 +106,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     // FEISHU_GROUP（无后缀）与 FEISHU_GROUP_1 都映射到主团队组 group_1（成员合并去重），
     // FEISHU_GROUP_2..N 对应 group_2..N；成员除 open_id/中英文名外还支持组织架构部门名
     // （用户缓存的部门路径包含该部门名即视为组成员，见 PermissionPolicy.groupsFor）。
-    // FEISHU_GROUP_ADMIN 已废弃：管理员统一由 FEISHU_ADMIN 配置，自动属于 admin 组。
     groupMembership: parseGroupMembership(env),
     approvalTimeoutMs: Number(env.FEISHU_APPROVAL_TIMEOUT_MS) > 0 ? Number(env.FEISHU_APPROVAL_TIMEOUT_MS) : 5 * 60_000,
     // 回复末尾的模型统计小字：默认显示；FEISHU_SHOW_MODEL_STATS=0/false/off 关闭（工具过程状态不受影响）
