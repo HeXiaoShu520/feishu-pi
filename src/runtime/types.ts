@@ -41,8 +41,9 @@ export interface FeishuPiConfig {
   /** 统一权限策略（.agent/permissions.json）：工具注册、调用判定、可读范围全部由它驱动 */
   permissionPolicy: PermissionPolicy;
   /** 工具调用 Guard（beforeToolCall 钩子），可选；signal 中止（/stop）时取消授权等待。
-   *  risky = 自定义工具标记了 risk: "high"，需要走授权卡。 */
-  toolGuard?: (policy: GroupPolicy, params: { toolName: string; args: unknown; chatId?: string; risky?: boolean }, signal?: AbortSignal) => Promise<{ block: true; reason: string } | undefined>;
+   *  risky = 自定义工具标记了 risk: "high"，需要走授权卡。
+   *  requesterOpenId = 发起者 openId（用户身份 CLI 命令弹"用户卡"由本人确认）。 */
+  toolGuard?: (policy: GroupPolicy, params: { toolName: string; args: unknown; chatId?: string; risky?: boolean; requesterOpenId?: string }, signal?: AbortSignal) => Promise<{ block: true; reason: string } | undefined>;
   /** 技能使用统计存储（可选）；提供时在 beforeToolCall 记录技能文件读取事件，并注入查询工具 */
   skillUsageStore?: SkillUsageStore;
   /** 定时任务服务（可选）；提供时为负责人会话注入定时任务管理工具 */

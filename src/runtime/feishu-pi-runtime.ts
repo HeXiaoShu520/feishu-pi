@@ -368,6 +368,7 @@ export class FeishuPiRuntime {
               args: ctx.args,
               chatId,
               risky: riskyTools.has(ctx.toolCall.name),
+              requesterOpenId: userId,
             },
             signal,
           );

@@ -1,6 +1,7 @@
 import type { GroupPolicy } from "../permission/policy.ts";
 import type { PermissionBroker } from "./broker.ts";
 import type { PolicyJudge } from "./judge.ts";
+import { matchesUserIdentityCli } from "../runtime/identity-bash.ts";
 import { logger } from "../utils/logger.ts";
 
 export interface ToolGuardCheckParams {
@@ -9,6 +10,8 @@ export interface ToolGuardCheckParams {
   chatId?: string;
   /** 自定义工具标记 risk: "high" 时为 true：跳过策略放行，仍走授权卡 */
   risky?: boolean;
+  /** 发起者 openId：bash 命中用户身份 CLI 时弹"用户卡"，仅本人可批 */
+  requesterOpenId?: string;
 }
 
 /**
@@ -22,7 +25,9 @@ export interface ToolGuardCheckParams {
  *   ② 策略未命中 → 智能体综合判断（以该组授权策略为参考）：
  *        allow → 放行；ask → 授权卡
  *      （覆盖复合命令等规则永远命中不了的调用；未配置智能体时直接授权卡）
- *   ③ 智能体 ask → 授权卡，负责人单次确认；拒绝/超时/无会话发卡 → 拦截
+ *   ③ 智能体 ask → 授权卡，按身份分流：
+ *        bash 使用发起者的用户身份 CLI 凭证（lark-cli 用户态/meegle/bbt）→ 用户卡，本人单次确认；
+ *        其余 → 管理员卡，负责人单次确认；拒绝/超时/无会话发卡 → 拦截
  *
  * read 的可读范围判定在 runtime 的 read 分支先行处理，不会到这里。
  * 所有身份（含负责人）都过此闸。
@@ -104,7 +109,9 @@ export class ToolGuard {
     return `工具 ${toolName} 不在你的可用清单内`;
   }
 
-  /** 走授权卡流程；无会话无法发卡时按拒绝处理。 */
+  /** 走授权卡流程；无会话无法发卡时按拒绝处理。
+   *  分流：bash 命令使用发起者的用户身份 CLI 凭证（lark-cli 用户态 / meegle / bbt）→
+   *  弹"用户卡"由本人确认（无需管理员）；其余弹管理员卡。 */
   private async requireApproval(
     params: ToolGuardCheckParams,
     reason: string,
@@ -112,13 +119,27 @@ export class ToolGuard {
   ): Promise<{ block: true; reason: string } | undefined> {
     if (!params.chatId) {
       logger.warn(`[ToolGuard] 无会话 ID，无法发授权卡，按拒绝处理: ${params.toolName}`);
-      return { block: true, reason: `工具 ${params.toolName} 需要负责人授权（${reason}），但当前无法发起授权请求` };
+      return { block: true, reason: `工具 ${params.toolName} 需要授权（${reason}），但当前无法发起授权请求` };
     }
 
-    logger.info(`[ToolGuard] 需要授权 (${reason})，发送授权卡: ${params.toolName}`);
-    const { allowed, detail } = await this.broker.requestApproval({ toolName: params.toolName, args: params.args, chatId: params.chatId, reason }, signal);
+    const command = params.toolName === "bash" ? extractCommand(params.args) : undefined;
+    const selfApprove = command !== undefined && matchesUserIdentityCli(command);
+    const mode = selfApprove ? "self" : "admin";
+    logger.info(`[ToolGuard] 需要授权 (${reason})，发送${selfApprove ? "用户卡" : "管理员卡"}: ${params.toolName}`);
+    const { allowed, detail } = await this.broker.requestApproval(
+      {
+        toolName: params.toolName,
+        args: params.args,
+        chatId: params.chatId,
+        reason,
+        mode,
+        requesterOpenId: selfApprove ? params.requesterOpenId : undefined,
+      },
+      signal,
+    );
     if (allowed) return undefined;
-    return { block: true, reason: `工具 ${params.toolName} 未获得负责人授权：${detail}` };
+    const approver = selfApprove ? "发起者本人" : "负责人";
+    return { block: true, reason: `工具 ${params.toolName} 未获得${approver}授权：${detail}` };
   }
 }
 

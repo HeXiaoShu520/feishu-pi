@@ -24,6 +24,14 @@ export interface ApprovalRequest {
   args: unknown;
   chatId: string;
   reason: string;
+  /**
+   * 审批模式：admin=管理员卡（默认，仅管理员可批）；self=用户卡——
+   * 命令使用发起者本人的 CLI 凭证（lark-cli 用户态 / meegle / bbt），
+   * 由发起者本人确认即可，无需管理员。
+   */
+  mode?: "admin" | "self";
+  /** self 模式下的发起者 openId（服务端校验点击者必须一致） */
+  requesterOpenId?: string;
 }
 
 export type ApprovalDecision = "allow_once" | "deny";
@@ -40,6 +48,8 @@ interface PendingApproval {
   resolve: (allowed: boolean) => void;
   /** 移除 signal 上的 abort 监听（授权以其他方式结束时调用，防监听器残留） */
   offAbort: () => void;
+  mode: "admin" | "self";
+  requesterOpenId?: string;
 }
 
 /**
@@ -80,7 +90,8 @@ export class PermissionBroker {
    * signal 中止（如 /stop 中断会话）时立即取消等待、撤下卡片并释放队列。
    */
   async requestApproval(request: ApprovalRequest, signal?: AbortSignal): Promise<{ allowed: boolean; detail: string }> {
-    if (this.options.adminOpenIds.length === 0) {
+    // 仅管理员卡依赖管理员配置；用户卡由发起者本人确认，无管理员也可用
+    if (this.options.adminOpenIds.length === 0 && (request.mode ?? "admin") === "admin") {
       return { allowed: false, detail: "未配置管理员，无法授权" };
     }
 
@@ -109,9 +120,20 @@ export class PermissionBroker {
       signal?.addEventListener("abort", onAbort, { once: true });
       const offAbort = () => signal?.removeEventListener("abort", onAbort);
 
-      this.pending.set(approvalId, { token, chatId: request.chatId, toolName: request.toolName, toolArgs: request.args, timer, resolve, offAbort });
+      const mode = request.mode ?? "admin";
+      this.pending.set(approvalId, {
+        token,
+        chatId: request.chatId,
+        toolName: request.toolName,
+        toolArgs: request.args,
+        timer,
+        resolve,
+        offAbort,
+        mode,
+        requesterOpenId: request.requesterOpenId,
+      });
 
-      const card = buildPermissionCard({ toolName: request.toolName, args: request.args, approvalId, token });
+      const card = buildPermissionCard({ toolName: request.toolName, args: request.args, approvalId, token, mode });
       this.options
         .sendCard(request.chatId, card)
         .then((messageId) => {
@@ -131,7 +153,7 @@ export class PermissionBroker {
         });
     }).then((allowed) => ({
       allowed,
-      detail: allowed ? "管理员已授权" : "管理员拒绝、授权超时或会话已中断",
+      detail: allowed ? "已授权一次" : "已拒绝、授权超时或会话已中断",
     }));
   }
 
@@ -158,7 +180,12 @@ export class PermissionBroker {
     if (pending.token !== token || (!isOriginal && !isForwarded)) {
       return { accepted: false, detail: "token 或卡片来源不匹配" };
     }
-    if (!this.options.adminOpenIds.includes(operatorOpenId)) {
+    // 决策者校验：self 模式（用户卡）仅发起者本人可批；admin 模式（管理员卡）仅管理员可批
+    if (pending.mode === "self") {
+      if (!pending.requesterOpenId || operatorOpenId !== pending.requesterOpenId) {
+        return { accepted: false, detail: "仅发起者本人可操作" };
+      }
+    } else if (!this.options.adminOpenIds.includes(operatorOpenId)) {
       return { accepted: false, detail: "仅管理员可操作" };
     }
 

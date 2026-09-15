@@ -14,6 +14,11 @@ export interface PermissionCardParams {
   approvalId: string;
   /** 一次性随机 token，回调时服务端比对 */
   token: string;
+  /**
+   * 审批模式：admin=管理员卡（默认，仅管理员点击有效，可转发）；
+   * self=用户卡（命令使用发起者本人的 CLI 凭证，仅本人点击有效，无转发按钮）
+   */
+  mode?: "admin" | "self";
 }
 
 /** 提取工具调用的一句话摘要（command/path 等关键字段，单行截断）。 */
@@ -24,9 +29,11 @@ function summarizeArgs(args: unknown): string {
   return detail.slice(0, COMMAND_MAX_LENGTH).replace(/\n/g, " ").replace(/`/g, "'");
 }
 
-/** 生成授权卡片（CardKit 2.0）：一行工具摘要 + 一行按钮（允许/拒绝/转发三等分）。 */
+/** 生成授权卡片（CardKit 2.0）：一行工具摘要 + 一行按钮。
+ *  admin 模式（默认）：允许/拒绝/转发管理员三键；self 模式（用户卡）：仅允许/拒绝两键。 */
 export function buildPermissionCard(params: PermissionCardParams): object {
-  const { toolName, args, approvalId, token } = params;
+  const { toolName, args, approvalId, token, mode = "admin" } = params;
+  const self = mode === "self";
 
   const summary = summarizeArgs(args);
   const button = (text: string, type: string, value: Record<string, unknown>) => ({
@@ -36,25 +43,32 @@ export function buildPermissionCard(params: PermissionCardParams): object {
     type,
     behaviors: [{ type: "callback", value }],
   });
+  const columns = [
+    { tag: "column", width: "weighted", weight: 1, vertical_align: "top", elements: [button("✅ 允许一次", "primary", { action: "tool_approval", approval_id: approvalId, token, decision: "allow_once" })] },
+    { tag: "column", width: "weighted", weight: 1, vertical_align: "top", elements: [button("❌ 拒绝", "default", { action: "tool_approval", approval_id: approvalId, token, decision: "deny" })] },
+    // 转发按钮仅管理员卡需要（用户卡的使用者就是决策者本人）
+    ...(!self ? [{ tag: "column", width: "weighted", weight: 1, vertical_align: "top", elements: [button("📨 转发管理员", "default", { action: "forward_approval", approval_id: approvalId, token })] }] : []),
+  ];
   const buttonsRow = {
     tag: "column_set",
     flex_mode: "none",
     background_style: "default",
-    columns: [
-      { tag: "column", width: "weighted", weight: 1, vertical_align: "top", elements: [button("✅ 允许一次", "primary", { action: "tool_approval", approval_id: approvalId, token, decision: "allow_once" })] },
-      { tag: "column", width: "weighted", weight: 1, vertical_align: "top", elements: [button("❌ 拒绝", "default", { action: "tool_approval", approval_id: approvalId, token, decision: "deny" })] },
-      { tag: "column", width: "weighted", weight: 1, vertical_align: "top", elements: [button("📨 转发管理员", "default", { action: "forward_approval", approval_id: approvalId, token })] },
-    ],
+    columns,
   };
 
   return {
     schema: "2.0",
-    header: { title: { tag: "plain_text", content: "🛡 工具调用授权请求" } },
+    header: { title: { tag: "plain_text", content: self ? "🔑 用户身份操作确认" : "🛡 工具调用授权请求" } },
     body: {
       elements: [
         { tag: "markdown", content: `**${toolName}**` },
         ...(summary ? [{ tag: "markdown", content: `\`\`\`\n${summary}\n\`\`\`` }] : []),
-        { tag: "markdown", content: "⚠️ 仅管理员点击有效，授权仅本次生效" },
+        {
+          tag: "markdown",
+          content: self
+            ? "⚠️ 该命令将以**你的个人凭证**执行（你的飞书 / Meegle / Bitbucket 账号），仅你本人点击有效，授权仅本次生效"
+            : "⚠️ 仅管理员点击有效，授权仅本次生效",
+        },
         buttonsRow,
       ],
     },

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { applyCredentialInjections, extractMissingScopes } from "../src/runtime/identity-bash.ts";
+import { applyCredentialInjections, extractMissingScopes, matchesUserIdentityCli } from "../src/runtime/identity-bash.ts";
 
 /** 与 identity-bash.ts 内置规则同构的最小规则集（getToken 由测试注入） */
 function makeRules(opts: { token?: string; appId?: string; meegleToken?: string } = {}) {
@@ -144,5 +144,21 @@ describe("envFields 多字段注入（bbt 明文参数型 CLI）", () => {
     const other: NodeJS.ProcessEnv = {};
     applyCredentialInjections("ls -la", other, [bbtRule({ username: "a", password: "b" })]);
     expect(Object.keys(other)).toHaveLength(0);
+  });
+});
+
+describe("matchesUserIdentityCli（用户身份 CLI 判定，授权分流用）", () => {
+    it("meegle / bbt 恒为用户身份；lark-cli 省略身份为用户身份", () => {
+    expect(matchesUserIdentityCli("meegle mywork todo")).toBe(true);
+    expect(matchesUserIdentityCli('bbt pr create -r x --user "$BBT_USERNAME" --password "$BBT_PASSWORD"')).toBe(true);
+    expect(matchesUserIdentityCli("lark-cli calendar +agenda")).toBe(true);
+    expect(matchesUserIdentityCli("lark-cli --as user contact search")).toBe(true);
+  });
+
+  it("lark-cli 显式 --as bot 是机器人身份 → 否；非 CLI 命令 → 否", () => {
+    expect(matchesUserIdentityCli("lark-cli --as bot im message create")).toBe(false);
+    expect(matchesUserIdentityCli("lark-cli --as=bot okr list")).toBe(false);
+    expect(matchesUserIdentityCli("ls -la")).toBe(false);
+    expect(matchesUserIdentityCli("npm run test")).toBe(false);
   });
 });

@@ -77,6 +77,18 @@ const LARK_INJECTION: ProviderInjection = {
 };
 
 /**
+ * 命令是否以"用户身份"调用 CLI（纯函数，供单测与授权分流）：
+ * - meegle / bbt：凭证本身就是用户个人凭证，恒为用户身份；
+ * - lark-cli：省略身份（或显式 --as user）时注入用户 token → 用户身份；显式 --as bot 是机器人身份 → 否。
+ * 用于授权分流：用户身份操作弹"用户卡"由发起者本人确认，其余走管理员卡。
+ */
+export function matchesUserIdentityCli(command: string): boolean {
+  if (/\bmeegle\b/.test(command) || /\bbbt\b/.test(command)) return true;
+  if (/\blark[-_]?cli\b/.test(command)) return !LARK_INJECTION.excludePattern!.test(command);
+  return false;
+}
+
+/**
  * 纯函数：按规则把凭证写入 spawn 环境（供单测）。
  * 逐规则判断：命令匹配、未被排除、且有可用凭证 —— 三者齐备才注入。
  * 单 token 型（envToken + getToken）与多字段型（envFields）可并存；任一凭证注入成功才写 staticEnv。
