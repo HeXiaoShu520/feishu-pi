@@ -113,6 +113,20 @@ export class ReplyParts {
 const TOOL_CALL_MAX_CHARS = 300;
 
 /**
+ * 工具类型图标（固定不参与动画，动画在名称后面的 spinner 帧）：
+ * bash=执行 ⚙、read=读 📖、write=写 📝、edit=改 ✏️，其余（自定义/未知）🔧。
+ */
+export function toolIcon(toolName: string): string {
+  switch (toolName) {
+    case "bash": return "⚙";
+    case "read": return "📖";
+    case "write": return "📝";
+    case "edit": return "✏️";
+    default: return "🔧";
+  }
+}
+
+/**
  * 格式化一次工具调用的展示文本：**单行紧凑式**——工具名加粗 + 内容行内代码，
  * 如 `**read** \`docs/a.md\``、`**bash** \`git status\``，多条工具各占一行，整洁不刷屏。
  * bash 显示命令本身，read/write/edit 显示目标路径，

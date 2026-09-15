@@ -5,12 +5,12 @@ import { CardKitReply, resolveReplyInThread } from "./cardkit-reply.ts";
 import { MessageStore } from "./message-store.ts";
 import { formatLogText } from "./log-utils.ts";
 import { ReactionController } from "./reaction-controller.ts";
-import { Spinner } from "./spinner.ts";
+import { Spinner, randomFrames } from "./spinner.ts";
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "../utils/logger.ts";
 import { createDefaultRegistry, DetailCommand, NewCommand, StopCommand, markdownCard, type CommandRegistry, type CommandHandler } from "./commands.ts";
 import { randomUUID } from "node:crypto";
-import { formatStatsLine, formatToolCall, ReplyParts } from "./reply-parts.ts";
+import { formatStatsLine, formatToolCall, toolIcon, ReplyParts } from "./reply-parts.ts";
 import type { PeopleRoster } from "./people-roster.ts";
 
 /** 将飞书消息转换为 Pi 会话，并把增量文本交给飞书传输层。 */
@@ -142,20 +142,19 @@ export class FeishuAgentBridge {
         }
       }, 200); // 200ms 更新一帧
 
-      // 工具调用动画：在小字位置显示"符号 + 工具名"的旋转帧
-      const TOOL_FRAMES = ["⚙", "⚙", "⚒", "⚒", "🛠", "⚒", "⚙"];
-      let toolFrameIndex = 0;
+      // 工具调用动画：小字 = 工具类型图标（固定）+ 工具名 + 尾部 spinner 帧。
+      // 每条回复随机锁定一种 spinner 样式（约 200ms/帧循环），工具切换只换前缀不换样式。
+      const toolSpinner = new Spinner(" ", randomFrames());
       let activeToolName = "";
       let toolAnimationUpdating = false;
       toolTimer = setInterval(() => {
         if (hasRealContent && activeToolName && !toolAnimationUpdating) {
           toolAnimationUpdating = true;
-          const frame = TOOL_FRAMES[toolFrameIndex++ % TOOL_FRAMES.length];
-          reply.updateStats(`${frame} ${activeToolName} …`).catch(() => {}).finally(() => {
+          reply.updateStats(toolSpinner.next()).catch(() => {}).finally(() => {
             toolAnimationUpdating = false;
           });
         }
-      }, 300);
+      }, 200);
 
       // 记录 prompt 前的基线统计，用于计算本次新增 token
       const statsBefore = await this.conversations.getStats(conversationId, message.context);
@@ -196,6 +195,7 @@ export class FeishuAgentBridge {
           // 工具事件：追加工具摘要段（精简模式只留当前一个），小字位置同步显示动画。
           if (event.type === "tool_started") {
             activeToolName = event.toolName;
+            toolSpinner.withPrefix(`${toolIcon(event.toolName)} ${event.toolName}`);
             if (!hasRealContent) await startRealContent();
             await replyParts.appendTool(`\n\n${formatToolCall(event.toolName, event.args)}`);
           }
