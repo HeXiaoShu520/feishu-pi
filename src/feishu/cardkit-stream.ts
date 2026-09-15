@@ -113,21 +113,20 @@ export class CardKitStream {
       this.accumulator = fullText;
       await this.enqueueWrite(() => this.pushUpdate(fullText));
 
-      // 1. 等待客户端打字机渲染完成。
-      //    打字机速率 = print_step / print_frequency_ms = 100 字符/秒（理论 len*10ms），
-      //    还要叠加服务端分发与客户端启动延迟——估算不可靠，保底 5s（短文本估算值
-      //    只有几百 ms 时经常等不到位，小字/正文会被过早关闭的流式截断）；长文本封顶 15s。
-      const renderWaitMs = renderWaitMsOverride ?? Math.min(15_000, Math.max(5_000, fullText.length * 25));
+      // 1. 等待客户端打字机把正文打完：速率 = print_step / print_frequency_ms
+      //    （默认 3 字符 / 30ms = 100 字符/秒），再加 1s 分发余量
+      const typewriterMs = fullText.length * (this.printFrequencyMs / this.printStep);
+      const renderWaitMs = renderWaitMsOverride ?? typewriterMs + 1_000;
       await new Promise((resolve) => setTimeout(resolve, renderWaitMs));
 
-      // 2. 正文渲染完成后写入统计小字（必须在关闭流式前，关闭后元素不能再更新）
+      // 2. 正文打完后写入统计小字（必须在关闭流式前，关闭后元素不能再更新）
       if (statsText) {
         await this.enqueueWrite(() => this.putStats(statsText));
-        // 小字元素写入后稍等片刻再关闭流式，确保客户端已处理完该元素更新
-        await new Promise((resolve) => setTimeout(resolve, 800));
+        // 3. 等 1s 让客户端处理完小字元素，再关闭流式
+        await new Promise((resolve) => setTimeout(resolve, 1_000));
       }
 
-      // 3. 关闭流式模式（不再发送最终内容，避免覆盖正在渲染的文本）
+      // 4. 关闭流式模式（不再发送最终内容，避免覆盖正在渲染的文本）
       await this.enqueueWrite(() => this.patchSettings(false));
 
       this.disposed = true;
