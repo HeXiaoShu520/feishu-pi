@@ -8,6 +8,7 @@ import { logger } from "../utils/logger.ts";
 import { attachmentsDir, sanitizeFileName } from "../utils/session-paths.ts";
 import { upsertEnvLine } from "../utils/env-file.ts";
 import { toBuffer } from "./resource-buffer.ts";
+import { extractCredentialFields } from "./credential-card.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -17,6 +18,16 @@ export interface CardCallbackParams {
   value: Record<string, unknown>;
   /** 回调来源：被点击的卡片消息 ID、所在会话与点击者 */
   action: { messageId: string; chatId: string; operatorOpenId: string };
+}
+
+/** 凭证表单卡回调参数：字段值已从 form_value/input_value 提取（不得写日志） */
+export interface CredentialSubmitParams {
+  /** 按钮回传参数（含 provider） */
+  value: Record<string, unknown>;
+  /** 回调来源：卡片消息 ID（用于原地更新结果卡）、会话与提交者 */
+  action: { messageId: string; chatId: string; operatorOpenId: string };
+  /** 提交的表单字段（已 trim；空值剔除） */
+  fields: Record<string, string>;
 }
 
 export interface LarkTransportConfig {
@@ -302,6 +313,18 @@ export class LarkTransport implements FeishuTransport {
         return;
       }
 
+      // 凭证表单卡回调（form_submit）：输入内容经回调直达服务端，不落聊天记录；
+      // 字段值不写日志，handler 自行加密入库
+      if (typeof value === "object" && value?.action === "credential_submit") {
+        const rawAction = (action.raw as { action?: unknown } | undefined)?.action;
+        await this.credentialSubmitHandler?.({
+          value,
+          action: { messageId: action.messageId, chatId: action.chatId, operatorOpenId: action.operator.openId },
+          fields: extractCredentialFields(rawAction),
+        });
+        return;
+      }
+
       // 其余卡片（/model）：管理员校验后处理
       const operatorOpenId = action.operator.openId;
       const isAdmin = this.adminOpenId ? operatorOpenId === this.adminOpenId : false;
@@ -447,6 +470,13 @@ export class LarkTransport implements FeishuTransport {
   /** 注册选项卡回调处理器（AskBroker 校验存在性/一次性 token/仅本人）。 */
   onAskUser(handler: (params: CardCallbackParams) => Promise<void>): void {
     this.askHandler = handler;
+  }
+
+  private credentialSubmitHandler?: (params: CredentialSubmitParams) => Promise<void>;
+
+  /** 注册凭证表单卡回调（form_submit → credential_submit）：字段值不得写入日志。 */
+  onCredentialSubmit(handler: (params: CredentialSubmitParams) => Promise<void>): void {
+    this.credentialSubmitHandler = handler;
   }
 
   /** 向指定会话发送一张卡片，返回 messageId。 */

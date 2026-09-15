@@ -13,12 +13,12 @@ import { resolveAdminOpenId, persistUserProfile, resolveAdminFromLogins } from "
 import { SkillUsageStore } from "./stats/skill-usage-store.ts";
 import { ScheduleService } from "./schedule/service.ts";
 import { PermissionPolicy } from "./permission/policy.ts";
-import { PermCommand } from "./feishu/commands.ts";
+import { PermCommand, markdownCard } from "./feishu/commands.ts";
 import { LoginCommand, LogoutCommand, UserAuthService } from "./feishu/user-auth.ts";
 import { PeopleRoster } from "./feishu/people-roster.ts";
 import { createIdentityBashTool } from "./runtime/identity-bash.ts";
 import { runSetupWizard } from "./feishu/setup-wizard.ts";
-import { MeegleCredentialService } from "./feishu/meegle-auth.ts";
+import { StaticCredentialService } from "./feishu/meegle-auth.ts";
 import { createCliSearchUser } from "./feishu/lark-cli-search.ts";
 import { CredentialVault } from "./utils/credential-vault.ts";
 import { delimiter, dirname, join } from "node:path";
@@ -140,10 +140,16 @@ export async function main(): Promise<void> {
     keyFile: vaultKeyFile,
   });
 
-  // Meegle（飞书项目）凭证服务：/login meegle <token> 提交，静态凭证（无刷新链路）
-  const meegleAuth = new MeegleCredentialService(
+  // 静态凭证服务（用户经卡片表单提交、无刷新链路）：meegle 单 token / bbt 用户名+应用密码
+  const meegleAuth = new StaticCredentialService(
     join(credentialsDir, "meegle.vault.json"),
     vaultKeyFile,
+    "meegle",
+  );
+  const bbtAuth = new StaticCredentialService(
+    join(credentialsDir, "bbt.vault.json"),
+    vaultKeyFile,
+    "bbt",
   );
 
   // 用户飞书身份授权（Device Flow，RFC 8628）：/login 指令 + 按 openId 加密存取 user_access_token。
@@ -330,6 +336,30 @@ export async function main(): Promise<void> {
     }
   });
 
+  // 凭证表单卡回调（form_submit）：字段值加密入库，不写日志；就地更新卡片为结果
+  transport.onCredentialSubmit(async ({ value, action, fields }) => {
+    const provider = typeof value.provider === "string" ? value.provider : "";
+    const operator = action.operatorOpenId;
+    try {
+      if (provider === "meegle") {
+        const token = fields.token;
+        if (!token) throw new Error("token 未填写");
+        await meegleAuth.submitToken(operator, token);
+      } else if (provider === "bbt") {
+        if (!fields.username || !fields.password) throw new Error("用户名 / App Password 未填写完整");
+        await bbtAuth.submitFields(operator, { username: fields.username, password: fields.password });
+      } else {
+        throw new Error(`未知的凭证提供方: ${provider || "(空)"}`);
+      }
+      logger.info(`[Main] ${provider} 凭证已提交入库（用户 ${operator}）`);
+      await transport.updateCardById(action.messageId, markdownCard(`✅ ${provider} 凭证已加密保存，此卡片可以撤回。`));
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      logger.warn(`[Main] ${provider} 凭证提交失败（用户 ${operator}）: ${detail}`);
+      await transport.updateCardById(action.messageId, markdownCard(`❌ 凭证保存失败：${detail}\n请重新发送 /login ${provider} 再试。`)).catch(() => undefined);
+    }
+  });
+
   // ---------- 统计与定时任务 ----------
 
   // 技能使用统计：独立事件流（data/stats/，不参与 7 天清理），展示名解析复用用户缓存
@@ -439,8 +469,8 @@ ${trimmed}` }] },
       // /perm 查看身份、双组策略与工具档位（仅管理员）；/login /logout 用户飞书身份授权（Device Flow）
       extraCommands: [
         new PermCommand(() => policy.describe()),
-        new LoginCommand(userAuth, meegleAuth),
-        new LogoutCommand(userAuth, meegleAuth),
+        new LoginCommand(userAuth, { meegle: meegleAuth, bbt: bbtAuth }),
+        new LogoutCommand(userAuth, { meegle: meegleAuth, bbt: bbtAuth }),
       ],
       // 回复末尾的模型统计小字开关（工具过程状态不受影响）
       showModelStats: config.showModelStats,

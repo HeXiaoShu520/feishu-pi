@@ -169,10 +169,11 @@ npm install
 - scope 已内置默认以下免审权限（**未预开通时，`/login` 同意页会自动列出并一键开通**，无需后台操作）：
   - `contact:contact.base:readonly` - 通讯录调用权限（contact API 的接口准入）
   - `contact:user.base:readonly` - 用户基本信息（中文名、英文名）
-  - `contact:user.department:readonly` - 用户组织架构信息（department_ids）
-  - `contact:user.department_path:readonly` - 成员所在部门路径（含部门名，一次调用直接带出）
-  - `contact:department.base:readonly` - 部门基本信息（部门 ID 换部门名）
+  - `contact:department.base:readonly` - 部门基本信息
+- 部门路径类权限（`contact:user.department(:_path):readonly`）需要管理员审核、默认**不申请**——部门信息经 lark-cli 用户态搜索（`contact +search-user`）获得
 - 用户通过 `/login` 完成授权（Device Flow，无需配置重定向 URL 白名单）；如需自定义申请的权限，用 `FEISHU_USER_AUTH_SCOPES` 覆盖
+
+**多应用凭证提交（表单卡）**：`/login meegle`、`/login bbt`（仅私聊）会发送一张**表单卡片**——密码输入框（输入以 • 显示）+ 提交按钮，内容经卡片回调直达服务端加密入库，**不落聊天记录**；提交成功后卡片自动更新。`/login`（无参数）可查看各应用登录状态；`/logout bbt` 可清除对应凭证。BBT 的 CLI 命令注入待其 CLI 接入后自动生效，凭证先行加密保存。
 
 > **三种身份通道，各司其职、互不替代：**
 > - **机器人身份**（tenant token）：收发消息、群操作等应用能力，数据范围 = 应用的通讯录权限范围；
