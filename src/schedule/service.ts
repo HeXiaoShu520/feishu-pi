@@ -53,6 +53,11 @@ export class ScheduleStore extends JsonMapStore<ScheduleTask> {
     await this.persist();
   }
 
+  /** 仅当任务仍存在时写入（防后台执行把刚删除的任务写回复活）。 */
+  async putIfPresent(task: ScheduleTask): Promise<boolean> {
+    return this.writeIfPresent(task.id, task);
+  }
+
   /** 删除任务；返回是否存在（供回执文案）。 */
   async remove(id: string): Promise<boolean> {
     await this.ensureLoaded();
@@ -153,12 +158,15 @@ export class ScheduleService {
     return this.store.list();
   }
 
-  /** 立即触发一次（手动执行，不影响调度节奏）。 */
+  /** 立即触发一次（手动执行，不影响调度节奏）。
+   *  执行在后台进行：一轮智能体可能跑数分钟，同步等待会卡住调用方（工具调用/指令）。 */
   async fireNow(id: string): Promise<string> {
     const task = await this.store.get(id);
     if (!task) return `任务 ${id} 不存在`;
-    await this.execute(task);
-    return `已触发任务 ${id}（${task.name}），结果已推送到会话`;
+    void this.execute(task).catch((error) => {
+      logger.warn(`[Schedule] 手动触发执行失败 ${task.name}: ${error instanceof Error ? error.message : String(error)}`);
+    });
+    return `已触发任务 ${id}（${task.name}），后台执行中，结果会推送到会话`;
   }
 
   /** 借 croner 校验表达式合法性（构造成功即合法，立即释放）。 */
@@ -210,13 +218,14 @@ export class ScheduleService {
     }
   }
 
-  /** 回写最近一次执行结果（任务已被删除时静默跳过）。 */
+  /** 回写最近一次执行结果（任务已被删除时静默跳过——putIfPresent 原子判定，
+   *  防"后台执行写回"把刚删除的任务复活）。 */
   private async markResult(task: ScheduleTask, status: "ok" | "error", detail?: string): Promise<void> {
     const current = await this.store.get(task.id);
     if (!current) return;
     current.lastRunAt = Date.now();
     current.lastStatus = status;
     current.lastError = status === "error" ? detail : undefined;
-    await this.store.put(current);
+    await this.store.putIfPresent(current);
   }
 }

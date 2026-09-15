@@ -38,6 +38,8 @@ interface PendingApproval {
   forwarded?: { messageId?: string };
   timer: NodeJS.Timeout;
   resolve: (allowed: boolean) => void;
+  /** 移除 signal 上的 abort 监听（授权以其他方式结束时调用，防监听器残留） */
+  offAbort: () => void;
 }
 
 /**
@@ -90,11 +92,10 @@ export class PermissionBroker {
         const pending = this.pending.get(approvalId);
         if (!pending) return;
         this.pending.delete(approvalId);
+        pending.offAbort();
         pending.resolve(false);
         this.finalizeCards(pending, "timeout");
       }, this.options.timeoutMs);
-
-      this.pending.set(approvalId, { token, chatId: request.chatId, toolName: request.toolName, toolArgs: request.args, timer, resolve });
 
       // 会话中断（/stop）：立即取消等待，卡片收尾（精简模式撤回 / 详细模式更新为已取消）
       const onAbort = () => {
@@ -106,6 +107,9 @@ export class PermissionBroker {
         this.finalizeCards(pending, "cancelled");
       };
       signal?.addEventListener("abort", onAbort, { once: true });
+      const offAbort = () => signal?.removeEventListener("abort", onAbort);
+
+      this.pending.set(approvalId, { token, chatId: request.chatId, toolName: request.toolName, toolArgs: request.args, timer, resolve, offAbort });
 
       const card = buildPermissionCard({ toolName: request.toolName, args: request.args, approvalId, token });
       this.options
@@ -121,6 +125,7 @@ export class PermissionBroker {
           if (pending) {
             clearTimeout(pending.timer);
             this.pending.delete(approvalId);
+            pending.offAbort();
             pending.resolve(false);
           }
         });
@@ -159,6 +164,7 @@ export class PermissionBroker {
 
     clearTimeout(pending.timer);
     this.pending.delete(approvalId);
+    pending.offAbort();
     const allowed = decision === "allow_once";
     pending.resolve(allowed);
 

@@ -31,6 +31,15 @@ export abstract class JsonMapStore<V> {
     return existed;
   }
 
+  /** 仅当键仍存在时写入（存在性检查与写入之间无 await，防"删除-复活"竞态）。 */
+  protected async writeIfPresent(key: string, record: V): Promise<boolean> {
+    await this.ensureLoaded();
+    if (!this.records.has(key)) return false;
+    this.records.set(key, record);
+    await this.persist();
+    return true;
+  }
+
   /** 懒加载文件内容；ENOENT（首次运行无文件）按空映射处理。加载 promise 会缓存，避免并发重复读。 */
   protected async ensureLoaded(): Promise<void> {
     if (this.loaded) return;

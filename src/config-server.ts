@@ -19,6 +19,21 @@ const ENV_FILE = join(process.cwd(), ".env");
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+// Host 校验（全局，防 DNS rebinding）：绑定 127.0.0.1 后，攻击者仍可把自己的域名
+// 解析到 127.0.0.1——浏览器视角下请求是"同源"，不带 Origin 头，Origin 检查被绕过，
+// 而 GET /api/config 会明文返回 App Secret。因此所有请求的 Host 必须是本机主机名。
+const LOCAL_HOSTNAMES = new Set(["localhost", "127.0.0.1", "[::1]", "::1"]);
+app.use((req, res, next) => {
+  const host = (req.get("host") ?? "").toLowerCase();
+  const hostname = host.startsWith("[") ? host.slice(0, host.indexOf("]") + 1) : host.split(":")[0] ?? "";
+  if (!LOCAL_HOSTNAMES.has(hostname)) {
+    logger.warn(`[ConfigServer] 已拒绝非本机 Host 请求: Host=${host}`);
+    res.status(403).send("拒绝非本机请求");
+    return;
+  }
+  next();
+});
+
 // 静态资源：表情图片
 app.use("/emojis", express.static(join(process.cwd(), "res", "emojis")));
 

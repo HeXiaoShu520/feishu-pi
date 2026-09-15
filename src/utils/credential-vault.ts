@@ -40,7 +40,6 @@ const unb64 = (v: string): Buffer => Buffer.from(v, "base64");
 
 export class CredentialVault {
   private records = new Map<string, unknown>();
-  private loaded = false;
   private loadPromise?: Promise<void>;
   private writeQueue: Promise<void> = Promise.resolve();
   private readonly filePath: string;
@@ -180,7 +179,6 @@ export class CredentialVault {
         raw = await readFile(this.filePath, "utf8");
       } catch (error) {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-        this.loaded = true;
         return;
       }
       const envelope = JSON.parse(raw) as VaultEnvelope;
@@ -192,7 +190,6 @@ export class CredentialVault {
       decipher.setAuthTag(unb64(envelope.tag));
       const plain = Buffer.concat([decipher.update(unb64(envelope.data)), decipher.final()]).toString("utf8");
       this.records = new Map(Object.entries(JSON.parse(plain) as Record<string, unknown>));
-      this.loaded = true;
     })();
     return this.loadPromise;
   }

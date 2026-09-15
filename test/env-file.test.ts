@@ -58,3 +58,33 @@ describe("upsertEnvLine", () => {
     expect(upsertEnvLine("", "K", "v")).toBe("K=v\n");
   });
 });
+
+describe("stringifyEnv 值转义（防换行注入/多行破坏）", () => {
+  it("值内换行折叠为空格，无法向 .env 注入任意键值对", () => {
+    const out = stringifyEnv({
+      FEISHU_APP_ID: "cli_x",
+      FEISHU_ADMIN: "张三\nMINICLAW_VAULT_KEY=attacker_key",
+    });
+    // 注入文本折叠进同一行、成为值的一部分：parse 回来不存在独立注入键
+    expect(out).not.toMatch(/\nMINICLAW_VAULT_KEY=/);
+    const parsed = parseEnvFile(out);
+    expect(Object.keys(parsed)).not.toContain("MINICLAW_VAULT_KEY");
+    expect(parsed.FEISHU_ADMIN).toContain("MINICLAW_VAULT_KEY=attacker_key");
+    expect(parsed.FEISHU_ADMIN.startsWith("张三 ")).toBe(true);
+  });
+
+  it("保留键的键名非法（空白/特殊字符）时跳过不写回；合法键值转义", () => {
+    const out = stringifyEnv({ FEISHU_APP_ID: "x" }, {
+      FEISHU_GROUP_admin: "李雷\n韩梅梅",
+      "bad key\nINJECTED": "v",
+    });
+    expect(out).toContain("FEISHU_GROUP_admin=李雷 韩梅梅");
+    expect(out).not.toContain("INJECTED");
+  });
+
+  it("upsertEnvLine 同样转义换行", () => {
+    const out = upsertEnvLine("A=1\n", "K", "v1\nEVIL=2");
+    expect(out).toContain("K=v1 EVIL=2");
+    expect(out.indexOf("EVIL")).toBe(out.lastIndexOf("EVIL"));
+  });
+});

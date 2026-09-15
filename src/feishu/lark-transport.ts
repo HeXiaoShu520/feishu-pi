@@ -12,13 +12,16 @@ import { extractCredentialFields } from "./credential-card.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
-/** 卡片按钮回调的统一参数：按钮 value 载荷 + 回调来源（卡片消息与点击者） */
+/** 卡片回调的统一参数：按钮 value 载荷 + 回调来源（卡片消息与点击者） */
 export interface CardCallbackParams {
   /** 按钮 behaviors.value 载荷（action/qid/token/decision 等，结构随卡片而定） */
   value: Record<string, unknown>;
   /** 回调来源：被点击的卡片消息 ID、所在会话与点击者 */
   action: { messageId: string; chatId: string; operatorOpenId: string };
 }
+
+/** 会话模式缓存条目上限（超出驱逐最久未用） */
+const CHAT_MODE_CACHE_MAX = 500;
 
 /** 凭证表单卡回调参数：字段值已从 form_value/input_value 提取（不得写日志） */
 export interface CredentialSubmitParams {
@@ -86,8 +89,7 @@ export class LarkTransport implements FeishuTransport {
   private askHandler?: (params: CardCallbackParams) => Promise<void>;
   private connecting?: Promise<void>;
   /** 会话模式缓存（p2p/group/topic），话题群与普通群的会话隔离策略不同 */
-  private readonly chatModeCache = new Map<string, "p2p" | "group" | "topic">();
-  /** 话题根持久化（chatId -> 待定话题根 messageId） */
+  private readonly chatModeCache = new Map<string, "p2p" | "group" | "topic">();  /** 话题根持久化（chatId -> 待定话题根 messageId） */
   private readonly topicRoots?: TopicRootStore;
   /** 会话数据根目录（附件下载到 {根目录}/{会话}/files/） */
   private readonly sessionDataDir?: string;
@@ -395,15 +397,25 @@ export class LarkTransport implements FeishuTransport {
     return task;
   }
 
-  /** 查询会话模式并缓存（话题群与普通群的会话隔离策略不同，模式极少变化）。 */
+  /** 查询会话模式并缓存（话题群与普通群的会话隔离策略不同，模式极少变化）。
+   *  缓存有上限（近似 LRU：超限驱逐最早条目），长驻进程不无限增长。 */
   private async getChatModeCached(chatId: string): Promise<"p2p" | "group" | "topic"> {
     const cached = this.chatModeCache.get(chatId);
-    if (cached) return cached;
+    if (cached) {
+      // 命中时移到末尾，保证驱逐的是真正最久未用的条目
+      this.chatModeCache.delete(chatId);
+      this.chatModeCache.set(chatId, cached);
+      return cached;
+    }
     try {
       const res = await this.client.im.v1.chat.get({ path: { chat_id: chatId } });
       const mode = (res.data as { chat_mode?: string } | undefined)?.chat_mode;
       const result: "p2p" | "group" | "topic" = mode === "p2p" ? "p2p" : mode === "topic" ? "topic" : "group";
       this.chatModeCache.set(chatId, result);
+      if (this.chatModeCache.size > CHAT_MODE_CACHE_MAX) {
+        const oldest = this.chatModeCache.keys().next().value;
+        if (oldest !== undefined) this.chatModeCache.delete(oldest);
+      }
       return result;
     } catch (error) {
       logger.warn(`[LarkTransport] 获取会话模式失败，按普通会话处理: ${error instanceof Error ? error.message : error}`);

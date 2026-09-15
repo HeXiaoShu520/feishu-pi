@@ -6,9 +6,12 @@
  * 维度是「人 × 技能 × 时间」，因此在工具执行前的钩子处（携带用户上下文）直接
  * 记录事件，长期留存于 data/stats/skill-usage.jsonl（JSONL，一行一条）。
  */
-import { mkdir, readFile, stat, appendFile } from "node:fs/promises";
+import { mkdir, readFile, rename, stat, appendFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
 import { logger } from "../utils/logger.ts";
+
+/** 单文件体积上限（超过滚动为 .old，保留一代历史）；防长驻进程下 jsonl 无限增长 */
+const ROTATE_BYTES = 10 * 1024 * 1024;
 
 /** 一条技能使用事件 */
 export interface SkillUsageEvent {
@@ -87,6 +90,12 @@ export class SkillUsageStore {
     this.loaded = true;
     const write = this.writeQueue.then(async () => {
       await mkdir(dirname(this.filePath), { recursive: true });
+      try {
+        const info = await stat(this.filePath);
+        if (info.size > ROTATE_BYTES) await rename(this.filePath, `${this.filePath}.old`);
+      } catch {
+        // 文件尚不存在：无需轮转
+      }
       await appendFile(this.filePath, JSON.stringify(event) + "\n", "utf8");
     });
     this.writeQueue = write.catch((error) => {
