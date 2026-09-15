@@ -15,6 +15,7 @@ import { PermissionPolicy } from "./permission/policy.ts";
 import { PermCommand } from "./feishu/commands.ts";
 import { LoginCommand, LogoutCommand, UserAuthService } from "./feishu/user-auth.ts";
 import { createIdentityBashTool } from "./runtime/identity-bash.ts";
+import { runSetupWizard } from "./feishu/setup-wizard.ts";
 import { delimiter, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@larksuiteoapi/node-sdk";
@@ -46,6 +47,19 @@ async function logCleanupStats(cleanup: Promise<CleanupStats>): Promise<void> {
  * 运行时 → 会话管理 → 桥接），并挂接卡片回调与定时任务。这里只做接线，不承载业务逻辑。
  */
 export async function main(): Promise<void> {
+  // 上电自检：未配置机器人时进入扫码开通向导（创建/绑定应用 + 预置权限 + 写 .env），
+  // 完成后凭证注入进程环境并继续正常装配。无 TTY（守护进程/CI）不进入向导，给出明确指引。
+  if (!process.env.FEISHU_APP_ID || !process.env.FEISHU_APP_SECRET) {
+    if (!process.stdout.isTTY) {
+      throw new Error("未检测到机器人配置（FEISHU_APP_ID / FEISHU_APP_SECRET）。请在交互终端运行 `npm run setup` 完成扫码开通后重试。");
+    }
+    console.log("未检测到机器人配置：进入扫码开通向导（之后可随时运行 npm run setup 重新配置）。\n");
+    const created = await runSetupWizard({ envFile: join(process.cwd(), ".env") });
+    process.env.FEISHU_APP_ID = created.appId;
+    process.env.FEISHU_APP_SECRET = created.appSecret;
+    console.log("");
+  }
+
   const config = loadConfig();
 
   // 项目内预制 CLI（lark-cli / meegle …）：把 node_modules/.bin 前插到 PATH，
