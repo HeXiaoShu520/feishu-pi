@@ -134,23 +134,26 @@ describe("ReplyParts 详细模式（全量保留）", () => {
   });
 });
 
-describe("formatToolCall 工具行格式化", () => {
-  it("bash：工具名加粗 + 命令进 bash 代码块", () => {
-    expect(formatToolCall("bash", { command: "git status" })).toBe("**bash**\n\n```bash\ngit status\n```");
+describe("formatToolCall 工具行格式化（单行紧凑式）", () => {
+  it("bash：工具名加粗 + 命令行内代码，同一行", () => {
+    expect(formatToolCall("bash", { command: "git status" })).toBe("**bash** `git status`");
   });
 
-  it("read/write/edit：目标路径进代码块", () => {
-    expect(formatToolCall("read", { path: "docs/a.md" })).toBe("**read**\n\n```\ndocs/a.md\n```");
-    expect(formatToolCall("edit", { file_path: "src/x.ts" })).toBe("**edit**\n\n```\nsrc/x.ts\n```");
+  it("read/write/edit：目标路径跟在工具名后", () => {
+    expect(formatToolCall("read", { path: "docs/a.md" })).toBe("**read** `docs/a.md`");
+    expect(formatToolCall("edit", { file_path: "src/x.ts" })).toBe("**edit** `src/x.ts`");
   });
 
-  it("未知字段回退整包参数 JSON；超长截断；围栏内三反引号被替换", () => {
+  it("未知字段回退整包参数 JSON；超长截断；反引号/换行折叠不破坏行内代码", () => {
     expect(formatToolCall("my_tool", { foo: "bar" })).toContain('"foo"');
     const long = "x".repeat(400);
     const line = formatToolCall("bash", { command: long });
     expect(line.length).toBeLessThan(420);
-    expect(line.endsWith("…\n```")).toBe(true);
-    expect(formatToolCall("bash", { command: "a```b" })).not.toContain("a```b");
+    expect(line.endsWith("…`")).toBe(true);
+    const fenced = formatToolCall("bash", { command: "a```b" });
+    expect(fenced).not.toContain("a```b");
+    // 多行命令折叠为单行
+    expect(formatToolCall("bash", { command: "line1\nline2" })).toBe("**bash** `line1 line2`");
   });
 });
 
