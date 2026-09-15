@@ -525,14 +525,8 @@ ${trimmed}` }] },
   // 恢复定时任务调度（任务持久化在 data/schedules.json）
   await scheduleService.start();
 
-  // 启动流程第 3 步：团队名单上电解析（后台）。先预热已登录用户的 token
-  //（search-user 可用），再遍历机器人所在会话的成员，全员过一遍统一解析规则入库——
-  // 后续任何人请求，资料（姓名/部门）直接命中缓存。
-  void (async () => {
-    await userAuth?.refreshAllKnown().catch(() => undefined);
-    const stats = await transport.ingestChatRoster({ botOpenId });
-    logger.info(`[Main] 团队名单已就绪: ${stats.members} 位成员入缓存（${stats.ingested} 人本次解析，其余命中缓存）`);
-  })().catch((error) => logger.warn("[Main] 团队名单解析失败:", error));
+  // 预热已登录用户的 token（search-user / 用户身份 CLI 立即可用）
+  void userAuth?.refreshAllKnown().catch((error) => logger.warn("[Main] 用户 token 预热失败:", error));
 
   // 打印配置页面地址
   console.log(`\n配置页面: http://localhost:3456\n`);
