@@ -18,7 +18,7 @@ import { LoginCommand, LogoutCommand, UserAuthService } from "./feishu/user-auth
 import { PeopleRoster } from "./feishu/people-roster.ts";
 import { createIdentityBashTool } from "./runtime/identity-bash.ts";
 import { runSetupWizard } from "./feishu/setup-wizard.ts";
-import { StaticCredentialService } from "./feishu/meegle-auth.ts";
+import { MEEGLE_DEFAULT_HOST, StaticCredentialService } from "./feishu/meegle-auth.ts";
 import { createCliSearchUser } from "./feishu/lark-cli-search.ts";
 import { CredentialVault } from "./utils/credential-vault.ts";
 import { delimiter, dirname, join } from "node:path";
@@ -444,10 +444,11 @@ ${trimmed}` }] },
         },
         extraInjections: [
           {
-            // Meegle（飞书项目）：/login meegle 提交的静态 token，命令命中 meegle 时注入
+            // Meegle（飞书项目）：/login meegle 提交的静态 token，命令命中 meegle 时注入；
+            // 站点固定为飞书项目（MEEGLE_DEFAULT_HOST），不做环境变量
             commandPattern: /meegle/,
             envToken: "MEEGLE_USER_ACCESS_TOKEN",
-            staticEnv: { MEEGLE_HOST: process.env.MEEGLE_HOST || "project.feishu.cn" },
+            staticEnv: { MEEGLE_HOST: MEEGLE_DEFAULT_HOST },
             getToken: () => meegleAuth?.peekToken(userId),
           },
           {
