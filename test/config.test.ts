@@ -41,10 +41,10 @@ describe("parseGroupMembership（FEISHU_GROUP 配置语义）", () => {
     expect(groups["vip"]).toEqual(["乙"]);
   });
 
-  it("FEISHU_GROUP_USER1 旧写法并入 group_1 并提示替换", () => {
+  it("FEISHU_GROUP_USER1 不再是特殊键：按自定义组名 user1 处理", () => {
     const groups = parseGroupMembership({ FEISHU_GROUP_USER1: "李雷" }, warn);
-    expect(groups["group_1"]).toEqual(["李雷"]);
-    expect(warn).toHaveBeenCalledWith(expect.stringContaining("FEISHU_GROUP_USER1"));
+    expect(groups["user1"]).toEqual(["李雷"]);
+    expect(groups["group_1"]).toBeUndefined();
   });
 
   it("FEISHU_GROUP_ADMIN 已废弃：忽略并提示删除（不产生 admin 组）", () => {

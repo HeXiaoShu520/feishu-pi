@@ -43,7 +43,6 @@ const PRIMARY_GROUP = "group_1";
  * - FEISHU_GROUP=x,y        → group_1（主团队组）
  * - FEISHU_GROUP_<数字>      → group_<数字>（与 permissions.json 的组名对应）
  * - FEISHU_GROUP_<组名>      → 组名小写（自定义组）
- * - FEISHU_GROUP_USER1      → 并入 group_1（旧写法，启动时提示替换）
  * - FEISHU_GROUP_ADMIN      → 忽略（管理员由 FEISHU_ADMIN 统一配置，启动时提示删除）
  * 同组多来源成员合并去重，保持首次出现顺序。
  */
@@ -71,9 +70,6 @@ export function parseGroupMembership(env: NodeJS.ProcessEnv, warn: (msg: string)
       warn("[Config] FEISHU_GROUP_ADMIN 已废弃：管理员统一由 FEISHU_ADMIN 配置（自动属于 admin 组），请从 .env 中删除该项");
     } else if (/^\d+$/.test(suffix)) {
       add(`group_${suffix}`, toMembers(value));
-    } else if (suffix === "USER1") {
-      warn("[Config] FEISHU_GROUP_USER1 为旧写法，已等同 FEISHU_GROUP（主团队组 group_1），请改用 FEISHU_GROUP");
-      add(PRIMARY_GROUP, toMembers(value));
     } else {
       add(suffix.toLowerCase(), toMembers(value));
     }
@@ -117,8 +113,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     // FEISHU_GROUP（无后缀）与 FEISHU_GROUP_1 都映射到主团队组 group_1（成员合并去重），
     // FEISHU_GROUP_2..N 对应 group_2..N；成员除 open_id/中英文名外还支持组织架构部门名
     // （用户缓存的部门路径包含该部门名即视为组成员，见 PermissionPolicy.groupsFor）。
-    // 旧写法处理：FEISHU_GROUP_USER1 等同 FEISHU_GROUP；FEISHU_GROUP_ADMIN 已废弃——
-    // 管理员统一由 FEISHU_ADMIN 配置，自动属于 admin 组，无需（也不应）再单独配组。
+    // FEISHU_GROUP_ADMIN 已废弃：管理员统一由 FEISHU_ADMIN 配置，自动属于 admin 组。
     groupMembership: parseGroupMembership(env),
     approvalTimeoutMs: Number(env.FEISHU_APPROVAL_TIMEOUT_MS) > 0 ? Number(env.FEISHU_APPROVAL_TIMEOUT_MS) : 5 * 60_000,
     // 回复末尾的模型统计小字：默认显示；FEISHU_SHOW_MODEL_STATS=0/false/off 关闭（工具过程状态不受影响）

@@ -450,7 +450,7 @@ ${trimmed}` }] },
             // Meegle（飞书项目）：/login meegle 提交的静态 token，命令命中 meegle 时注入
             commandPattern: /meegle/,
             envToken: "MEEGLE_USER_ACCESS_TOKEN",
-            staticEnv: { MEEGLE_HOST: process.env.MEEGLE_HOST ?? "project.feishu.cn" },
+            staticEnv: { MEEGLE_HOST: process.env.MEEGLE_HOST || "project.feishu.cn" },
             getToken: () => meegleAuth?.peekToken(userId),
           },
           {
