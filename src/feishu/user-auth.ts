@@ -16,7 +16,7 @@
  * - token 落盘在 data/（.gitignore 已排除），对外统一走 getUserAccessToken（近过期静默刷新）；
  *   实际可访问数据 = 应用申请的 scope ∩ 用户本人可见范围，不绕过 Guard 的组策略闸门。
  */
-import { readFile, rename } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
 import { logger } from "../utils/logger.ts";
 import { CredentialVault } from "../utils/credential-vault.ts";
 import type { FeishuInboundMessage } from "./types.ts";
@@ -70,7 +70,7 @@ export interface StoredUserToken {
 
 /**
  * token 存储：加密凭证库（CredentialVault，provider = "lark"）。
- * 首次访问时把历史明文文件（data/user-tokens.json）一次性迁入库中，原文件改名 .migrated.bak 保留。
+ * 首次访问时把历史明文文件（data/user-tokens.json）一次性迁入库中，迁入成功后删除明文文件。
  */
 class UserTokenStore {
   private vault: CredentialVault | undefined;
@@ -93,7 +93,10 @@ class UserTokenStore {
     return this.vault;
   }
 
-  /** 历史明文文件一次性迁入加密库：成功后原文件改名保留（.migrated.bak），不再回读。 */
+  /**
+   * 历史明文文件一次性迁入加密库：全部条目写入成功后**删除**旧明文文件。
+   * 保留明文备份会抵消加密的意义（密文旁边躺一份明文），因此不保留。
+   */
   private async migrateLegacyPlainFile(): Promise<void> {
     let plain: Record<string, StoredUserToken>;
     try {
@@ -106,8 +109,8 @@ class UserTokenStore {
       await this.vault!.put("lark", openId, token);
     }
     if (entries.length > 0) {
-      await rename(this.legacyFile, `${this.legacyFile}.migrated.bak`);
-      logger.info(`[UserAuth] 已将 ${entries.length} 条明文 token 迁入加密凭证库（原文件保留为 ${this.legacyFile}.migrated.bak）`);
+      await unlink(this.legacyFile);
+      logger.info(`[UserAuth] 已将 ${entries.length} 条明文 token 迁入加密凭证库，旧明文文件已删除`);
     }
   }
 
