@@ -94,3 +94,55 @@ describe("extractMissingScopes（lark-cli 缺权限识别）", () => {
     expect(extractMissingScopes("命令执行完成")).toEqual([]);
   });
 });
+
+describe("envFields 多字段注入（bbt 明文参数型 CLI）", () => {
+  const bbtRule = (fields?: Record<string, string>) => ({
+    commandPattern: /\bbbt\b/,
+    envFields: {
+      get: () => fields,
+      map: { username: "BBT_USERNAME", password: "BBT_PASSWORD" },
+    },
+    staticEnv: { BBT_SITE: "bitbucket.org" },
+  });
+
+  it("命令命中 → 字段值映射为环境变量；命令文本不含真实值", () => {
+    const env: NodeJS.ProcessEnv = {};
+    applyCredentialInjections(
+      'bbt pr create -r myrepo --user "$BBT_USERNAME" --password "$BBT_PASSWORD"',
+      env,
+      [bbtRule({ username: "alice", password: "s3cret" })],
+    );
+    expect(env.BBT_USERNAME).toBe("alice");
+    expect(env.BBT_PASSWORD).toBe("s3cret");
+    expect(env.BBT_SITE).toBe("bitbucket.org");
+  });
+
+  it("缺一个字段只跳过该变量；完全无凭证不注入也不写 staticEnv", () => {
+    const partial: NodeJS.ProcessEnv = {};
+    applyCredentialInjections("bbt pr list", partial, [bbtRule({ username: "alice" })]);
+    expect(partial.BBT_USERNAME).toBe("alice");
+    expect(partial.BBT_PASSWORD).toBeUndefined();
+    expect(partial.BBT_SITE).toBe("bitbucket.org");
+
+    const none: NodeJS.ProcessEnv = {};
+    applyCredentialInjections("bbt pr list", none, [bbtRule(undefined)]);
+    expect(Object.keys(none)).toHaveLength(0);
+  });
+
+  it("单 token 与多字段可并存于同一规则；非本 CLI 命令不注入", () => {
+    const combined = {
+      commandPattern: /\bmycli\b/,
+      envToken: "MYCLI_TOKEN" as const,
+      getToken: () => "tok",
+      envFields: { get: () => ({ user: "u1" }), map: { user: "MYCLI_USER" } },
+    };
+    const env: NodeJS.ProcessEnv = {};
+    applyCredentialInjections("mycli do", env, [combined]);
+    expect(env.MYCLI_TOKEN).toBe("tok");
+    expect(env.MYCLI_USER).toBe("u1");
+
+    const other: NodeJS.ProcessEnv = {};
+    applyCredentialInjections("ls -la", other, [bbtRule({ username: "a", password: "b" })]);
+    expect(Object.keys(other)).toHaveLength(0);
+  });
+});

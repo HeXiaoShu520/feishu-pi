@@ -26,13 +26,25 @@ export interface ProviderInjection {
   commandPattern: RegExp;
   /** 显式身份排除：命令命中此正则时不注入（该命令将走 CLI 自身的身份，如 --as bot） */
   excludePattern?: RegExp;
-  /** 注入 token 的环境变量名（如 LARKSUITE_CLI_USER_ACCESS_TOKEN） */
-  envToken: string;
+  /** 注入 token 的环境变量名（单 token 型，如 LARKSUITE_CLI_USER_ACCESS_TOKEN） */
+  envToken?: string;
   /** 注入应用 ID 的环境变量名（可选，如 LARKSUITE_CLI_APP_ID） */
   envAppId?: string;
+  /**
+   * 多字段型注入：把凭证库里的字段值映射为环境变量。
+   * 用于凭证明文出现在命令行参数的 CLI（如 bbt 的 --user/--password）——
+   * 命令文本里只写变量名（`--user "$BBT_USERNAME"`），真实值经进程环境进入子进程，
+   * 不出现在命令文本/会话记录/工具展示中。
+   */
+  envFields?: {
+    /** 同步读内存缓存；undefined 表示未登录，不注入 */
+    get: () => Record<string, string> | undefined;
+    /** 字段名 → 环境变量名（字段缺失则跳过该变量） */
+    map: Record<string, string>;
+  };
   /** 该 CLI 需要的固定环境变量（如 meegle 的 MEEGLE_HOST），注入时一并写入 */
   staticEnv?: Record<string, string>;
-  /** 该 provider 的同步取 token 口（读内存缓存，不触发刷新） */
+  /** 该 provider 的同步取 token 口（读内存缓存，不触发刷新；单 token 型使用） */
   getToken?: () => string | undefined;
 }
 
@@ -66,7 +78,8 @@ const LARK_INJECTION: ProviderInjection = {
 
 /**
  * 纯函数：按规则把凭证写入 spawn 环境（供单测）。
- * 逐规则判断：命令匹配、未被排除、且有可用 token —— 三者齐备才注入。
+ * 逐规则判断：命令匹配、未被排除、且有可用凭证 —— 三者齐备才注入。
+ * 单 token 型（envToken + getToken）与多字段型（envFields）可并存；任一凭证注入成功才写 staticEnv。
  */
 export function applyCredentialInjections(
   command: string,
@@ -74,14 +87,33 @@ export function applyCredentialInjections(
   rules: Array<ProviderInjection & { appId?: string }>,
 ): void {
   for (const rule of rules) {
-    const token = rule.getToken?.();
-    if (!token) continue;
     if (!rule.commandPattern.test(command)) continue;
     if (rule.excludePattern?.test(command)) continue;
-    env[rule.envToken] = token;
-    if (rule.envAppId && rule.appId) env[rule.envAppId] = rule.appId;
-    for (const [key, value] of Object.entries(rule.staticEnv ?? {})) {
-      env[key] = value;
+
+    let injected = false;
+
+    const token = rule.getToken?.();
+    if (token && rule.envToken) {
+      env[rule.envToken] = token;
+      if (rule.envAppId && rule.appId) env[rule.envAppId] = rule.appId;
+      injected = true;
+    }
+
+    if (rule.envFields) {
+      const fields = rule.envFields.get();
+      if (fields) {
+        for (const [field, envName] of Object.entries(rule.envFields.map)) {
+          const value = fields[field];
+          if (value) env[envName] = value;
+        }
+        injected = true;
+      }
+    }
+
+    if (injected) {
+      for (const [key, value] of Object.entries(rule.staticEnv ?? {})) {
+        env[key] = value;
+      }
     }
   }
 }

@@ -453,6 +453,15 @@ ${trimmed}` }] },
             staticEnv: { MEEGLE_HOST: process.env.MEEGLE_HOST ?? "project.feishu.cn" },
             getToken: () => meegleAuth?.peekToken(userId),
           },
+          {
+            // Bitbucket（bbt）：CLI 凭证是命令行明文参数，模型在命令里只写变量名
+            // （--user "$BBT_USERNAME" --password "$BBT_PASSWORD"），真实值经进程环境注入
+            commandPattern: /\bbbt\b/,
+            envFields: {
+              get: () => bbtAuth?.peekFields(userId),
+              map: { username: "BBT_USERNAME", password: "BBT_PASSWORD" },
+            },
+          },
         ],
       });
     },
