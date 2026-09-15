@@ -33,13 +33,25 @@ export type PostForm = (
   headers?: Record<string, string>,
 ) => Promise<Record<string, unknown>>;
 
+/** 登录者身份（用 access token 反查所得；各字段以接口实际返回为准，可能缺省） */
+export interface LoginIdentity {
+  openId?: string;
+  name?: string;
+  en_name?: string;
+  email?: string;
+}
+
 /** 用 access token 反查实际授权者身份（GET authen/v1/user_info）；失败返回 undefined。 */
-async function defaultGetIdentity(accessToken: string): Promise<{ openId?: string; name?: string } | undefined> {
+async function defaultGetIdentity(accessToken: string): Promise<LoginIdentity | undefined> {
   const res = await fetch("https://open.feishu.cn/open-apis/authen/v1/user_info", {
     headers: { Authorization: `Bearer ${accessToken}` },
   });
-  const body = (await res.json().catch(() => ({}))) as { data?: { open_id?: string; name?: string } };
-  return body.data?.open_id ? { openId: body.data.open_id, name: body.data.name } : undefined;
+  const body = (await res.json().catch(() => ({}))) as {
+    data?: { open_id?: string; name?: string; en_name?: string; email?: string };
+  };
+  return body.data?.open_id
+    ? { openId: body.data.open_id, name: body.data.name, en_name: body.data.en_name, email: body.data.email }
+    : undefined;
 }
 
 async function defaultPostForm(
@@ -150,9 +162,15 @@ export interface UserAuthOptions {
   /** FEISHU_ADMIN 的 openId：其登录 token 用于用户资料查询通道 */
   adminOpenId?: string;
   /** 向会话发送授权卡（增量按需授权时使用）；提供后 ensureScopes 增量授权可用 */
-  sendCard?: (openId: string, card: object) => Promise<string | undefined>;
+  sendCard?: (chatId: string, card: object) => Promise<string | undefined>;
   /** 测试注入：用 access token 反查实际授权者（open_id/姓名）；默认 GET authen/v1/user_info */
-  getIdentity?: (accessToken: string) => Promise<{ openId?: string; name?: string } | undefined>;
+  getIdentity?: (accessToken: string) => Promise<LoginIdentity | undefined>;
+  /**
+   * 登录绑定完成回调（Device Flow 成功、token 入库后触发）：
+   * 冷启动管理员识别用——main 侧比对登录者身份与 FEISHU_ADMIN，命中则把资料写入用户缓存，
+   * 重启后走缓存通道自动识别管理员。
+   */
+  onLoginBound?: (info: LoginIdentity & { openId: string }) => void | Promise<void>;
   /** 轮询基准间隔（秒）；发起响应自带 interval 时优先用响应值 */
   pollIntervalSec?: number;
   /** 以下均为测试注入：HTTP 实现、时钟与睡眠 */
@@ -176,7 +194,7 @@ const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v)
 export class UserAuthService {
   private readonly store: UserTokenStore;
   private readonly postForm: PostForm;
-  private readonly getIdentity: (accessToken: string) => Promise<{ openId?: string; name?: string } | undefined>;
+  private readonly getIdentity: (accessToken: string) => Promise<LoginIdentity | undefined>;
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   /** 每个用户进行中的授权；同一用户重复 /login 时去重提示，避免叠开轮询 */
@@ -340,6 +358,16 @@ export class UserAuthService {
     await Promise.all(openIds.map((openId) => this.getUserAccessToken(openId).catch(() => undefined)));
   }
 
+  /** 已登录用户 openId 列表（凭证库 lark 命名空间的用户键）；冷启动管理员识别用。 */
+  async listLoginUsers(): Promise<string[]> {
+    return this.store.listUsers();
+  }
+
+  /** 用 access token 反查登录者身份（openId/姓名/英文名/邮箱）；失败返回 undefined。 */
+  async describeIdentity(accessToken: string): Promise<LoginIdentity | undefined> {
+    return this.getIdentity(accessToken);
+  }
+
   /** 只读查看某用户的落库记录（scope/过期时间诊断用）；不含明文 token 场景请勿打日志。 */
   async getStoredUserToken(openId: string): Promise<StoredUserToken | undefined> {
     return this.store.get(openId);
@@ -453,6 +481,15 @@ export class UserAuthService {
         await this.store.put(owner, token);
         this.memToken.set(owner, { accessToken: token.accessToken, expiresAt: token.expiresAt });
         logger.info(`[UserAuth] 用户 ${owner} 授权成功（scope: ${token.scope || "默认"}）`);
+        // 登录绑定回调（冷启动管理员识别用）：携带反查到的身份，失败只记日志
+        if (this.options.onLoginBound) {
+          void Promise.resolve(this.options.onLoginBound({
+            openId: owner,
+            name: identity?.name,
+            en_name: identity?.en_name,
+            email: identity?.email,
+          })).catch((error) => logger.warn("[UserAuth] onLoginBound 回调失败:", error));
+        }
         const bound = identity?.name ? `，已绑定账号：${identity.name}` : "";
         await this.finishCard(messageId, markdownCard(`✅ 授权成功${bound}（scope：${token.scope || "默认"}）。`));
         return;

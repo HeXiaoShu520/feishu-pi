@@ -9,7 +9,7 @@ import { loadConfig } from "./config.ts";
 import { ConversationStore } from "./runtime/conversation-store.ts";
 import { MessageStore } from "./feishu/message-store.ts";
 import { DataCleaner } from "./runtime/data-cleaner.ts";
-import { resolveAdminOpenId } from "./feishu/admin-resolver.ts";
+import { resolveAdminOpenId, persistUserProfile, resolveAdminFromLogins } from "./feishu/admin-resolver.ts";
 import { SkillUsageStore } from "./stats/skill-usage-store.ts";
 import { ScheduleService } from "./schedule/service.ts";
 import { PermissionPolicy } from "./permission/policy.ts";
@@ -119,22 +119,70 @@ export async function main(): Promise<void> {
     logger.warn("[Main] 获取 Bot Open ID 失败:", err);
   }
 
-  // 解析管理员 Open ID（名字/邮箱/缓存；失败则管理员通道暂不可用，不影响其他功能）
-  const adminOpenId = await resolveAdminOpenId(client, config.feishuAdmin, config.feishuAppId);
+  // 解析管理员 Open ID（名字/邮箱/缓存；失败先不放弃——下方还会从已 /login 身份识别）
+  let adminOpenId = await resolveAdminOpenId(client, config.feishuAdmin, config.feishuAppId);
   if (adminOpenId) {
     logger.info(`[Main] 管理员 Open ID: ${adminOpenId}`);
-  } else {
-    logger.info("[Main] 管理员未解析：用户资料查询将仅用群名单兜底");
+  }
+  // 用户缓存文件（data/users/{appId}_users.json）：资料查询与冷启动管理员识别共用
+  const usersFile = join(config.dataDir, "users", `${config.feishuAppId}_users.json`);
+
+  // ---------- 多 CLI 凭证库（按 CLI 分文件，data/credentials/ 子目录） ----------
+
+  // userAuth 先声明（transport 的资料查询/搜索通道闭包引用它的 token；实际实例在其后创建）
+  let userAuth: UserAuthService | undefined;
+
+  const credentialsDir = join(config.dataDir, "credentials");
+  const vaultKeyFile = join(config.dataDir, ".vault-key");
+  // 旧单库（data/credentials.vault.json）拆分迁移：按 provider 拆到子目录，成功后删旧文件
+  await CredentialVault.splitLegacyVault(join(config.dataDir, "credentials.vault.json"), credentialsDir, {
+    keyFile: vaultKeyFile,
+  });
+
+  // Meegle（飞书项目）凭证服务：/login meegle <token> 提交，静态凭证（无刷新链路）
+  const meegleAuth = new MeegleCredentialService(
+    join(credentialsDir, "meegle.vault.json"),
+    vaultKeyFile,
+  );
+
+  // 用户飞书身份授权（Device Flow，RFC 8628）：/login 指令 + 按 openId 加密存取 user_access_token。
+  // 先于 transport 创建（冷启动管理员识别要在 transport 装配前完成）；
+  // updateCard/sendCard 闭包后置引用 transport，仅在实际收发卡片时才会执行。
+  userAuth = new UserAuthService({
+    appId: config.feishuAppId,
+    appSecret: config.feishuAppSecret,
+    scopes: config.userAuthScopes,
+    vaultFile: join(credentialsDir, "lark.vault.json"),
+    vaultKeyFile: vaultKeyFile,
+    legacyTokenFile: join(config.dataDir, "user-tokens.json"),
+    updateCard: (messageId, card) => transport.updateCardById(messageId, card),
+    // 增量授权：能力需要新 scope 时自动向该会话发授权卡
+    sendCard: (chatId, card) => transport.sendCardToChat(chatId, card),
+    // /login 绑定完成时：管理员尚未识别且登录者与管理员配置匹配 → 资料入缓存（重启即生效）
+    onLoginBound: (info) => captureAdminFromLogin(info),
+  });
+
+  // 冷启动兜底：姓名/邮箱在通讯录侧解析不出（缓存为空、权限未批）时，从已 /login
+  // 用户的登录身份识别管理员——即"管理员先 /login lark、再重启一遍服务"的运维流程。
+  if (!adminOpenId && config.feishuAdmin) {
+    adminOpenId = await resolveAdminFromLogins(userAuth, config.feishuAdmin, usersFile);
+    if (adminOpenId) {
+      logger.info(`[Main] 管理员已从已登录用户中识别: ${adminOpenId}（资料已入缓存，下次启动直接解析）`);
+    } else {
+      logger.warn(
+        `[Main] 暂无法识别管理员（FEISHU_ADMIN=${config.feishuAdmin}）：` +
+          "请管理员在飞书**私聊**机器人发送 /login lark 完成登录，然后重启一次服务即可自动识别；识别前管理员专属能力不可用",
+      );
+    }
   }
 
-  // ---------- 消息传输与用户授权 ----------
+  // ---------- 消息传输 ----------
 
   // runtime 先声明（transport 的 onModelSwitch 回调引用它）
   let runtime: FeishuPiRuntime;
-  // userAuth 先声明（transport 的管理员资料查询通道引用它的 token；实际实例在其后创建）
-  let userAuth: UserAuthService | undefined;
 
-  const transport = new LarkTransport({
+  // 显式标注类型：初始化闭包与 userAuth 选项互相引用，切断 TS 的循环类型推断
+  const transport: LarkTransport = new LarkTransport({
     appId: config.feishuAppId,
     appSecret: config.feishuAppSecret,
     botOpenId,
@@ -165,34 +213,23 @@ export async function main(): Promise<void> {
     });
   }
 
-  // ---------- 多 CLI 凭证库（按 CLI 分文件，data/credentials/ 子目录） ----------
-
-  const credentialsDir = join(config.dataDir, "credentials");
-  const vaultKeyFile = join(config.dataDir, ".vault-key");
-  // 旧单库（data/credentials.vault.json）拆分迁移：按 provider 拆到子目录，成功后删旧文件
-  await CredentialVault.splitLegacyVault(join(config.dataDir, "credentials.vault.json"), credentialsDir, {
-    keyFile: vaultKeyFile,
-  });
-
-  // Meegle（飞书项目）凭证服务：/login meegle <token> 提交，静态凭证（无刷新链路）
-  const meegleAuth = new MeegleCredentialService(
-    join(credentialsDir, "meegle.vault.json"),
-    vaultKeyFile,
-  );
-
-  // 用户飞书身份授权（Device Flow，RFC 8628）：/login 指令 + 按 openId 加密存取 user_access_token
-  userAuth = new UserAuthService({
-    appId: config.feishuAppId,
-    appSecret: config.feishuAppSecret,
-    scopes: config.userAuthScopes,
-    adminOpenId: adminOpenId,
-    vaultFile: join(credentialsDir, "lark.vault.json"),
-    vaultKeyFile: vaultKeyFile,
-    legacyTokenFile: join(config.dataDir, "user-tokens.json"),
-    updateCard: (messageId, card) => transport.updateCardById(messageId, card),
-    // 增量授权：能力需要新 scope 时自动向该会话发授权卡
-    sendCard: (chatId, card) => transport.sendCardToChat(chatId, card),
-  });
+  /** /login 绑定完成时的管理员捕获：管理员尚未识别且登录者身份与 FEISHU_ADMIN 匹配
+   *  → 资料写入用户缓存，重启后走缓存通道自动识别（"管理员先 /login、再重启一遍"）。 */
+  const captureAdminFromLogin = (info: { openId: string; name?: string; en_name?: string; email?: string }): void => {
+    const identifier = config.feishuAdmin;
+    if (!identifier || adminOpenId) return;
+    const matched =
+      info.openId === identifier ||
+      info.name === identifier ||
+      info.en_name === identifier ||
+      (Boolean(info.email) && info.email === identifier);
+    if (!matched) return;
+    void persistUserProfile(usersFile, info.openId, { name: info.name, en_name: info.en_name })
+      .then(() => {
+        logger.info(`[Main] 管理员已通过 /login 识别（${info.name ?? info.openId}），资料已入用户缓存——重启服务后管理员权限自动生效，建议现在重启一次`);
+      })
+      .catch((error) => logger.warn("[Main] 管理员资料写入用户缓存失败:", error));
+  };
 
   // 后台保鲜：定时把已登录用户（含管理员）的 access token 刷新一遍——
   // 会话 bash 的凭证注入走同步内存缓存，靠这里保证缓存里的 token 始终有效

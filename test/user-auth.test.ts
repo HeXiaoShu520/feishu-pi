@@ -340,6 +340,54 @@ describe("/login 指令路由（provider 后缀必填）", () => {
     expect(card).toContain("/login meegle");
   });
 
+  it("登录成功触发 onLoginBound 回调（携带反查身份），供冷启动管理员识别落缓存", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "uauth-bound-"));
+    const updates: Array<{ messageId: string; card: object }> = [];
+    const postForm = vi.fn()
+      .mockResolvedValueOnce(BEGIN_OK)
+      .mockResolvedValueOnce(TOKEN_OK);
+    const onLoginBound = vi.fn();
+    const clock = { value: 1_000_000 };
+    const service = new UserAuthService({
+      appId: "cli_test",
+      appSecret: "secret",
+      scopes: ["contact:user.base:readonly"],
+      vaultFile: join(dir, "credentials.vault.json"),
+      vaultKeyFile: join(dir, ".vault-key"),
+      legacyTokenFile: join(dir, "user-tokens.json"),
+      updateCard: async (messageId, card) => {
+        updates.push({ messageId, card });
+      },
+      getIdentity: async () => ({ openId: "ou_test", name: "张三", en_name: "Zhang San", email: "z@x.com" }),
+      onLoginBound,
+      postForm,
+      now: () => clock.value,
+      sleep: async (ms: number) => {
+        clock.value += ms;
+      },
+    });
+
+    const result = await service.startLogin(message());
+    result.afterSend?.("om_card");
+    await vi.waitFor(() => expect(updates).toHaveLength(1));
+    await vi.waitFor(() => expect(onLoginBound).toHaveBeenCalledTimes(1));
+    expect(onLoginBound).toHaveBeenCalledWith({ openId: "ou_test", name: "张三", en_name: "Zhang San", email: "z@x.com" });
+  });
+
+  it("listLoginUsers / describeIdentity 暴露登录态（冷启动管理员识别的数据面）", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "uauth-list-"));
+    const postForm = vi.fn()
+      .mockResolvedValueOnce(BEGIN_OK)
+      .mockResolvedValueOnce(TOKEN_OK);
+    const { service } = makeService({ dir, postForm, updateCard: async () => {} });
+    expect(await service.listLoginUsers()).toEqual([]);
+
+    const login = await service.startLogin(message());
+    login.afterSend?.("om_card");
+    await vi.waitFor(async () => expect(await service.listLoginUsers()).toEqual(["ou_test"]));
+    expect(await service.describeIdentity("any-token")).toEqual({ openId: "ou_test", name: "测试用户" });
+  });
+
   it("/login 状态总览展示已登录用户的 scope 与有效期", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-route-"));
     const updates: Array<{ messageId: string; card: object }> = [];
