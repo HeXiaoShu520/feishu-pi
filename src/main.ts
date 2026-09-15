@@ -16,6 +16,8 @@ import { PermCommand } from "./feishu/commands.ts";
 import { LoginCommand, LogoutCommand, UserAuthService } from "./feishu/user-auth.ts";
 import { createIdentityBashTool } from "./runtime/identity-bash.ts";
 import { runSetupWizard } from "./feishu/setup-wizard.ts";
+import { MeegleCredentialService } from "./feishu/meegle-auth.ts";
+import { CredentialVault } from "./utils/credential-vault.ts";
 import { delimiter, dirname, join } from "node:path";
 import { pathToFileURL } from "node:url";
 import { Client } from "@larksuiteoapi/node-sdk";
@@ -153,13 +155,29 @@ export async function main(): Promise<void> {
     });
   }
 
+  // ---------- 多 CLI 凭证库（按 CLI 分文件，data/credentials/ 子目录） ----------
+
+  const credentialsDir = join(config.dataDir, "credentials");
+  const vaultKeyFile = join(config.dataDir, ".vault-key");
+  // 旧单库（data/credentials.vault.json）拆分迁移：按 provider 拆到子目录，成功后删旧文件
+  await CredentialVault.splitLegacyVault(join(config.dataDir, "credentials.vault.json"), credentialsDir, {
+    keyFile: vaultKeyFile,
+  });
+
+  // Meegle（飞书项目）凭证服务：/login meegle <token> 提交，静态凭证（无刷新链路）
+  const meegleAuth = new MeegleCredentialService(
+    join(credentialsDir, "meegle.vault.json"),
+    vaultKeyFile,
+  );
+
   // 用户飞书身份授权（Device Flow，RFC 8628）：/login 指令 + 按 openId 加密存取 user_access_token
   userAuth = new UserAuthService({
     appId: config.feishuAppId,
     appSecret: config.feishuAppSecret,
     scopes: config.userAuthScopes,
     adminOpenId: adminOpenId,
-    vaultFile: join(config.dataDir, "credentials.vault.json"),
+    vaultFile: join(credentialsDir, "lark.vault.json"),
+    vaultKeyFile: vaultKeyFile,
     legacyTokenFile: join(config.dataDir, "user-tokens.json"),
     updateCard: (messageId, card) => transport.updateCardById(messageId, card),
     // 增量授权：能力需要新 scope 时自动向该会话发授权卡
@@ -332,6 +350,15 @@ ${trimmed}` }] },
         cwd: config.cwd,
         appId: config.feishuAppId,
         getLarkToken: () => userAuth?.peekUserAccessToken(userId),
+        extraInjections: [
+          {
+            // Meegle（飞书项目）：/login meegle 提交的静态 token，命令命中 meegle 时注入
+            commandPattern: /meegle/,
+            envToken: "MEEGLE_USER_ACCESS_TOKEN",
+            staticEnv: { MEEGLE_HOST: process.env.MEEGLE_HOST ?? "project.feishu.cn" },
+            getToken: () => meegleAuth?.peekToken(userId),
+          },
+        ],
       });
     },
   }, [createAskUserTool(askBroker)]);
@@ -353,8 +380,8 @@ ${trimmed}` }] },
       // /perm 查看身份、双组策略与工具档位（仅管理员）；/login /logout 用户飞书身份授权（Device Flow）
       extraCommands: [
         new PermCommand(() => policy.describe()),
-        new LoginCommand(userAuth),
-        new LogoutCommand(userAuth),
+        new LoginCommand(userAuth, meegleAuth),
+        new LogoutCommand(userAuth, meegleAuth),
       ],
       // 回复末尾的模型统计小字开关（工具过程状态不受影响）
       showModelStats: config.showModelStats,

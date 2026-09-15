@@ -20,6 +20,7 @@ function makeService(opts: {
     appSecret: "secret",
     scopes: ["contact:user.base:readonly"],
     vaultFile: join(opts.dir, "credentials.vault.json"),
+    vaultKeyFile: join(opts.dir, ".vault-key"),
     legacyTokenFile: join(opts.dir, "user-tokens.json"),
     updateCard: opts.updateCard,
     sendCard: opts.sendCard,
@@ -266,6 +267,7 @@ describe("getUserAccessToken 刷新", () => {
       appSecret: "secret",
       scopes: ["s1"],
       vaultFile: join(dir, "credentials.vault.json"),
+      vaultKeyFile: join(dir, ".vault-key"),
       legacyTokenFile: join(dir, "user-tokens.json"),
       updateCard: async () => {},
       postForm,
@@ -293,6 +295,7 @@ describe("getUserAccessToken 刷新", () => {
       appSecret: "secret",
       scopes: ["s1"],
       vaultFile: join(dir2, "credentials.vault.json"),
+      vaultKeyFile: join(dir2, ".vault-key"),
       legacyTokenFile: join(dir2, "user-tokens.json"),
       updateCard: async () => {},
       postForm: postFormFail,
@@ -319,7 +322,7 @@ describe("getUserAccessToken 刷新", () => {
     expect(await service.getUserAccessToken("ou_test")).toBe("uat_1");
 
     const receipt = await new LogoutCommand(service).execute(message());
-    expect(JSON.stringify(receipt?.card)).toContain("已退出");
+    expect(JSON.stringify(receipt?.card)).toContain("已清除你的全部登录凭证");
     expect(await service.getUserAccessToken("ou_test")).toBeUndefined();
   });
 });
@@ -385,6 +388,7 @@ describe("/login 去重锁生命周期", () => {
       appSecret: "secret",
       scopes: ["contact:user.base:readonly"],
       vaultFile: join(dir, "credentials.vault.json"),
+      vaultKeyFile: join(dir, ".vault-key"),
       legacyTokenFile: join(dir, "user-tokens.json"),
       updateCard: async () => {},
       postForm,

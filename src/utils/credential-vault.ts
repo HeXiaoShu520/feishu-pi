@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { logger } from "./logger.ts";
 
@@ -67,15 +67,20 @@ export class CredentialVault {
     this.key = this.loadOrCreateKeyFile();
   }
 
-  /** 打开（懒加载在首次访问时进行）；主密钥按"参数 > 环境变量 > 密钥文件"解析。 */
+  /** 同路径共享同一实例：整文件加密重写下，多实例各自持写队列会互相覆盖丢数据 */
+  private static readonly instances = new Map<string, CredentialVault>();
+
   static async open(
     filePath: string,
-    opts: { keyHex?: string; env?: NodeJS.ProcessEnv; keyFileName?: string } = {},
+    opts: { keyHex?: string; env?: NodeJS.ProcessEnv; keyFile?: string } = {},
   ): Promise<CredentialVault> {
+    const cached = CredentialVault.instances.get(filePath);
+    if (cached) return cached;
     const env = opts.env ?? process.env;
-    const keyFilePath = join(dirname(filePath), opts.keyFileName ?? ".vault-key");
+    const keyFilePath = opts.keyFile ?? join(dirname(filePath), ".vault-key");
     const vault = new CredentialVault(filePath, opts.keyHex, env, keyFilePath);
     await vault.ensureLoaded();
+    CredentialVault.instances.set(filePath, vault);
     logger.info(`[Vault] 凭证库就绪: ${filePath}（主密钥来源 ${vault.keySource}，共 ${vault.records.size} 条）`);
     return vault;
   }
@@ -108,6 +113,43 @@ export class CredentialVault {
     return Array.from(this.records.keys())
       .filter((k) => k.startsWith(prefix))
       .map((k) => k.slice(prefix.length));
+  }
+
+  /**
+   * 旧单库拆分迁移：把历史单文件凭证库（含 provider:userKey 复合键）按 provider
+   * 拆写到 dir/<provider>.vault.json（各自独立加密），成功后删除旧单库文件。
+   * 旧文件不存在返回 0；各 provider 文件已存在时逐条合并覆盖（幂等）。
+   */
+  static async splitLegacyVault(
+    legacyFile: string,
+    dir: string,
+    opts: { keyFile?: string; env?: NodeJS.ProcessEnv } = {},
+  ): Promise<number> {
+    if (!existsSync(legacyFile)) return 0;
+    const legacy = await CredentialVault.open(legacyFile, opts);
+    const byProvider = new Map<string, Array<[string, string, unknown]>>();
+    for (const [compositeKey, secret] of legacy.records) {
+      const sep = compositeKey.indexOf(":");
+      if (sep <= 0) continue;
+      const provider = compositeKey.slice(0, sep);
+      const userKey = compositeKey.slice(sep + 1);
+      const list = byProvider.get(provider) ?? [];
+      list.push([userKey, compositeKey, secret]);
+      byProvider.set(provider, list);
+    }
+    let migrated = 0;
+    for (const [provider, list] of byProvider) {
+      const target = await CredentialVault.open(join(dir, `${provider}.vault.json`), opts);
+      for (const [userKey, , secret] of list) {
+        await target.put(provider, userKey, secret);
+        migrated++;
+      }
+    }
+    if (migrated > 0) {
+      await rm(legacyFile);
+      logger.info(`[Vault] 旧单库已按 provider 拆分迁移至 ${dir}/（共 ${migrated} 条），旧文件已删除`);
+    }
+    return migrated;
   }
 
   private compositeKey(provider: string, userKey: string): string {

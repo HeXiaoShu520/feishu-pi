@@ -24,6 +24,8 @@ export interface ProviderInjection {
   envToken: string;
   /** 注入应用 ID 的环境变量名（可选，如 LARKSUITE_CLI_APP_ID） */
   envAppId?: string;
+  /** 该 CLI 需要的固定环境变量（如 meegle 的 MEEGLE_HOST），注入时一并写入 */
+  staticEnv?: Record<string, string>;
   /** 该 provider 的同步取 token 口（读内存缓存，不触发刷新） */
   getToken?: () => string | undefined;
 }
@@ -63,6 +65,9 @@ export function applyCredentialInjections(
     if (rule.excludePattern?.test(command)) continue;
     env[rule.envToken] = token;
     if (rule.envAppId && rule.appId) env[rule.envAppId] = rule.appId;
+    for (const [key, value] of Object.entries(rule.staticEnv ?? {})) {
+      env[key] = value;
+    }
   }
 }
 

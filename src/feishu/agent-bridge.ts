@@ -253,7 +253,11 @@ export class FeishuAgentBridge {
     }
 
     try {
-      logger.info(`[${message.context.userName}] 执行指令: ${message.text}`);
+      // 指令日志脱敏：/login <provider> <token> 这类携带凭证的指令不落原文
+      const logText = /^\/login\s+\S+(\s+\S+)/.test(message.text.trim())
+        ? message.text.trim().replace(/^(\/login\s+\S+\s+)\S+([\s\S]*)$/, "$1***$2")
+        : message.text;
+      logger.info(`[${message.context.userName}] 执行指令: ${logText}`);
 
       // 特殊处理 /new 指令：清空会话；话题内共享会话，禁止清空。
       // 动作完成后直接 return——registry 里的 NewCommand 会重复执行 clear，
