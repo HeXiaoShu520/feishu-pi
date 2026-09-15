@@ -198,8 +198,6 @@ export async function main(): Promise<void> {
     sessionDataDir: config.sessionDir,
     adminOpenId,
     topicRootsFile: join(config.sessionDir, "topic-roots.json"),
-    // 管理员 /login 后其 user token 是用户资料查询的通道之一（补英文名，覆盖可用范围外用户）
-    adminTokenProvider: async () => (adminOpenId && userAuth ? userAuth.getUserAccessToken(adminOpenId) : undefined),
     // lark-cli 用户态搜索通道（contact +search-user）：部门信息的主要来源，不依赖需审核权限；
     // 优先用查询目标本人的 token（查自己必然可见），其次管理员的
     searchUserProfile: createCliSearchUser({
@@ -211,14 +209,6 @@ export async function main(): Promise<void> {
     // /model 切换时通知运行时热切换（持久化到 .env 仍在 transport 内完成）
     onModelSwitch: (name) => runtime?.setModelName(name),
   });
-
-  // 上电自举：机器人身份预取管理员资料（中英文名 + 部门），不依赖任何用户 /login——
-  // 预取走 contact 的 tenant 只读通道，失败不落冷却档案（后台异步，不阻塞启动）
-  if (adminOpenId) {
-    void transport.prefetchUserProfile(adminOpenId).catch((error) => {
-      logger.warn("[Main] 管理员资料预取失败:", error);
-    });
-  }
 
   /** /login 绑定完成时的管理员捕获：管理员尚未识别且登录者身份与 FEISHU_ADMIN 匹配
    *  → 资料写入用户缓存，重启后走缓存通道自动识别（"管理员先 /login、再重启一遍"）。 */

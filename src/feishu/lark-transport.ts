@@ -52,11 +52,6 @@ export interface LarkTransportConfig {
   adminOpenId?: string;
   /** 话题根持久化文件路径（话题群会话收敛用） */
   topicRootsFile?: string;
-  /**
-   * 管理员用户 token 提供器（来自 /login，FEISHU_ADMIN 的 user_access_token）。
-   * 提供后启用用户资料的"管理员身份查询"通道：补群成员英文名/部门，并兜底查应用可用范围外的用户。
-   */
-  adminTokenProvider?: () => Promise<string | undefined>;
   /** lark-cli 用户态搜索通道（contact +search-user，见 lark-cli-search.ts）：部门信息的来源 */
   searchUserProfile?: (openId: string) => Promise<{ name?: string; en_name?: string; department_name?: string[] } | undefined>;
   /** 模型切换回调（/model 指令确认后触发，用于运行时热切换） */
@@ -112,21 +107,12 @@ export class LarkTransport implements FeishuTransport {
     if (config.topicRootsFile) {
       this.topicRoots = new TopicRootStore(config.topicRootsFile);
     }
-    this.larkCli = new LarkCli(config.client, config.appId, config.userProfileDir, {
-      adminTokenProvider: config.adminTokenProvider,
+    this.larkCli = new LarkCli(config.appId, config.userProfileDir, {
       searchUser: config.searchUserProfile,
     });
     this.imageProcessor = new LarkImageProcessor(config.client, {
       cacheDir: config.imageCacheDir,
     });
-  }
-
-  /**
-   * 上电预取用户资料（管理员自举用）：机器人身份直查 contact，不依赖任何用户 /login。
-   * 预取模式失败不写冷却档案，不影响真实首条消息时的完整查询。
-   */
-  async prefetchUserProfile(openId: string): Promise<void> {
-    await this.larkCli.getUserProfile(openId, undefined, { prefetch: true });
   }
 
   /** 建立飞书长连接并开始接收事件。 */
@@ -209,14 +195,14 @@ export class LarkTransport implements FeishuTransport {
     try {
       // 会话模式先行：决定用户资料的查询通道（私聊 contact API / 群聊群成员名单）与 conversationId 归属
       const chatMode = await this.getChatModeCached(chatId);
-      const profile = await this.larkCli.getUserProfile(message.senderId, chatId);
+      const profile = await this.larkCli.getUserProfile(message.senderId);
       const displayName = profile.name || profile.en_name || message.senderId;
 
       // @ 提及入库（后台，不阻塞消息处理）：被 @ 的人也走资料查询链路写入用户名单
       // （data/users/{appId}_users.json，人员提示/权限分组/管理员识别共用）。
       // 查询链路自带 3 天缓存与并发合并：已入库的人零 API 开销。
       for (const mentioned of mentionedUserIds(message.mentions ?? [], message.senderId)) {
-        void this.larkCli.getUserProfile(mentioned, chatId).catch(() => undefined);
+        void this.larkCli.getUserProfile(mentioned).catch(() => undefined);
       }
 
       // 构造 conversationId：
