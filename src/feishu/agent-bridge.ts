@@ -209,6 +209,10 @@ export class FeishuAgentBridge {
             contextPercent: usage?.percent,
           })
         : undefined;
+      if (this.showModelStats && !statsLine) {
+        // 观测点：getStats 未返回数据时小字缺失（偶发），出现频率高需要查 pi 的统计链路
+        logger.info(`[Bridge] 本轮无统计小字（会话统计不可用）: ${conversationId}`);
+      }
 
       // 终态：详细=全量；精简=最后一个工具段之后的结论段
       const finalText = replyParts.composeFinal();

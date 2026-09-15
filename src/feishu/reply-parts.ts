@@ -36,6 +36,12 @@ interface Part {
 export class ReplyParts {
   private readonly parts: Part[] = [];
   private readonly toolPartIndices: number[] = [];
+  /**
+   * 最近一次 assistant_text 的全量文本。精简模式的滚动回收会把旧正文段置空，
+   * 当一轮响应以工具段结尾时，"最后工具段之后的正文"与"全部非工具段"都会是空串——
+   * 用它兜底，保证模型已输出的正文不因回收而丢失。
+   */
+  private latestText = "";
   private readonly sink: ReplyPartsSink;
   private readonly isCompact: () => boolean;
 
@@ -53,6 +59,7 @@ export class ReplyParts {
    * 新正文段出现时，精简模式回收旧内容（全量置空后重绘），详细模式直接追加。
    */
   async appendText(text: string): Promise<void> {
+    if (text.trim()) this.latestText = text;
     const last = this.parts[this.parts.length - 1];
     if (last?.kind === "text" && text.startsWith(last.text)) {
       const delta = text.slice(last.text.length);
@@ -82,8 +89,10 @@ export class ReplyParts {
   }
 
   /**
-   * 终态组装：详细 = 全量；精简 = 最后一个工具段之后的正文段
-   * （尾段为空时退回全部非工具段，不丢已见内容）。
+   * 终态组装：详细 = 全量；精简 = 最后一个工具段之后的正文段。
+   * 兜底顺序：tail → 全部非工具段 → latestText。
+   * 精简回收会把旧正文段置空，"结尾是工具段"时前两者都可能为空串——
+   * 此时用最近一次正文全量兜底，模型已说的话不丢。
    */
   composeFinal(): string {
     if (!this.isCompact()) return this.parts.map((p) => p.text).join("");
@@ -94,7 +103,9 @@ export class ReplyParts {
         .join("");
       if (tail.trim().length > 0) return tail;
     }
-    return this.parts.filter((p) => p.kind !== "tool").map((p) => p.text).join("");
+    const joined = this.parts.filter((p) => p.kind !== "tool").map((p) => p.text).join("");
+    if (joined.trim().length > 0) return joined;
+    return this.latestText;
   }
 }
 

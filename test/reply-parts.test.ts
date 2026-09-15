@@ -71,6 +71,20 @@ describe("ReplyParts 精简模式（滚动回收）", () => {
     await parts2.appendTool("> ⚙ 工具");
     expect(parts2.composeFinal()).toBe("开头");
   });
+
+  it("composeFinal：多轮正文+工具后以工具段结尾 → 用最近一次正文兜底（回收置空不丢内容）", async () => {
+    const { sink } = makeSink();
+    const parts = new ReplyParts(sink, () => true);
+
+    // 真实时序：每轮"先说一段话 → 调一个工具"，最后以工具段结束。
+    // 精简回收会把所有旧正文段置空，tail 与非工具段拼接都为空串——
+    // 此时必须用最近一次正文全量兜底（修复前返回空串，用户收到空白卡）。
+    await parts.appendText("我先看看现在的状态。");
+    await parts.appendTool("> ⚙ 正在调用 **bash**：`ls`");
+    await parts.appendText("查到了，我来整理一下。");
+    await parts.appendTool("> ⚙ 正在调用 **bash**：`cat result.md`");
+    expect(parts.composeFinal()).toBe("查到了，我来整理一下。");
+  });
 });
 
 describe("ReplyParts 详细模式（全量保留）", () => {
