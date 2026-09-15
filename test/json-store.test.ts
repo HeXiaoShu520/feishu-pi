@@ -19,7 +19,9 @@ class TestStore extends JsonMapStore<{ v: number }> {
 }
 
 describe("JsonMapStore.persist（写队列失败恢复）", () => {
-  it("单次持久化失败只抛给当次调用方，队列恢复后后续写入正常落盘", async () => {
+  // 制造 rename 失败依赖 Windows 语义：句柄占用（默认不含 DELETE 共享）会阻止目标文件替换；
+  // POSIX（Linux/macOS）允许 rename 到被打开句柄的文件，该失败形态不可复现，用例仅在 win32 运行
+  it.runIf(process.platform === "win32")("单次持久化失败只抛给当次调用方，队列恢复后后续写入正常落盘", async () => {
     const dir = await mkdtemp(join(tmpdir(), "jsonstore-"));
     const file = join(dir, "store.json");
     writeFileSync(file, "{}\n", "utf8");
