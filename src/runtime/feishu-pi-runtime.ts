@@ -136,6 +136,14 @@ const DEFAULT_PERSONA = [
   "不确定的信息如实说明，不编造；操作受权限策略与授权卡约束，按流程执行即可，无需向用户复述这些约束。",
 ].join(NL);
 
+/**
+ * 长期记忆规则（注入系统提示）：memory 工具读写 data/memory/MEMORY.md（团队共享）。
+ * 会话历史 7 天即清，跨会话的事实/偏好/约定靠它留存。
+ */
+const MEMORY_RULE = [
+  "【长期记忆】工具 memory 是团队的持久记忆（所有人可见）。当用户交代需要长期记住的事实、偏好或约定，或对话中沉淀出值得保留的结论时，调用 memory(action=\"append\", text=一句话要点) 记下；当任务可能与既往背景相关时，先 memory(action=\"read\") 回忆，避免重复询问。追加前先 read 防止重复；记忆对团队全员可见，禁止写入密码等敏感信息。",
+].join(NL);
+
 export class FeishuPiRuntime {
   private readonly config: FeishuPiConfig;
   private readonly tools: FeishuPiTool[];
@@ -165,7 +173,7 @@ export class FeishuPiRuntime {
     const loader = new DefaultResourceLoader({
       cwd: this.config.cwd,
       agentDir: `${this.config.cwd}/.agent`,
-      systemPrompt: [this.config.systemPrompt ?? DEFAULT_PERSONA, SECRET_RULE.trim(), FINAL_REPLY_RULE.trim()].filter(Boolean).join(NL),
+      systemPrompt: [this.config.systemPrompt ?? DEFAULT_PERSONA, MEMORY_RULE.trim(), SECRET_RULE.trim(), FINAL_REPLY_RULE.trim()].filter(Boolean).join(NL),
     });
     await loader.reload();
     return loader;

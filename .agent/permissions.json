@@ -26,6 +26,8 @@
       "Read(README.md)",
       "Read(.env.example)",
       "Read(docs/**)",
+      "Read(data/memory/**)",
+      "Tools(memory)",
       "Bash(ls:*)",
       "Bash(git status:*)",
       "Bash(git diff:*)",
