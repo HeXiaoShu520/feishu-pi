@@ -21,6 +21,7 @@
     "common": [
       "Read(.agent/skills/**)",
       "Read(README.md)",
+      "Read(.env.example)",
       "Read(docs/**)",
       "Bash(ls:*)",
       "Bash(git status:*)",

@@ -178,6 +178,9 @@ describe("PermissionPolicy deny + allow 两输入", () => {
     expect(admin.deniedPath("certs/server.key")).toBe("*.key");
     // 自定义追加模式生效
     expect(admin.deniedPath("data/vault/k.txt")).toBe("**/vault/**");
+    // 例外：.env.example 是无密钥模板，不拦
+    expect(admin.deniedPath(".env.example")).toBeUndefined();
+    expect(admin.deniedPath("config/prod.env.example")).toBeUndefined();
     // 正常路径不误伤
     expect(admin.deniedPath("docs/guide.md")).toBeUndefined();
   });
