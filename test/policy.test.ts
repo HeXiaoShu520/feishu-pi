@@ -165,7 +165,7 @@ describe("PermissionPolicy deny + allow 两输入", () => {
 
   it("deny 第 0 层：显式模式对所有人（含 admin）生效，先于 allow 判定", async () => {
     const { file } = await writePolicy({
-      deny: ["**/.env", ".env.*", "*.key", "**/vault/**"],
+      deny: ["**/.env", ".env.local", ".env.production", "*.key", "**/vault/**"],
       allow: { admin: ["Bash(*)", "Read(**)", "Write(**)", "Tools(*)"] },
     });
     const policy = new PermissionPolicy(file, { groupMembership: { admin: ["张三"] } });
@@ -174,13 +174,12 @@ describe("PermissionPolicy deny + allow 两输入", () => {
     // allow 规则全放行，但 deny 清单命中即拦
     expect(admin.readAllowed(".env")).toBe(true);
     expect(admin.deniedPath(".env")).toBe("**/.env");
-    expect(admin.deniedPath("config/.env.local")).toBe(".env.*");
+    expect(admin.deniedPath("config/.env.local")).toBe(".env.local");
     expect(admin.deniedPath("certs/server.key")).toBe("*.key");
     // 自定义追加模式生效
     expect(admin.deniedPath("data/vault/k.txt")).toBe("**/vault/**");
-    // 例外：.env.example 是无密钥模板，不拦
+    // 模板文件不在 deny 清单：天然可读（无需例外机制）
     expect(admin.deniedPath(".env.example")).toBeUndefined();
-    expect(admin.deniedPath("config/prod.env.example")).toBeUndefined();
     // 正常路径不误伤
     expect(admin.deniedPath("docs/guide.md")).toBeUndefined();
   });

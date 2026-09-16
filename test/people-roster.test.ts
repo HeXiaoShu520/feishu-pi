@@ -87,19 +87,18 @@ describe("PeopleRoster（预制人员名单）", () => {
 });
 
 describe("mentionedUserIds（@ 提及入库的提取）", () => {
-  it("剔除无 openId/机器人（isBot 或 botOpenId 比对）/发送者本人；按出现顺序去重", async () => {
+  it("剔除无 openId/机器人（isBot 标记）/发送者本人；按出现顺序去重", async () => {
     const { mentionedUserIds } = await import("../src/feishu/people-roster.ts");
     const mentions = [
-      { openId: "ou_bot", isBot: true },      // 机器人（SDK 标记）→ 剔除
-      { openId: "ou_bot2" },                  // 机器人（仅 id 比对命中）→ 剔除
       { openId: undefined, name: "所有人" },   // 无 openId → 剔除
+      { openId: "ou_bot", isBot: true },      // 机器人 → 剔除
       { openId: "ou_me" },                    // 发送者本人 → 剔除
       { openId: "ou_a", name: "张三" },
       { openId: "ou_a", name: "张三" },        // 重复 → 去重
       { openId: "ou_b", name: "李四" },
     ];
-    expect(mentionedUserIds(mentions, { senderOpenId: "ou_me", botOpenId: "ou_bot2" })).toEqual(["ou_a", "ou_b"]);
-    expect(mentionedUserIds([], { senderOpenId: "ou_me" })).toEqual([]);
+    expect(mentionedUserIds(mentions, "ou_me")).toEqual(["ou_a", "ou_b"]);
+    expect(mentionedUserIds([], "ou_me")).toEqual([]);
   });
 });
 

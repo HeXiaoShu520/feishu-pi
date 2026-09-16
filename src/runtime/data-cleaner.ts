@@ -18,7 +18,6 @@ export interface CleanupOptions {
   /** 保留天数，默认 7 天 */
   retentionDays?: number;
   /** 是否执行清理（false 只返回统计） */
-  dryRun?: boolean;
 }
 
 export interface CleanupStats {
@@ -37,13 +36,11 @@ export class DataCleaner {
   /** 保留天数（默认 7 天） */
   private readonly retentionDays: number;
   private readonly retentionMs: number;
-  private readonly dryRun: boolean;
 
   constructor(options: CleanupOptions) {
     this.sessionDir = options.sessionDir;
     this.retentionDays = options.retentionDays ?? 7;
     this.retentionMs = this.retentionDays * 24 * 60 * 60 * 1000;
-    this.dryRun = options.dryRun ?? false;
   }
 
   async cleanup(): Promise<CleanupStats> {
@@ -76,12 +73,12 @@ export class DataCleaner {
     return stats;
   }
 
-  /** 文件过期则删除（dryRun 只统计不删）。过期计数在删除成功后写入，失败不虚报。 */
+  /** 文件过期则删除。过期计数在删除成功后写入，失败不虚报。 */
   private async unlinkIfExpired(filePath: string, cutoffTime: number, onDeleted: () => void): Promise<void> {
     try {
       const fileStat = await stat(filePath);
       if (fileStat.mtimeMs >= cutoffTime) return;
-      if (!this.dryRun) await unlink(filePath);
+      await unlink(filePath);
       onDeleted();
     } catch (err) {
       logger.warn(`[DataCleaner] 无法处理文件 ${filePath}:`, err);
@@ -142,11 +139,9 @@ export class DataCleaner {
         await this.unlinkIfExpired(join(filesDir, file), cutoffTime, () => stats.attachmentsDeleted++);
       }
 
-      if (!this.dryRun) {
-        // 空目录收尾：rmdir 只能删空目录，非空（还有 jsonl 或未过期附件）时静默失败
-        await rmdir(filesDir).catch(() => undefined);
-        await rmdir(convDir).catch(() => undefined);
-      }
+      // 空目录收尾：rmdir 只能删空目录，非空（还有 jsonl 或未过期附件）时静默失败
+      await rmdir(filesDir).catch(() => undefined);
+      await rmdir(convDir).catch(() => undefined);
     }
   }
 
@@ -164,9 +159,7 @@ export class DataCleaner {
         try {
           const fileStat = await stat(filePath);
           if (fileStat.mtimeMs < cutoffTime) {
-            if (!this.dryRun) {
-              await unlink(filePath);
-            }
+            await unlink(filePath);
             stats.imagesDeleted++;
           }
         } catch (err) {
@@ -182,7 +175,6 @@ export class DataCleaner {
   }
 
   /**
-   * 读取 messages.json，按谓词过滤条目并写回（dryRun 时只统计不写）。
    * cleanupMessages 与 cleanupStuckMessages 共用此框架，仅过滤谓词不同。
    * 返回被清理的条数。
    */
@@ -206,7 +198,7 @@ export class DataCleaner {
         }
       }
 
-      if (cleaned > 0 && !this.dryRun) {
+      if (cleaned > 0) {
         await writeFile(messagesFile, JSON.stringify(newMessages, null, 2), "utf-8");
       }
       return cleaned;

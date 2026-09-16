@@ -79,7 +79,6 @@ export async function main(): Promise<void> {
   const cleaner = new DataCleaner({
     sessionDir: config.sessionDir,
     retentionDays: 7,
-    dryRun: false,
   });
 
   logger.info("[DataCleaner] 清理卡住的消息...");

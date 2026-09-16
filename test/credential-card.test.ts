@@ -66,14 +66,13 @@ describe("extractCredentialFields（表单回调字段提取）", () => {
 });
 
 describe("StaticCredentialService（meegle/bbt 静态凭证存取）", () => {
-  it("submitFields/peekFields 往返；hasToken/logout", async () => {
+  it("submitFields/peekFields 往返；logout", async () => {
     const dir = await mkdtemp(join(tmpdir(), "staticcred-"));
     const svc = new StaticCredentialService(join(dir, "bbt.vault.json"), join(dir, ".vault-key"), "bbt");
     expect(svc.peekFields("ou_x")).toBeUndefined();
 
     await svc.submitFields("ou_x", { username: "alice", password: "secret" });
     expect(svc.peekFields("ou_x")).toEqual({ username: "alice", password: "secret" });
-    expect(await svc.hasToken("ou_x")).toBe(true);
     expect(await svc.logout("ou_x")).toBe(true);
     expect(svc.peekFields("ou_x")).toBeUndefined();
     expect(await svc.logout("ou_x")).toBe(false);

@@ -63,13 +63,6 @@ export interface GroupPolicy {
 /** 不在任何组时的保守缺省：仅技能目录可读（零配置行为） */
 const UNGROUPED_READ = [".agent/skills/**"];
 
-/**
- * deny 例外（白名单）：命中的路径即便匹配 deny 模式也放行。
- * .env.example / *.env.example 是无密钥的配置模板，需要可读；
- * 其余 .env 变体仍然拦截。
- */
-const DENY_EXCEPTIONS: readonly string[] = ["**/.env.example", "**/*.env.example"];
-
 /** bash 命令里的 shell 链接符：命中即不参与前缀/精确匹配（防 `npm run test; rm -rf /` 逃逸）。
  *  换行符必须包含：多行命令的第二行不被前缀规则覆盖（`git status\nrm -rf /` 会整段放行）。 */
 const SHELL_META = /[;&|`]|\$\(|[\r\n]/;
@@ -141,8 +134,8 @@ export class PermissionPolicy {
 
   /** 单组字段：admin 组叠加全量缺省，其余组叠加保守缺省 */
   private fieldsFor(name: string): Required<Omit<GroupFields, "tools">> & { tools: string[] } {
-    if (name === "admin") return { ...adminDefaults(), ...stripUndefined(this.groups.admin ?? {}) };
-    return { ...ungroupedDefaults(), ...stripUndefined(this.groups[name] ?? {}) };
+    if (name === "admin") return { ...adminDefaults(), ...(this.groups.admin ?? {}) };
+    return { ...ungroupedDefaults(), ...(this.groups[name] ?? {}) };
   }
 
   /** 逐字段并集；read 空 → 技能目录（保守缺省），bash/write/tools 空保持空（保守） */
@@ -197,13 +190,7 @@ export class PermissionPolicy {
       readAllowed: (path) => matchGlobs(merged.read, path, cwd),
       writeAllowed: (path) => matchGlobs(merged.write, path, cwd),
       toolsAllowed: (name) => toolsAll || merged.tools.includes(name),
-      deniedPath: (pathRef) => {
-        const hit = denyGlobs.find((pattern) => matchGlobs([pattern], pathRef, cwd));
-        if (hit === undefined) return undefined;
-        // 例外优先：.env.example 这类无密钥模板不拦
-        if (matchGlobs([...DENY_EXCEPTIONS], pathRef, cwd)) return undefined;
-        return hit;
-      },
+      deniedPath: (pathRef) => denyGlobs.find((pattern) => matchGlobs([pattern], pathRef, cwd)),
       describe: () => ({ ...merged }),
     };
   }
@@ -322,8 +309,4 @@ function sanitizeGroup(fields: unknown): GroupFields {
   const out: GroupFields = {};
   if (Array.isArray(fields)) parseRuleEntries(fields, out);
   return out;
-}
-
-function stripUndefined<T extends object>(obj: T): T {
-  return Object.fromEntries(Object.entries(obj).filter(([, v]) => v !== undefined)) as T;
 }

@@ -34,8 +34,6 @@ export interface ApprovalRequest {
   requesterOpenId?: string;
 }
 
-export type ApprovalDecision = "allow_once" | "deny";
-
 interface PendingApproval {
   token: string;
   chatId: string;

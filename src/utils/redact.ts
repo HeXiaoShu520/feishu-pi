@@ -47,8 +47,3 @@ export function redactSecrets(text: string): string {
   }
   return result;
 }
-
-/** 是否包含疑似凭证（供调用方决定是否需要提示，可选辅助） */
-export function containsSecretLike(text: string): boolean {
-  return redactSecrets(text) !== text;
-}

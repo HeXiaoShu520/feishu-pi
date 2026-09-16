@@ -98,10 +98,6 @@ export class StaticCredentialService {
     return existed;
   }
 
-  /** 是否已有凭证（不返回内容）。 */
-  async hasToken(openId: string): Promise<boolean> {
-    return Boolean(await (await this.vault()).get(this.provider, openId));
-  }
 
   /** 导出本 provider 全部已知密钥值（历史会话文件清洗用；只进清洗器，不写日志）。 */
   async exportSecretValues(): Promise<string[]> {
