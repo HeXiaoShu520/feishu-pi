@@ -138,4 +138,29 @@ export class LarkCli {
     await mkdir(dirname(this.cacheFilePath), { recursive: true });
     await writeFile(this.cacheFilePath, `${JSON.stringify(this.cache, null, 2)}\n`, "utf8");
   }
+
+  /**
+   * 团队名单入库（启动第 3 步，仅 openId + 姓名，部门留空——部门在该成员实际
+   * 互动/被检索时经 search-user 补全）。已有资料的字段一律保留，只补缺失的姓名。
+   * 返回新增入库人数。
+   */
+  async upsertRosterNames(entries: Array<{ openId: string; name?: string }>): Promise<number> {
+    await this.loadCache();
+    let added = 0;
+    for (const entry of entries) {
+      if (!entry.openId || !entry.name) continue;
+      const prev = this.cache[entry.openId];
+      if (prev?.name) continue; // 已有姓名：保留原资料
+      this.cache[entry.openId] = {
+        name: entry.name,
+        en_name: prev?.en_name ?? "",
+        department_name: prev?.department_name ?? [],
+        updatedAt: new Date().toISOString(),
+      };
+      added++;
+    }
+    if (added > 0) await this.saveCache();
+    if (added > 0) logger.info(`[LarkCli] 团队名单入库 ${added} 人（仅姓名，部门待补全）`);
+    return added;
+  }
 }

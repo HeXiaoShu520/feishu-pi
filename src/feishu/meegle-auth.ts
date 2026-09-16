@@ -11,6 +11,8 @@
  */
 import { CredentialVault } from "../utils/credential-vault.ts";
 import { logger } from "../utils/logger.ts";
+import type { FeishuInboundMessage } from "./types.ts";
+import { meegleDeviceBegin, meegleDevicePollOnce } from "./meegle-device-flow.ts";
 
 /** Meegle CLI 的默认 host（project.feishu.cn 为飞书项目，meegle.com 为国际版） */
 export const MEEGLE_DEFAULT_HOST = "project.feishu.cn";
@@ -115,5 +117,86 @@ export class StaticCredentialService {
       }
     }
     return values;
+  }
+}
+
+/**
+ * Meegle Device Flow 登录（/login meegle）：发起两阶段授权 → 发授权卡（链接 + user_code）→
+ * 后台轮询 → 成功后把 access_token 存入凭证库并原地更新卡片。
+ * 链接指向飞书项目授权页，谁扫码 token 就归谁（p2p 内发起）。
+ */
+export class MeegleDeviceLogin {
+  private readonly meegleAuth: StaticCredentialService;
+  private readonly updateCard: (messageId: string, card: object) => Promise<void>;
+  private readonly cwd: string;
+
+  constructor(meegleAuth: StaticCredentialService, updateCard: (messageId: string, card: object) => Promise<void>, cwd: string) {
+    this.meegleAuth = meegleAuth;
+    this.updateCard = updateCard;
+    this.cwd = cwd;
+  }
+
+  /** 发起授权：返回授权卡；afterSend 后开始后台轮询，结果原地更新卡片。 */
+  async startLogin(message: FeishuInboundMessage): Promise<{ card: object; afterSend?: (messageId?: string) => void }> {
+    const openId = message.context.userOpenId;
+    let begin;
+    try {
+      begin = await meegleDeviceBegin({ cwd: this.cwd });
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      return { card: this.simpleCard(`❌ Meegle 授权发起失败：${detail}`) };
+    }
+
+    const lines = [
+      "🔑 **Meegle（飞书项目）授权**",
+      "",
+      `请点击链接完成授权：[点此授权](${begin.link})`,
+      begin.userCode ? `或打开 ${begin.link.split("?")[0]} 输入确认码：\`${begin.userCode}\`` : "",
+      "",
+      `⏱️ 约 ${Math.round(begin.expiresInSec / 60)} 分钟内有效；授权完成后此卡片会自动更新。`,
+    ].filter(Boolean);
+
+    return {
+      card: this.simpleCard(lines.join("\n")),
+      afterSend: (messageId) => {
+        void this.pollLoop(openId, begin, messageId).catch((error) =>
+          logger.error("[MeegleAuth] 授权轮询异常:", error),
+        );
+      },
+    };
+  }
+
+  private async pollLoop(openId: string, begin: Awaited<ReturnType<typeof meegleDeviceBegin>>, messageId: string | undefined): Promise<void> {
+    const deadline = Date.now() + begin.expiresInSec * 1000;
+    let intervalMs = begin.intervalSec * 1000;
+    while (Date.now() < deadline) {
+      await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      const result = await meegleDevicePollOnce({
+        deviceCode: begin.deviceCode,
+        clientId: begin.clientId,
+        cwd: this.cwd,
+      }).catch(() => ({ status: "error" as const, reason: "轮询调用失败" }));
+      if (result.status === "success" && result.accessToken) {
+        if (!messageId) return;
+        await this.meegleAuth.submitToken(openId, result.accessToken);
+        await this.updateCard(messageId, this.simpleCard("✅ Meegle 授权成功，token 已加密保存。之后 meegle 命令将以你的身份执行；此卡片可以撤回。"));
+        return;
+      }
+      if (result.status === "slow_down") intervalMs += 5000;
+      if (result.status === "expired" || result.status === "denied" || result.status === "error") {
+        if (!messageId) return;
+        await this.updateCard(messageId, this.simpleCard(`❌ Meegle 授权未完成：${result.reason ?? "未知原因"}。请重新 /login meegle。`)).catch(() => undefined);
+        return;
+      }
+    }
+    if (messageId) await this.updateCard(messageId, this.simpleCard("❌ 等待授权超时，请重新 /login meegle。")).catch(() => undefined);
+  }
+
+  private simpleCard(text: string): object {
+    return {
+      schema: "2.0",
+      header: { title: { tag: "plain_text", content: "🔑 Meegle 授权" } },
+      body: { elements: [{ tag: "markdown", content: text }] },
+    };
   }
 }

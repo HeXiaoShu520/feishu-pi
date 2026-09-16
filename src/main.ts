@@ -106,7 +106,7 @@ export async function main(): Promise<void> {
     appSecret: config.feishuAppSecret,
   });
 
-  // 自动获取 Bot Open ID
+  // —— 启动第 1 步：机器人身份（openId）是硬门槛，拿不到不继续 ——
   let botOpenId: string | undefined;
   try {
     const res = await client.request({
@@ -115,13 +115,16 @@ export async function main(): Promise<void> {
     });
     if (res.code === 0 && res.data?.bot?.open_id) {
       botOpenId = res.data.bot.open_id;
-      logger.info(`[Main] Bot Open ID: ${botOpenId}`);
+      logger.info(`[Main] 启动 1/4 机器人身份就绪: ${botOpenId}`);
     }
   } catch (err) {
     logger.warn("[Main] 获取 Bot Open ID 失败:", err);
   }
+  if (!botOpenId) {
+    throw new Error("无法获取机器人 openId（/open-apis/bot/v3/info 失败）。请检查网络与应用状态后重启；应用未创建时重新运行会进入扫码开通。");
+  }
 
-  // 解析管理员 Open ID（名字/邮箱/缓存；失败先不放弃——下方还会从已 /login 身份识别）
+  // —— 启动第 2 步前置：管理员标识解析（名字/邮箱/缓存；失败先不放弃——下方登录门会兜住）——
   let adminOpenId = await resolveAdminOpenId(client, config.feishuAdmin, config.feishuAppId);
   if (adminOpenId) {
     logger.info(`[Main] 管理员 Open ID: ${adminOpenId}`);
@@ -175,26 +178,27 @@ export async function main(): Promise<void> {
     if (replaced > 0) logger.info(`[Main] 已清洗历史会话文件中的明文凭证（处理 ${replaced} 个文件）`);
   })().catch((error) => logger.warn("[Main] 会话清洗失败:", error));
 
-  // 冷启动兜底：姓名/邮箱在通讯录侧解析不出（缓存为空、权限未批）时，从已 /login
-  // 用户的登录身份识别管理员。
+  // —— 启动第 2 步：管理员 lark 登录门 ——
+  // 先从已 /login 身份识别（缓存/名字/邮箱解析不出时的兜底）；仍未识别且在交互终端，
+  // 则直接发起扫码授权并阻塞到成功为止——没有授权成功不往下走。
   if (!adminOpenId && config.feishuAdmin) {
     adminOpenId = await resolveAdminFromLogins(userAuth, config.feishuAdmin, usersFile);
     if (adminOpenId) {
-      logger.info(`[Main] 管理员已从已登录用户中识别: ${adminOpenId}（资料已入缓存，下次启动直接解析）`);
+      logger.info(`[Main] 管理员已从已登录用户中识别: ${adminOpenId}`);
     }
   }
-
-  // 启动流程第 2 步：管理员 lark 登录检查——尚未登录则直接在终端发起扫码授权，
-  // 扫完立即绑定管理员（无需再去飞书发 /login，也无需重启），一步完成环境部署。
   if (!adminOpenId && config.feishuAdmin) {
     if (!process.stdout.isTTY) {
-      logger.warn(
-        `[Main] 暂无法识别管理员（FEISHU_ADMIN=${config.feishuAdmin}）：` +
-          "请在交互终端启动一次服务，按提示完成管理员扫码授权；识别前管理员专属能力不可用",
+      throw new Error(
+        `管理员（FEISHU_ADMIN=${config.feishuAdmin}）尚未登录 lark，且当前非交互终端无法扫码。` +
+          "请在交互终端启动一次完成管理员授权（按提示扫码），或在飞书私聊 /login lark 后重启。",
       );
-    } else {
-      console.log("\n🔐 管理员（FEISHU_ADMIN）尚未登录 lark-cli：请用【管理员本人】的飞书扫码完成授权。");
-      console.log("    授权后即完成环境部署：团队名单解析、用户身份能力立即就绪，无需重启。\n");
+    }
+    console.log("\n🔐 启动 2/4 管理员（FEISHU_ADMIN）尚未登录 lark-cli：请用【管理员本人】的飞书扫码完成授权。");
+    console.log("    授权成功前服务不会开始工作。\n");
+    let bound: string | undefined;
+    for (let attempt = 1; attempt <= 3 && !bound; attempt++) {
+      if (attempt > 1) console.log(`\n🔐 第 ${attempt}/3 次尝试，请重新扫码：`);
       const login = await userAuth.loginOnTerminal({
         onLink: ({ link, expiresInMin }) => {
           qr.generate(link, { small: true });
@@ -202,15 +206,28 @@ export async function main(): Promise<void> {
           console.log(`⏱️  约 ${expiresInMin} 分钟内有效，等待扫码中…\n`);
         },
       });
-      if (login.ok && login.identity) {
-        const info = login.identity;
-        adminOpenId = info.openId;
-        await persistUserProfile(usersFile, info.openId, { name: info.name, en_name: info.en_name }).catch(() => undefined);
-        logger.info(`[Main] 管理员已绑定并立即生效: ${info.name ?? info.openId}（${info.openId}）`);
-      } else {
-        console.log(`⚠️ 管理员登录未完成：${login.reason ?? "未知原因"}。部署完成后可私聊机器人 /login lark 补做。`);
+      if (!login.ok || !login.identity) {
+        console.log(`⚠️ 登录未完成：${login.reason ?? "未知原因"}`);
+        continue;
       }
+      const info = login.identity;
+      const matched =
+        info.openId === config.feishuAdmin ||
+        info.name === config.feishuAdmin ||
+        info.en_name === config.feishuAdmin ||
+        (Boolean(info.email) && info.email === config.feishuAdmin);
+      if (!matched) {
+        console.log(`⚠️ 扫码账号（${info.name ?? info.openId}）与 FEISHU_ADMIN（${config.feishuAdmin}）不一致，请用管理员本人账号重扫。`);
+        continue;
+      }
+      bound = info.openId;
+      await persistUserProfile(usersFile, info.openId, { name: info.name, en_name: info.en_name }).catch(() => undefined);
+      logger.info(`[Main] 启动 2/4 管理员已绑定并立即生效: ${info.name ?? info.openId}（${info.openId}）`);
     }
+    if (!bound) {
+      throw new Error("管理员 lark 授权连续 3 次未完成，按要求不继续启动。请排查后重新运行 npm start。");
+    }
+    adminOpenId = bound;
   }
 
   // ---------- 消息传输 ----------
@@ -520,15 +537,19 @@ ${trimmed}` }] },
 
   // ---------- 启动 ----------
 
+  // —— 启动第 3 步：团队成员 openId 解析（仅姓名入库；部门在该成员实际互动后经搜索补全）——
+  await userAuth.refreshAllKnown().catch((error) => logger.warn("[Main] 用户 token 预热失败:", error));
+  const rosterCount = await transport.ingestTeamOpenIds({ botOpenId });
+  logger.info(`[Main] 启动 3/4 团队成员名单就绪: ${rosterCount} 人入缓存`);
+
+  // —— 启动第 4 步：开始工作 ——
+
   bridge.start();
   await transport.connect();
   // 恢复定时任务调度（任务持久化在 data/schedules.json）
   await scheduleService.start();
 
-  // 预热已登录用户的 token（search-user / 用户身份 CLI 立即可用）
-  void userAuth?.refreshAllKnown().catch((error) => logger.warn("[Main] 用户 token 预热失败:", error));
-
-  // 打印配置页面地址
+  logger.info("[Main] 启动 4/4 服务开始工作");
   console.log(`\n配置页面: http://localhost:3456\n`);
 
   // 优雅退出处理：Windows 上 WebSocket disconnect 可能挂住，

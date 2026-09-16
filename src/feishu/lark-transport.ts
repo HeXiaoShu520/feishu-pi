@@ -528,6 +528,47 @@ export class LarkTransport implements FeishuTransport {
     return messageId;
   }
 
+  /**
+   * 启动第 3 步：收集机器人所在会话（群聊 + 私聊）的成员 openId + 姓名，
+   * 以姓名写入用户名单（不查部门——部门在该成员实际互动时经 search-user 补全）。
+   * 上限 50 会话 / 500 人，返回入库人数。
+   */
+  async ingestTeamOpenIds(opts: { botOpenId?: string; maxChats?: number; maxMembers?: number } = {}): Promise<number> {
+    const maxChats = opts.maxChats ?? 50;
+    const maxMembers = opts.maxMembers ?? 500;
+    const entries = new Map<string, string>();
+    let chatCount = 0;
+    let pageToken: string | undefined;
+    const collectChat = async (chatId: string): Promise<void> => {
+      chatCount += 1;
+      let memberToken: string | undefined;
+      do {
+        const res = await this.client.im.chatMembers.get({
+          path: { chat_id: chatId },
+          params: { member_id_type: "open_id", page_size: 100, page_token: memberToken },
+        });
+        for (const member of ((res.data?.items ?? []) as Array<{ member_id?: string; name?: string }>)) {
+          const id = member.member_id;
+          if (!id || id === opts.botOpenId || entries.has(id) || entries.size >= maxMembers) continue;
+          entries.set(id, member.name ?? "");
+        }
+        memberToken = (res.data as { page_token?: string } | undefined)?.page_token;
+      } while (memberToken && entries.size < maxMembers);
+    };
+    try {
+      do {
+        const res = await this.client.im.v1.chat.list({ params: { page_size: 100, page_token: pageToken } });
+        for (const chat of ((res.data?.items ?? []) as Array<{ chat_id?: string }>)) {
+          if (chat.chat_id && chatCount < maxChats && entries.size < maxMembers) await collectChat(chat.chat_id);
+        }
+        pageToken = (res.data as { page_token?: string } | undefined)?.page_token;
+      } while (pageToken && chatCount < maxChats && entries.size < maxMembers);
+    } catch (error) {
+      logger.warn(`[Roster] 团队成员收集中断（已完成部分保留）: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    return this.larkCli.upsertRosterNames([...entries].map(([openId, name]) => ({ openId, name })));
+  }
+
   /** 按 messageId 更新已发送的卡片。 */
   async updateCardById(messageId: string, card: object): Promise<void> {
     await this.client.im.v1.message.patch({

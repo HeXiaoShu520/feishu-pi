@@ -433,33 +433,33 @@ describe("/login 指令路由（provider 后缀必填）", () => {
     expect(JSON.stringify(result?.card)).toContain("未知的应用");
   });
 
-  it("/login meegle 发凭证表单卡（密码输入框 + form_submit），不发起授权请求", async () => {
+  it("/login meegle 私聊 → 委派 MeegleDeviceLogin 发起 Device Flow 授权", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-route-"));
     const postForm = vi.fn();
     const { service } = makeService({ dir, postForm, updateCard: async () => {} });
-    const cmd = new LoginCommand(service, { meegle: makeFakeMeegle() });
+    const sentinel = { card: { marker: "meegle-device-card" } };
+    const startLogin = vi.fn(async () => sentinel);
+    const cmd = new LoginCommand(service, { meegleDevice: { startLogin } });
     const msg = message();
     msg.text = "/login meegle";
     const result = await cmd.execute(msg);
-    const card = JSON.stringify(result?.card);
-    expect(card).toContain("Meegle");
-    // 表单卡结构：password 输入框 + form_submit 按钮 + provider 回传参数
-    expect(card).toContain('"input_type":"password"');
-    expect(card).toContain('"action_type":"form_submit"');
-    expect(card).toContain('"provider":"meegle"');
-    expect(postForm).not.toHaveBeenCalled();
+    expect(startLogin).toHaveBeenCalledTimes(1);
+    expect(result?.card).toBe(sentinel.card);
+    expect(postForm).not.toHaveBeenCalled(); // meegle 授权不经 lark 的 device flow
   });
 
-  it("/login meegle 群聊拒绝（表单卡只在私聊发）；/login bbt 发用户名+密码表单卡", async () => {
+  it("/login meegle 群聊拒绝（授权只在私聊发起）；/login bbt 发用户名+密码表单卡", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-route-"));
     const { service } = makeService({ dir, postForm: vi.fn(), updateCard: async () => {} });
-    const cmd = new LoginCommand(service, { meegle: makeFakeMeegle(), bbt: makeFakeBbt() });
+    const startLogin = vi.fn(async () => ({ card: {} }));
+    const cmd = new LoginCommand(service, { meegle: makeFakeMeegle(), bbt: makeFakeBbt(), meegleDevice: { startLogin } });
 
     const groupMsg = message();
     groupMsg.text = "/login meegle";
     (groupMsg.context as { chatMode?: string }).chatMode = "group";
     const groupResult = await cmd.execute(groupMsg);
     expect(JSON.stringify(groupResult?.card)).toContain("私聊");
+    expect(startLogin).not.toHaveBeenCalled(); // 群聊直接拒绝，不发起授权
 
     const bbtMsg = message();
     bbtMsg.text = "/login bbt";

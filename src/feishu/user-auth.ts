@@ -21,6 +21,10 @@ import { CredentialVault } from "../utils/credential-vault.ts";
 import type { FeishuInboundMessage } from "./types.ts";
 import { markdownCard, type CommandHandler, type CommandResult } from "./commands.ts";
 import { buildCredentialFormCard } from "./credential-card.ts";
+/** Meegle Device Flow 登录的最小接口（由 MeegleDeviceLogin 实现；结构化类型便于测试注入） */
+export interface MeegleDeviceStarter {
+  startLogin(message: FeishuInboundMessage): Promise<{ card: object; afterSend?: (messageId?: string) => void }>;
+}
 
 const DEVICE_AUTHORIZATION_URL = "https://accounts.feishu.cn/oauth/v1/device_authorization";
 const TOKEN_URL = "https://open.feishu.cn/open-apis/authen/v2/oauth/token";
@@ -613,18 +617,23 @@ export interface StaticCredentialHandler {
 /** /login <provider>：统一多应用登录入口，必须显式指定应用。
  *  - `/login`（无参数）：展示各 CLI 的登录状态总览（不猜测默认应用）；
  *  - `/login lark`：飞书 Device Flow 授权；
- *  - `/login meegle` / `/login bbt`：仅私聊，发表单卡
- *    （密码输入框 + 提交按钮，内容经卡片回调直达服务端加密入库，不落聊天记录）。
+ *  - `/login meegle`：Meegle Device Flow 授权（链接卡 → 后台轮询 → token 加密入库）；
+ *  - `/login bbt`：仅私聊发表单卡（用户名 + 应用密码，回调直达加密入库）。
  *  发起后卡片后台轮询/等待回调，完成时原地更新结果。 */
 export class LoginCommand implements CommandHandler {
   private readonly auth: UserAuthService;
   private readonly meegle?: MeegleLoginHandler;
   private readonly bbt?: StaticCredentialHandler;
+  private readonly meegleDevice?: MeegleDeviceStarter;
 
-  constructor(auth: UserAuthService, options?: { meegle?: MeegleLoginHandler; bbt?: StaticCredentialHandler }) {
+  constructor(
+    auth: UserAuthService,
+    options?: { meegle?: MeegleLoginHandler; bbt?: StaticCredentialHandler; meegleDevice?: MeegleDeviceStarter },
+  ) {
     this.auth = auth;
     this.meegle = options?.meegle;
     this.bbt = options?.bbt;
+    this.meegleDevice = options?.meegleDevice;
   }
 
   match(text: string): boolean {
@@ -643,7 +652,13 @@ export class LoginCommand implements CommandHandler {
       return { card: markdownCard(`❓ 未知的应用「${provider}」。当前支持：\n${known}`) };
     }
     if (provider === "meegle") {
-      return this.loginMeegle(message);
+      if (message.context.chatMode !== "p2p") {
+        return { card: markdownCard("❌ Meegle 授权仅支持在**私聊**中进行。请私聊机器人发送 /login meegle。") };
+      }
+      // Device Flow：发链接卡，后台轮询，同意后 token 加密入库
+      if (!this.meegleDevice) return { card: markdownCard("⏳ Meegle 授权服务未就绪，请稍后重试。") };
+      const login = await this.meegleDevice.startLogin(message);
+      return { card: login.card, afterSend: login.afterSend };
     }
     if (provider === "bbt") {
       return this.loginBbt(message);
@@ -683,28 +698,6 @@ export class LoginCommand implements CommandHandler {
   }
 
   /** /login meegle：仅私聊，发表单卡（密码框，回调直达入库）。 */
-  private loginMeegle(message: FeishuInboundMessage): CommandResult {
-    if (message.context.chatMode !== "p2p") {
-      return { card: markdownCard("❌ Meegle 凭证提交仅支持在**私聊**中进行（群聊中会暴露给群成员）。请私聊机器人发送 /login meegle。") };
-    }
-    if (!this.meegle) {
-      return { card: markdownCard("⏳ Meegle 凭证服务未就绪，请稍后重试。") };
-    }
-    {
-      return {
-        card: buildCredentialFormCard({
-          provider: "meegle",
-          title: "🔑 Meegle（飞书项目）凭证提交",
-          intro: "在下方输入框填写 token 后点击提交；内容经加密回调直达服务端，**不会显示在聊天记录中**。",
-          fields: [
-            { name: "token", label: "Meegle Token", placeholder: "粘贴你的 Meegle access token", inputType: "password", maxLength: 1000 },
-          ],
-          notice: "⏱️ 凭证失效时重新发送 /login meegle 提交即可；提交成功后此卡片会自动更新。",
-        }),
-      };
-    }
-  }
-
   /** /login bbt：仅私聊，发表单卡（用户名 + 应用密码，密码框 • 显示，回调直达入库）。 */
   private loginBbt(message: FeishuInboundMessage): CommandResult {
     if (message.context.chatMode !== "p2p") {
