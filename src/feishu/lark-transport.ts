@@ -218,7 +218,7 @@ export class LarkTransport implements FeishuTransport {
       //   收敛到同一会话；若根未确立前用户追加消息，从持久化中取回话题根，避免裂成新会话
       // - 其他会话（私聊/普通群）：按用户隔离
       const threadId = message.threadId;
-      const conversationId = await this.buildConversationId(chatId, chatMode, message.senderId, threadId, message.messageId);
+      const conversationId = await this.buildConversationId(chatId, chatMode, threadId, message.messageId);
 
       // 处理图片附件（含 post 富文本里的图片：SDK 会把它们放进 resources）
       let images;
@@ -370,11 +370,13 @@ export class LarkTransport implements FeishuTransport {
    * - 话题群：同一话题内所有用户共享一个会话；首条消息没有 threadId，
    *   用该消息的 messageId 作为话题键并持久化——后续消息的 threadId 恰好就是这条根消息的 ID，
    *   收敛到同一会话；若根未确立前用户追加消息，从持久化中取回话题根，避免裂成新会话。
-   * - 其他会话（私聊/普通群）：按用户隔离（同一线程内的消息再按线程细分）。
+   * - 私聊：会话即本人历史；普通群：全群共享一个会话——两者都以 chatId 命名（会话 ID，
+   *   不带用户 ID），/new 清除后从头开始。
    */
-  private async buildConversationId(chatId: string, chatMode: "p2p" | "group" | "topic", senderId: string, threadId: string | undefined, messageId: string): Promise<string> {
+  private async buildConversationId(chatId: string, chatMode: "p2p" | "group" | "topic", threadId: string | undefined, messageId: string): Promise<string> {
     if (chatMode !== "topic") {
-      return `${senderId}-${threadId ? `${chatId}:thread:${threadId}` : `chat:${chatId}`}`;
+      // 私聊 = 本人历史；普通群 = 全群共享：都以会话（chat）命名，不按用户隔离
+      return `${chatMode}-${chatId}`;
     }
     // 话题根的"读-判-写"必须按 chatId 串行：并发首消息各自登记自己为根会把同一话题裂成两个会话
     return this.withTopicRootLock(chatId, async () => {

@@ -70,8 +70,7 @@ export class ConversationManager {
 
   /** 从持久化映射恢复 Pi Session，失败时创建新 Session。 */
   private async initializeState(conversationId: string, context?: FeishuContext): Promise<ConversationState> {
-    // 从上下文取用户身份（权限组判定依据）；无上下文时按 conversationId 前缀反推
-    // （仅对按用户隔离的 `{openId}-chat:...` 格式有效；topic: 会话必须依赖 context）
+    // 从上下文取用户身份（权限组判定依据）；上下文缺失属异常路径，仅作兜底
     const userId = context?.userOpenId ?? conversationId.split("-")[0];
 
     const sessionFile = await this.store?.get(conversationId);

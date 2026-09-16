@@ -12,7 +12,7 @@ feishu-pi 是一个基于 [Pi](https://github.com/earendil-works/pi) 的飞书 A
 - ✅ **图片附件支持** - 发送图片让 Agent 识别和分析（支持视觉模型）
 - ✅ **文件附件支持** - file/audio/video 附件自动下载到会话文件夹并把路径交给 Agent 处理
 - ✅ **用户身份授权** - `/login` 通过 Device Flow 完成用户授权（免公网回调、免重定向 URL 白名单）；user_access_token 按 openId 隔离存储、静默续期，支撑"我的视角"能力
-- ✅ **会话隔离** - 按 `chatId` 和 `threadId` 独立会话上下文
+- ✅ **会话隔离** - 以会话 ID（chat/话题）组织上下文：私聊即本人历史，普通群全群共享，话题群话题内共享
 - ✅ **消息去重** - 防止重复处理同一消息
 - ✅ **自动重连** - WebSocket 断线自动恢复
 - ✅ **飞书用户上下文** - 自动查询并缓存用户信息（中文名、英文名、部门名；经管理员 `/login` 授权的用户身份查询），供所有技能和 Function Calling 直接使用
@@ -69,7 +69,8 @@ interface FeishuContext {
 
 | 场景 | 会话归属 | conversationId 格式 |
 |------|---------|--------------------|
-| 私聊 / 普通群 | **按用户隔离**——同一群里每个人独立上下文 | `{openId}-chat:{chatId}` 或 `{openId}-{chatId}:thread:{threadId}` |
+| 私聊 | **本人历史**——这个会话就是这个人跟机器人的全部上下文 | `p2p:{chatId}` |
+| 普通群 | **全群共享**——群里所有人共用一个上下文 | `group:{chatId}` |
 | 话题群的话题 | **按话题共享**——话题内所有用户共用一个上下文，可以接力讨论 | `topic:{chatId}:{话题根消息ID}` |
 
 **话题根的收敛规则：** 话题的第一条消息没有 threadId，此时用该消息自己的 messageId 作为话题键并落盘（`data/sessions/topic-roots.json`）；后续消息的 threadId 恰好就是这条根消息的 ID，自然收敛到同一会话。若根未确立前用户追加消息（比如首条还在处理时被打断），会从落盘中取回话题根，**不会裂成新会话**。
