@@ -137,7 +137,7 @@ export class LarkTransport implements FeishuTransport {
             includeRaw: true,
           } as never);
           if (!message) return;
-          await this.dispatchMessage(message as unknown as { messageId: string; chatId: string; threadId?: string; senderId: string; content: string; resources?: Array<{ type: string; fileKey: string; fileName?: string }>; mentions?: Array<{ openId?: string; name?: string; isBot?: boolean }> });
+          await this.dispatchMessage(message as unknown as { messageId: string; chatId: string; threadId?: string; senderId: string; content: string; resources?: Array<{ type: string; fileKey: string; fileName?: string }>; mentions?: Array<{ openId?: string; name?: string; isBot?: boolean }>; mentionedBot?: boolean });
         } catch (error) {
           logger.error("[LarkTransport] 消息归一化/分发失败:", error);
         }
@@ -190,12 +190,18 @@ export class LarkTransport implements FeishuTransport {
     content: string;
     resources?: Array<{ type: string; fileKey: string; fileName?: string }>;
     mentions?: Array<{ openId?: string; name?: string; isBot?: boolean }>;
+    mentionedBot?: boolean;
   }): Promise<void> {
     if (this.botOpenId && message.senderId === this.botOpenId) return;
     const chatId = message.chatId;
     try {
       // 会话模式先行：决定用户资料的查询通道（私聊 contact API / 群聊群成员名单）与 conversationId 归属
       const chatMode = await this.getChatModeCached(chatId);
+
+      // 群聊/话题群只响应 @机器人 的消息；私聊全响应。
+      // 未 @ 的消息静默忽略（不查资料、不入会话，避免群聊刷屏误触发）。
+      if (chatMode !== "p2p" && !message.mentionedBot) return;
+
       const profile = await this.larkCli.getUserProfile(message.senderId);
       const displayName = profile.name || profile.en_name || message.senderId;
 
