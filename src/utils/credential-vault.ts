@@ -13,7 +13,7 @@ import { logger } from "./logger.ts";
  *
  * 密钥来源（优先级从高到低）：
  * 1. 打开参数 keyHex；
- * 2. 环境变量 MINICLAW_VAULT_KEY（64 位 hex = 32 字节）；
+ * 2. 环境变量 MINI_PI_VAULT_KEY（64 位 hex = 32 字节）；
  * 3. 密钥文件（默认与库文件同目录的 .vault-key，首次自动生成并收紧权限）。
  *
  * 记录键为 `provider:userKey`（如 `lark:ou_xxx`），provider 之间命名空间互不可见，
@@ -21,7 +21,7 @@ import { logger } from "./logger.ts";
  */
 
 const VAULT_VERSION = 1;
-const DEFAULT_KEY_ENV = "MINICLAW_VAULT_KEY";
+const DEFAULT_KEY_ENV = "MINI_PI_VAULT_KEY";
 
 interface VaultEnvelope {
   version: number;

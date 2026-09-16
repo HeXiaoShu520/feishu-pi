@@ -1,7 +1,7 @@
 /**
  * 用户飞书身份授权（OAuth 2.0 Device Authorization Grant，RFC 8628）
  *
- * 为什么用 Device Flow：MiniClaw 跑在内网/本机，没有公网回调地址接收标准 OAuth 的
+ * 为什么用 Device Flow：mini-pi 跑在内网/本机，没有公网回调地址接收标准 OAuth 的
  * 授权码跳转。Device Flow 把"授权动作"交给用户的浏览器/飞书客户端完成，服务器只需
  * 能出网发起请求并轮询，全程不需要 redirect_uri。
  *
@@ -127,7 +127,7 @@ export interface UserAuthOptions {
   scopes: string[];
   /** 加密凭证库文件路径（data/credentials/lark.vault.json） */
   vaultFile: string;
-  /** 主密钥文件路径（data/.vault-key）；也可用环境变量 MINICLAW_VAULT_KEY 覆盖 */
+  /** 主密钥文件路径（data/.vault-key）；也可用环境变量 MINI_PI_VAULT_KEY 覆盖 */
   vaultKeyFile: string;
   /** 指引卡的原地更新（轮询结束后把"待授权"卡更新为结果卡） */
   updateCard: (messageId: string, card: object) => Promise<void>;
