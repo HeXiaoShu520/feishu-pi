@@ -8,7 +8,7 @@ import { logger } from "../utils/logger.ts";
  *   {
  *     "deny":  ["禁止读写的路径 glob，第 0 层，对所有人含管理员生效"],
  *     "allow": {
- *       "common":  ["Read(.agent/skills/**)", "Tools(query_skill_usage)"],
+ *       "common":  ["Read(.agent/skills/**)"],
  *       "admin":   ["Bash(git status:*)", "Read(**)", "Write(.agent/**)", "Tools(*)"],
  *       "group_1": ["Bash(npm run test:*)", "Read(docs/**)"]
  *     }

@@ -3,8 +3,7 @@
   "deny": [],
   "allow": {
     "common": [
-      "Read(.agent/skills/**)",
-      "Tools(query_skill_usage)"
+      "Read(.agent/skills/**)"
     ],
     "admin": [
       "Read(**)",

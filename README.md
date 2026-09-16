@@ -489,8 +489,7 @@ call check_health() → ✅ 服务健康
   "deny": [],
   "allow": {
     "common": [
-      "Read(.agent/skills/**)",
-      "Tools(query_skill_usage)"
+      "Read(.agent/skills/**)"
     ],
     "admin": [
       "Read(**)",
@@ -599,7 +598,7 @@ Bash      → 命令命中组 bash 名单（精确/前缀/*）？在→放行
   "deny": ["**/vault/**"],
   "allow": {
     "admin": ["Read(**)", "Write(.agent/**)", "Tools(*)", "Bash(git push:*)"],
-    "group_1": ["Read(.agent/skills/**)", "Tools(query_skill_usage)"]
+    "group_1": ["Read(.agent/skills/**)"]
   }
 }
 ```
@@ -628,10 +627,7 @@ npm test
 
 **为什么不基于 session 统计**：session 文件是 Pi 内部格式（升级易碎）、7 天即被清理、且话题群的 session 由多人共享无法按人归因。因此统计使用**独立的追加式事件流**（`data/stats/skill-usage.jsonl`，一行一条 JSON），只增不删、长期留存，与 session 生命周期解耦。
 
-**两种查看方式：**
-
-1. **飞书内查询**：直接对机器人说「查看技能使用情况」等，Agent 会调用内置的 `query_skill_usage` 工具（所有用户可用），返回使用次数排行、使用者、最近使用时间以及你自己的使用情况。
-2. **本地可视化界面**：浏览器打开 `http://localhost:3456/stats`，支持：
+**查看方式：** 浏览器打开 `http://localhost:3456/stats`，支持：
    - 按日 / 月 / 年分组的时间分布柱状图
    - 时间范围筛选（近 7/30/90 天、全部、自定义区间）
    - 用户筛选（多选，只看选中的用户）
