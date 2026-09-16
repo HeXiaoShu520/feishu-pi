@@ -105,22 +105,35 @@ export async function main(): Promise<void> {
     appSecret: config.feishuAppSecret,
   });
 
-  // —— 启动第 1 步：机器人身份（openId）是硬门槛，拿不到不继续 ——
+  // —— 启动第 1 步：机器人身份（openId）是硬门槛 ——
+  // 本机网络（TLS 代理）偶发抖动：自动重试 5 次（间隔 2s），最终失败带真实原因退出
   let botOpenId: string | undefined;
-  try {
-    const res = await client.request({
-      method: "GET",
-      url: "/open-apis/bot/v3/info",
-    });
-    if (res.code === 0 && res.data?.bot?.open_id) {
-      botOpenId = res.data.bot.open_id;
-      logger.info(`[Main] 启动 1/4 机器人身份就绪: ${botOpenId}`);
+  let botInfoDetail = "";
+  for (let attempt = 1; attempt <= 5 && !botOpenId; attempt++) {
+    try {
+      const res = await client.request({
+        method: "GET",
+        url: "/open-apis/bot/v3/info",
+      });
+      if (res.code === 0 && res.data?.bot?.open_id) {
+        botOpenId = res.data.bot.open_id;
+        logger.info(`[Main] 启动 1/4 机器人身份就绪: ${botOpenId}${attempt > 1 ? `（第 ${attempt} 次尝试成功）` : ""}`);
+        break;
+      }
+      botInfoDetail = `code ${res.code}：${res.msg ?? "未知错误"}`;
+    } catch (err) {
+      botInfoDetail = err instanceof Error ? err.message : String(err);
     }
-  } catch (err) {
-    logger.warn("[Main] 获取 Bot Open ID 失败:", err);
+    if (attempt < 5) {
+      logger.warn(`[Main] 获取机器人 openId 失败（第 ${attempt}/5 次）：${botInfoDetail}，2 秒后重试…`);
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
   }
   if (!botOpenId) {
-    throw new Error("无法获取机器人 openId（/open-apis/bot/v3/info 失败）。请检查网络与应用状态后重启；应用未创建时重新运行会进入扫码开通。");
+    throw new Error(
+      `启动 1/4 失败：无法获取机器人 openId（/open-apis/bot/v3/info）：${botInfoDetail}。` +
+        "请检查网络与应用状态后重启；应用未创建时重新运行会进入扫码开通。",
+    );
   }
 
   // —— 启动第 2 步前置：管理员 openId 在第 3 步登录完成后解析 ——
