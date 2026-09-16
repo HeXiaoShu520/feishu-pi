@@ -280,17 +280,15 @@ Skill 是 **Markdown 格式的指导文档**，告诉 AI **如何思考和执行
 
 ```markdown
 ---
-name: code-review
-description: 代码审查技能
-permission: team
+name: release-notes
+description: 发布说明整理技能
 ---
 
-# Code Review 流程
+# 发布说明整理流程
 
-1. 检查代码规范（命名、格式、注释）
-2. 分析逻辑正确性
-3. 评估性能和安全风险
-4. 提出改进建议
+1. 汇总本轮改动（git log / 变更文件）
+2. 按功能、修复、破坏性变更分组
+3. 输出面向使用者的变更说明
 ```
 
 **特点：**
