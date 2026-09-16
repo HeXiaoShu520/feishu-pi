@@ -210,7 +210,7 @@ npm install
 ```env
 FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
-FEISHU_ADMIN=管理员标识
+FEISHU_PI_ADMIN=管理员标识
 
 # 模型配置
 FEISHU_PI_MODEL_PROVIDER=anthropic
@@ -224,7 +224,7 @@ FEISHU_PI_MODEL_API_KEY=sk-ant-xxx
 FEISHU_PI_SYSTEM_PROMPT=你是一个专业的编程助手，擅长代码分析和问题解决。
 
 # 团队成员（可选，用于权限控制）
-（已废弃——两档身份下没有成员名单，FEISHU_ADMIN 即全部配置）
+（已废弃——两档身份下没有成员名单，FEISHU_PI_ADMIN 即全部配置）
 ```
 
 ### 4. 启动服务
@@ -246,11 +246,11 @@ npm start
 ```env
 FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
-FEISHU_ADMIN=管理员标识
+FEISHU_PI_ADMIN=管理员标识
 ```
 
 **管理员配置说明：**
-- `FEISHU_ADMIN`：机器人管理员标识，支持以下格式：
+- `FEISHU_PI_ADMIN`：机器人管理员标识，支持以下格式：
   - Open ID：`ou_xxxxxxxx`（直接使用）
   - 中文姓名：`张三`（启动时自动查询转换为 Open ID）
   - 英文姓名：`John`（启动时自动查询转换为 Open ID）
@@ -258,7 +258,7 @@ FEISHU_ADMIN=管理员标识
 - 管理员权限：部分敏感指令只有管理员可执行
 - 启动时会自动解析并输出管理员 Open ID
 - **冷启动识别**：全新部署时若按姓名解析失败，启动流程会**直接在终端弹出管理员授权二维码**——管理员本人扫码即完成登录与绑定，本次启动即生效，资料同时写入用户缓存；此后每次启动直接走缓存解析，不再依赖通讯录权限。非交互终端（守护进程）下，可私聊 `/login lark` 后重启一次完成同样效果。
-- 管理员只由 `FEISHU_ADMIN` 配置（自动属于 admin 组）。组成员配置见 `.env.example`：`FEISHU_GROUP`（主团队组）、`FEISHU_GROUP_1/2…`，成员支持 open_id、中英文名或组织架构部门名。
+- 管理员只由 `FEISHU_PI_ADMIN` 配置（自动属于 admin 组）。组成员配置见 `.env.example`：`FEISHU_PI_GROUP`（主团队组）、`FEISHU_PI_GROUP_1/2…`，成员支持 open_id、中英文名或组织架构部门名。
 
 用户信息会在首次聊天时自动查询并缓存到 `data/users/{appId}_users.json`，3 天后自动刷新。缓存文件包含 `appId` 前缀，避免多机器人混用。
 
@@ -461,7 +461,7 @@ call check_health() → ✅ 服务健康
 **一个策略文件 + 两道闸门：白名单先行，智能体兜底；常用操作免审，边界操作灵活判断，敏感操作交人工确认。**
 
 - `.agent/permissions.json` 只有两个输入：`deny`（全局禁止读写的路径清单）与 `allow`（各身份组的放行规则，含 common/admin/group_*）——每条规则用类型前缀标明范围
-- 组成员在 `.env` 中配置：`FEISHU_GROUP=成员1,成员2` 对应主团队组 `group`；`FEISHU_GROUP_1=成员1` 对应组 `group_1`（扩展 `FEISHU_GROUP_2` → `group_2`）；非数字组名用全名 `FEISHU_GROUP_<组名>`；`FEISHU_ADMIN` 自动属于 admin 组
+- 组成员在 `.env` 中配置：`FEISHU_PI_GROUP=成员1,成员2` 对应主团队组 `group`；`FEISHU_PI_GROUP_1=成员1` 对应组 `group_1`（扩展 `FEISHU_PI_GROUP_2` → `group_2`）；非数字组名用全名 `FEISHU_PI_GROUP_<组名>`；`FEISHU_PI_ADMIN` 自动属于 admin 组
 - 每次工具调用时，先过 deny 规则（.env 等敏感路径一律禁止读写，对所有人含管理员生效），再过白名单闸门（匹配即放行），未命中交智能体闸门综合判断，再不行弹授权卡交管理员
 - **密钥防护双轨**：执行侧由 deny 规则硬拦（.env 等内置默认 + `permissions.json` 顶层 `deny` 可扩展，read/write/bash 全覆盖）；模型侧由系统提示注入「密钥安全规则」（确需返回密钥之类的值时，一定要加 `*` 遮蔽）
 
@@ -506,9 +506,9 @@ call check_health() → ✅ 服务健康
 | `Tools(name)` | 工具名或 `*` | 该组可调用的自定义工具 |
 | `Bash(cmd)` | 命令、`cmd:*` 或 `*` | 该组可执行的 bash 命令（精确/前缀/全部） |
 
-- **admin 组**（保留名）：`FEISHU_ADMIN` 自动属于；未配置的字段取全量缺省（`Bash(*)`、`Read(**)`、`Write(**)`、`Tools(*)`）
-- **团队组**：主团队组命名 `group`（组员宏 `FEISHU_GROUP=…`），扩展组命名 `group_1`、`group_2`……（组员宏 `FEISHU_GROUP_1`、`FEISHU_GROUP_2`……）
-- **其他组**（组名任意，如 `vip`）：组员宏用全名 `FEISHU_GROUP_VIP`；未配置的字段取保守缺省（仅技能目录可读、无工具、无命令）
+- **admin 组**（保留名）：`FEISHU_PI_ADMIN` 自动属于；未配置的字段取全量缺省（`Bash(*)`、`Read(**)`、`Write(**)`、`Tools(*)`）
+- **团队组**：主团队组命名 `group`（组员宏 `FEISHU_PI_GROUP=…`），扩展组命名 `group_1`、`group_2`……（组员宏 `FEISHU_PI_GROUP_1`、`FEISHU_PI_GROUP_2`……）
+- **其他组**（组名任意，如 `vip`）：组员宏用全名 `FEISHU_PI_GROUP_VIP`；未配置的字段取保守缺省（仅技能目录可读、无工具、无命令）
 - **不在任何组**：仅技能目录可读，其余全部拦截
 - 一人可属多组，能力取**并集**
 - 组文件 mtime 热重载，新会话生效（`/new` 后重算）
@@ -688,7 +688,7 @@ claude-sonnet-4-6 · 90.8K（新增 1.6K） · $1.0886 · 4.6s · 01a05e14
 精简模式下，管理员点击授权卡确认后，授权卡（含转发到管理员私聊的卡片）会被自动撤回，减少会话占用；详细模式下保留授权结果卡，便于审计。
 
 **权限说明：**
-- `/model` 仅管理员可用（由 `FEISHU_ADMIN` 配置）
+- `/model` 仅管理员可用（由 `FEISHU_PI_ADMIN` 配置）
 - `/new` 在话题群的话题内被禁止（话题会话为所有人共享，不允许单人清空）
 - 其他指令所有用户都可以使用，仅影响自己的会话
 

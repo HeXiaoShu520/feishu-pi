@@ -22,11 +22,11 @@ import { logger } from "../utils/logger.ts";
  *
  * allow 里的保留组名：
  *   - common——所有人默认拥有的基础权限（每个用户自动叠加，无需归属）；
- *   - admin——管理员组，FEISHU_ADMIN 自动属于；未配置的字段取全量缺省。
+ *   - admin——管理员组，FEISHU_PI_ADMIN 自动属于；未配置的字段取全量缺省。
  *   其余组名任取（团队组如 group、group_1、group_2……）。
  *
- * 组成员在 .env 中通过 FEISHU_GROUP_<组名>=成员1,成员2,... 配置；
- * 纯数字后缀简写为团队组：FEISHU_GROUP_1 → group_1、FEISHU_GROUP_2 → group_2。
+ * 组成员在 .env 中通过 FEISHU_PI_GROUP_<组名>=成员1,成员2,... 配置；
+ * 纯数字后缀简写为团队组：FEISHU_PI_GROUP_1 → group_1、FEISHU_PI_GROUP_2 → group_2。
  *
  * 生效范围 = common ∪ 所属各组并集。组文件 mtime 热重载，新会话生效。
  * 名单之外的调用一律交授权卡（非允许即 ask）；read 范围外交直接拦截（能力问题不问人）。
@@ -96,8 +96,8 @@ export class PermissionPolicy {
   }
 
   /**
-   * 解析调用者所属的组集合：FEISHU_ADMIN → admin；
-   * 其余按环境变量 FEISHU_GROUP_<NAME> 配置的成员匹配
+   * 解析调用者所属的组集合：FEISHU_PI_ADMIN → admin；
+   * 其余按环境变量 FEISHU_PI_GROUP_<NAME> 配置的成员匹配
    * （全套标识：openId + 中文名 + 英文名 + 组织架构部门名，姓名/部门从用户缓存补充——
    * 成员项写部门名（如 系统工程部）时，用户缓存中的部门路径包含该名称即视为命中）。
    * 不在任何组 → 空集合（保守：仅技能目录可读）。

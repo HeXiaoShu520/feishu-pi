@@ -19,7 +19,7 @@ export interface FeishuPiAppConfig {
   /** 未配置时回退主模型 Key */
   guardApiKey?: string;
   guardTimeoutMs: number;
-  /** 各组归属关系：组名 → 成员标识列表（从 FEISHU_GROUP_<NAME> 环境变量解析） */
+  /** 各组归属关系：组名 → 成员标识列表（从 FEISHU_PI_GROUP_<NAME> 环境变量解析） */
   groupMembership: Record<string, string[]>;
   /** 授权卡片等待管理员点击的超时时间（超时视为拒绝） */
   approvalTimeoutMs: number;
@@ -33,14 +33,14 @@ function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
   return ["1", "true", "on", "yes"].includes(value.trim().toLowerCase());
 }
 
-/** 主团队组名：FEISHU_GROUP（无后缀）落到这里（与 permissions.json 的 group 对应） */
+/** 主团队组名：FEISHU_PI_GROUP（无后缀）落到这里（与 permissions.json 的 group 对应） */
 const PRIMARY_GROUP = "group";
 
 /**
  * 解析组成员配置：
- * - FEISHU_GROUP=x,y        → group（主团队组）
- * - FEISHU_GROUP_<数字>      → group_<数字>（与 permissions.json 的组名对应）
- * - FEISHU_GROUP_<组名>      → 组名小写（自定义组）
+ * - FEISHU_PI_GROUP=x,y        → group（主团队组）
+ * - FEISHU_PI_GROUP_<数字>      → group_<数字>（与 permissions.json 的组名对应）
+ * - FEISHU_PI_GROUP_<组名>      → 组名小写（自定义组）
  * 同组多来源成员合并去重，保持首次出现顺序。
  */
 export function parseGroupMembership(env: NodeJS.ProcessEnv): Record<string, string[]> {
@@ -54,14 +54,14 @@ export function parseGroupMembership(env: NodeJS.ProcessEnv): Record<string, str
     (value ?? "").split(",").map((s) => s.trim()).filter(Boolean);
 
   for (const [key, value] of Object.entries(env)) {
-    if (!key.startsWith("FEISHU_GROUP")) continue;
-    const raw = key.slice("FEISHU_GROUP".length);
+    if (!key.startsWith("FEISHU_PI_GROUP")) continue;
+    const raw = key.slice("FEISHU_PI_GROUP".length);
     if (raw === "") {
-      // 主团队组：FEISHU_GROUP → group
+      // 主团队组：FEISHU_PI_GROUP → group
       add(PRIMARY_GROUP, toMembers(value));
       continue;
     }
-    if (!raw.startsWith("_")) continue; // 非 FEISHU_GROUP 家族的变量（防御）
+    if (!raw.startsWith("_")) continue; // 非 FEISHU_PI_GROUP 家族的变量（防御）
     const suffix = raw.slice(1);
     if (/^\d+$/.test(suffix)) {
       add(`group_${suffix}`, toMembers(value));
@@ -86,7 +86,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
   return {
     feishuAppId: required("FEISHU_APP_ID"),
     feishuAppSecret: required("FEISHU_APP_SECRET"),
-    feishuAdmin: env.FEISHU_ADMIN || "", // 可选：支持中文名、英文名、open_id、邮箱
+    feishuAdmin: env.FEISHU_PI_ADMIN || "", // 可选：支持中文名、英文名、open_id、邮箱
     cwd: process.cwd(),
     sessionDir: `${process.cwd()}/data/sessions`,
     dataDir: `${process.cwd()}/data`,
@@ -102,9 +102,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     guardModels: (env.FEISHU_GUARD_MODELS ?? "").split(",").map((m) => m.trim()).filter(Boolean),
     guardApiKey: env.FEISHU_GUARD_API_KEY ?? env.FEISHU_PI_MODEL_API_KEY,
     guardTimeoutMs: 6_000,
-    // 各组归属关系：解析 FEISHU_GROUP[<_N>]=成员1,成员2,... 格式；
-    // FEISHU_GROUP（无后缀）映射到主团队组 group，
-    // FEISHU_GROUP_2..N 对应 group_2..N；成员除 open_id/中英文名外还支持组织架构部门名
+    // 各组归属关系：解析 FEISHU_PI_GROUP[<_N>]=成员1,成员2,... 格式；
+    // FEISHU_PI_GROUP（无后缀）映射到主团队组 group，
+    // FEISHU_PI_GROUP_2..N 对应 group_2..N；成员除 open_id/中英文名外还支持组织架构部门名
     // （用户缓存的部门路径包含该部门名即视为组成员，见 PermissionPolicy.groupsFor）。
     groupMembership: parseGroupMembership(env),
     approvalTimeoutMs: 5 * 60_000,

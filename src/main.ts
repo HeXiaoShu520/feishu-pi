@@ -220,9 +220,9 @@ export async function main(): Promise<void> {
   if (adminOpenId) {
     logger.info(`[Main] 启动 3/4 管理员 Open ID: ${adminOpenId}`);
   } else if (config.feishuAdmin) {
-    logger.warn(`[Main] 启动 3/4 管理员身份解析失败（FEISHU_ADMIN=${config.feishuAdmin}），本次运行当作没有管理员`);
+    logger.warn(`[Main] 启动 3/4 管理员身份解析失败（FEISHU_PI_ADMIN=${config.feishuAdmin}），本次运行当作没有管理员`);
   } else {
-    logger.warn("[Main] 未配置 FEISHU_ADMIN：管理员能力不可用");
+    logger.warn("[Main] 未配置 FEISHU_PI_ADMIN：管理员能力不可用");
   }
 
   // ---------- 消息传输 ----------
@@ -252,7 +252,7 @@ export async function main(): Promise<void> {
     onModelSwitch: (name) => runtime?.setModelName(name),
   });
 
-  /** /login 绑定完成时的管理员捕获：管理员尚未识别且登录者身份与 FEISHU_ADMIN 匹配
+  /** /login 绑定完成时的管理员捕获：管理员尚未识别且登录者身份与 FEISHU_PI_ADMIN 匹配
    *  → 资料写入用户缓存，重启后走缓存通道自动识别（"管理员先 /login、再重启一遍"）。 */
   const captureAdminFromLogin = (info: { openId: string; name?: string; en_name?: string; email?: string }): void => {
     const identifier = config.feishuAdmin;
@@ -440,7 +440,7 @@ ${trimmed}` }] },
 
   // ---------- 运行时与会话桥接 ----------
 
-  // 两档身份：负责人 = FEISHU_ADMIN，用户 = 其他人；能力全部由策略文件驱动。
+  // 两档身份：负责人 = FEISHU_PI_ADMIN，用户 = 其他人；能力全部由策略文件驱动。
   // 第二个参数：项目内置交互工具（随会话注册，调用者身份由 runtime 派发时注入）
   runtime = new FeishuPiRuntime({
     cwd: config.cwd,

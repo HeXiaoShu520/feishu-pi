@@ -13,7 +13,7 @@ async function writePolicy(content: unknown): Promise<{ dir: string; file: strin
 }
 
 describe("PermissionPolicy deny + allow 两输入", () => {
-  it("组判定：FEISHU_ADMIN → admin；其余按 groupMembership（英文名经用户缓存解析）匹配", async () => {
+  it("组判定：FEISHU_PI_ADMIN → admin；其余按 groupMembership（英文名经用户缓存解析）匹配", async () => {
     const { dir, file } = await writePolicy({
       allow: {
         admin: ["Bash(*)", "Read(**)", "Write(**)", "Tools(*)"],

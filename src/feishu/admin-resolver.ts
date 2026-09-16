@@ -132,7 +132,7 @@ export interface LoginIdentitySource {
 }
 
 /**
- * 冷启动管理员识别：FEISHU_ADMIN 按姓名/邮箱在通讯录侧解析不出时（用户缓存为空、
+ * 冷启动管理员识别：FEISHU_PI_ADMIN 按姓名/邮箱在通讯录侧解析不出时（用户缓存为空、
  * 通讯录权限未批/未发布版本），从**已 /login 用户**的登录身份中识别管理员——
  * 逐个取有效 access token 反查 identity，openId/姓名/英文名/邮箱与配置匹配即命中。
  *

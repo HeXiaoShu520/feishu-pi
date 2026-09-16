@@ -137,7 +137,7 @@ export interface UserAuthOptions {
   getIdentity?: (accessToken: string) => Promise<LoginIdentity | undefined>;
   /**
    * 登录绑定完成回调（Device Flow 成功、token 入库后触发）：
-   * 冷启动管理员识别用——main 侧比对登录者身份与 FEISHU_ADMIN，命中则把资料写入用户缓存，
+   * 冷启动管理员识别用——main 侧比对登录者身份与 FEISHU_PI_ADMIN，命中则把资料写入用户缓存，
    * 重启后走缓存通道自动识别管理员。
    */
   onLoginBound?: (info: LoginIdentity & { openId: string }) => void | Promise<void>;
