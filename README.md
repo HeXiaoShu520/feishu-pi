@@ -205,22 +205,7 @@ npm install
 
 ### 3. 配置应用
 
-**方式一：使用配置界面（推荐）**
-
-```bash
-npm run config
-```
-
-在浏览器打开 `http://localhost:3456`，通过 Web 界面配置：
-- 飞书应用：App ID、App Secret、管理员标识
-- AI 模型：Provider（Anthropic/OpenAI）、Model Name、Base URL
-- API Key：统一的 API Key 配置
-
-配置保存后会直接写入 `.env` 文件。
-
-**方式二：手动编辑 .env 文件**
-
-创建 `.env` 文件并填写以下必需配置：
+编辑 `.env` 文件（可从 `.env.example` 拷贝一份），填写以下配置：
 
 ```env
 FEISHU_APP_ID=cli_xxx
@@ -696,7 +681,7 @@ claude-sonnet-4-6 · 90.8K（新增 1.6K） · $1.0886 · 4.6s · 01a05e14
 - 耗时
 - 会话短别名（完整会话 ID 过长，内部维护 别名 → 完整 ID 的映射，见 `src/feishu/session-alias.ts`）
 
-统计小字可通过 `FEISHU_SHOW_MODEL_STATS` 开关（`1`/`true` 开，`0`/`false`/`off` 关，默认开；配置页「AI 模型配置」也有同名下拉项）。**关闭只是不显示这条终态统计——工具调用执行期间，小字位置 `⚙ ⚒ 🛠 工具名 …` 的过程动画照常显示。**
+统计小字可通过 `FEISHU_SHOW_MODEL_STATS` 开关（`1`/`true` 开，`0`/`false`/`off` 关，默认开）。**关闭只是不显示这条终态统计——工具调用执行期间，小字位置 `⚙ ⚒ 🛠 工具名 …` 的过程动画照常显示。**
 
 **授权卡撤回：**
 

@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { findBlockBoundary } from "../src/feishu/cardkit-reply.ts";
 import { stripBotMentions } from "../src/feishu/lark-transport.ts";
-import { isLocalWriteAllowed } from "../src/utils/request-origin.ts";
 
 describe("stripBotMentions（@机器人 标记清洗）", () => {
   const BOT = "ou_bot123";
@@ -39,20 +38,3 @@ describe("findBlockBoundary（分卡安全边界）", () => {
   });
 });
 
-describe("isLocalWriteAllowed（配置服务跨源写防护）", () => {
-  it("无 Origin（curl 等非浏览器客户端）放行", () => {
-    expect(isLocalWriteAllowed(undefined)).toBe(true);
-  });
-
-  it("本机来源放行", () => {
-    expect(isLocalWriteAllowed("http://localhost:3456")).toBe(true);
-    expect(isLocalWriteAllowed("http://127.0.0.1:3456")).toBe(true);
-    expect(isLocalWriteAllowed("http://[::1]:3456")).toBe(true);
-  });
-
-  it("跨源与非法 Origin 拒绝", () => {
-    expect(isLocalWriteAllowed("https://evil.com")).toBe(false);
-    expect(isLocalWriteAllowed("http://localhost.evil.com")).toBe(false); // 前缀伪装不是本机
-    expect(isLocalWriteAllowed("not-a-url")).toBe(false);
-  });
-});

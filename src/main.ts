@@ -1,6 +1,6 @@
 import "./bootstrap-env.ts"; // 最早执行：.env 缺失自动拷贝 + 凭证库主密钥写入 .env（必须在 dotenv 之前）
 import "dotenv/config";
-import { registerSkillStatsRoutes } from "./config-server.ts"; // 启动配置服务器（模块加载即监听 127.0.0.1:3456）
+import { registerStatsRoutes } from "./stats-server.ts"; // 统计页面服务器（模块加载即监听 127.0.0.1:3456）
 import { ConversationManager } from "./runtime/conversation-manager.ts";
 import { FeishuPiRuntime } from "./runtime/feishu-pi-runtime.ts";
 import { FeishuAgentBridge } from "./feishu/agent-bridge.ts";
@@ -403,7 +403,7 @@ export async function main(): Promise<void> {
     join(dataDir, "stats", "skill-usage.jsonl"),
     join(dataDir, "users", `${config.feishuAppId}_users.json`),
   );
-  registerSkillStatsRoutes(usageStore);
+  registerStatsRoutes(usageStore);
 
   // 定时任务：持久化（data/schedules.json）+ cron 调度；触发时以创建者身份跑智能体并推送结果卡片
   // 注意：runTask 闭包引用下方才声明的 conversations（前向引用），仅在任务触发（启动完成后）才会执行
