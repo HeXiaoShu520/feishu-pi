@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { logger, colors } from "../utils/logger.ts";
 import { redactSecrets } from "../utils/redact.ts";
 import { conversationDir } from "../utils/session-paths.ts";
+import { createScheduleManagerTool } from "../schedule/tool.ts";
 import { matchSkillRead } from "../stats/skill-usage-store.ts";
 import { rewritePlaintextCliCredentials } from "./identity-bash.ts";
 import type { SkillUsageStore } from "../stats/skill-usage-store.ts";
@@ -291,11 +292,19 @@ export class FeishuPiRuntime {
     // 项目内置交互工具（ask_user_question 等）：随会话注册，并把调用者身份注入参数，
     // 工具执行时经 params._caller 拿到提问对象与会话（见 bindCallers）
     // identityBash（可选）：同名覆盖内置 bash，spawn 前按会话用户注入 CLI 凭证环境变量
+    // identityBash（可选）：同名覆盖内置 bash，spawn 前按会话用户注入 CLI 凭证环境变量
     const identityBashTool = this.config.identityBash?.(userId, context);
     const sessionTools = [
       ...bindCallers(this.tools, { openId: userId, chatId: context?.chatId ?? "" }),
       ...customTools,
       ...(identityBashTool ? [identityBashTool] : []),
+      // 定时任务管理工具：仅管理员会话注入，直连进程内 ScheduleService
+      ...(groups.includes("admin") && this.config.scheduleService
+        ? [createScheduleManagerTool(this.config.scheduleService, {
+            chatId: context?.chatId ?? "",
+            createdBy: userId,
+          })]
+        : []),
     ];
 
     // 自定义工具可标记 risk: "high"：标记后不走策略放行，仍走授权卡
