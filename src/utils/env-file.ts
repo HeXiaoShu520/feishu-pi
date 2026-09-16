@@ -32,7 +32,7 @@ export function parseEnvFile(content: string): Record<string, string> {
 
 /** 配置表单管理的 env 键；保存时不在此列表中的现有键会被原样保留 */
 export const MANAGED_KEYS = new Set([
-  "FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_ADMIN", "FEISHU_RANDOM_EMOJIS",
+  "FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_ADMIN",
   "FEISHU_PI_MODEL_PROVIDER", "FEISHU_PI_MODEL_NAME", "FEISHU_PI_MODEL_BASE_URL",
   "FEISHU_PI_MODEL_API_KEY", "FEISHU_PI_SYSTEM_PROMPT", "FEISHU_SHOW_MODEL_STATS",
 ]);
@@ -52,13 +52,6 @@ export function stringifyEnv(config: Record<string, string>, existing: Record<st
   emit("FEISHU_APP_SECRET", config.FEISHU_APP_SECRET || "");
   emit("FEISHU_ADMIN", config.FEISHU_ADMIN || "");
   lines.push("");
-
-  // 随机表情配置
-  if (config.FEISHU_RANDOM_EMOJIS) {
-    lines.push("# 随机表情配置（逗号分隔的 emoji_type）");
-    emit("FEISHU_RANDOM_EMOJIS", config.FEISHU_RANDOM_EMOJIS);
-    lines.push("");
-  }
 
   // 模型配置
   lines.push("# 模型配置");

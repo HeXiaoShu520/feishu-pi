@@ -33,9 +33,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// 静态资源：表情图片
-app.use("/emojis", express.static(join(process.cwd(), "res", "emojis")));
-
 // 配置页面 HTML（独立静态文件，避免与服务器逻辑混杂）
 const HTML_PAGE = readFileSync(join(process.cwd(), "src", "config-page.html"), "utf-8");
 
