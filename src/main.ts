@@ -124,11 +124,8 @@ export async function main(): Promise<void> {
     throw new Error("无法获取机器人 openId（/open-apis/bot/v3/info 失败）。请检查网络与应用状态后重启；应用未创建时重新运行会进入扫码开通。");
   }
 
-  // —— 启动第 2 步前置：管理员标识解析（名字/邮箱/缓存；失败先不放弃——下方登录门会兜住）——
-  let adminOpenId = await resolveAdminOpenId(client, config.feishuAdmin, config.feishuAppId);
-  if (adminOpenId) {
-    logger.info(`[Main] 管理员 Open ID: ${adminOpenId}`);
-  }
+  // —— 启动第 2 步前置：管理员 openId 在第 3 步登录完成后解析 ——
+  let adminOpenId: string | undefined;
   // 用户缓存文件（data/users/{appId}_users.json）：资料查询与冷启动管理员识别共用
   const usersFile = join(config.dataDir, "users", `${config.feishuAppId}_users.json`);
 
@@ -178,56 +175,42 @@ export async function main(): Promise<void> {
     if (replaced > 0) logger.info(`[Main] 已清洗历史会话文件中的明文凭证（处理 ${replaced} 个文件）`);
   })().catch((error) => logger.warn("[Main] 会话清洗失败:", error));
 
-  // —— 启动第 2 步：管理员 lark 登录门 ——
-  // 先从已 /login 身份识别（缓存/名字/邮箱解析不出时的兜底）；仍未识别且在交互终端，
-  // 则直接发起扫码授权并阻塞到成功为止——没有授权成功不往下走。
+  // —— 启动第 2 步：lark cli 登录（无前提：没有登录态就必须授权，仅一次机会，失败自动退出）——
+  let loginUsers: string[] = [];
+  try {
+    loginUsers = await userAuth.listLoginUsers();
+  } catch {
+    loginUsers = []; // 凭证库不可读按未登录处理
+  }
+  if (loginUsers.length === 0) {
+    if (!process.stdout.isTTY) {
+      throw new Error("lark 尚未登录，且当前非交互终端无法扫码。请在交互终端启动一次完成管理员授权。");
+    }
+    console.log("\n🔐 启动 2/4 lark 尚未登录：请用【管理员本人】的飞书扫码完成授权（仅一次机会，失败将自动退出）。\n");
+    const login = await userAuth.loginOnTerminal({
+      onLink: ({ link, expiresInMin }) => {
+        qr.generate(link, { small: true });
+        console.log(link, "\n");
+        console.log(`⏱️  约 ${expiresInMin} 分钟内有效，等待扫码中…\n`);
+      },
+    });
+    if (!login.ok || !login.identity) {
+      throw new Error(`lark 授权未完成（${login.reason ?? "未知原因"}），自动退出。请重新运行 npm start 重试。`);
+    }
+    logger.info(`[Main] 启动 2/4 lark 登录成功: ${login.identity.name ?? login.identity.openId}`);
+  }
+
+  // —— 启动第 3 步：管理员身份解析（解析不了就当没有管理员，服务照常运行）——
+  adminOpenId = await resolveAdminOpenId(client, config.feishuAdmin, config.feishuAppId);
   if (!adminOpenId && config.feishuAdmin) {
     adminOpenId = await resolveAdminFromLogins(userAuth, config.feishuAdmin, usersFile);
-    if (adminOpenId) {
-      logger.info(`[Main] 管理员已从已登录用户中识别: ${adminOpenId}`);
-    }
   }
-  if (!adminOpenId && config.feishuAdmin) {
-    if (!process.stdout.isTTY) {
-      throw new Error(
-        `管理员（FEISHU_ADMIN=${config.feishuAdmin}）尚未登录 lark，且当前非交互终端无法扫码。` +
-          "请在交互终端启动一次完成管理员授权（按提示扫码），或在飞书私聊 /login lark 后重启。",
-      );
-    }
-    console.log("\n🔐 启动 2/4 管理员（FEISHU_ADMIN）尚未登录 lark-cli：请用【管理员本人】的飞书扫码完成授权。");
-    console.log("    授权成功前服务不会开始工作。\n");
-    let bound: string | undefined;
-    for (let attempt = 1; attempt <= 3 && !bound; attempt++) {
-      if (attempt > 1) console.log(`\n🔐 第 ${attempt}/3 次尝试，请重新扫码：`);
-      const login = await userAuth.loginOnTerminal({
-        onLink: ({ link, expiresInMin }) => {
-          qr.generate(link, { small: true });
-          console.log(link, "\n");
-          console.log(`⏱️  约 ${expiresInMin} 分钟内有效，等待扫码中…\n`);
-        },
-      });
-      if (!login.ok || !login.identity) {
-        console.log(`⚠️ 登录未完成：${login.reason ?? "未知原因"}`);
-        continue;
-      }
-      const info = login.identity;
-      const matched =
-        info.openId === config.feishuAdmin ||
-        info.name === config.feishuAdmin ||
-        info.en_name === config.feishuAdmin ||
-        (Boolean(info.email) && info.email === config.feishuAdmin);
-      if (!matched) {
-        console.log(`⚠️ 扫码账号（${info.name ?? info.openId}）与 FEISHU_ADMIN（${config.feishuAdmin}）不一致，请用管理员本人账号重扫。`);
-        continue;
-      }
-      bound = info.openId;
-      await persistUserProfile(usersFile, info.openId, { name: info.name, en_name: info.en_name }).catch(() => undefined);
-      logger.info(`[Main] 启动 2/4 管理员已绑定并立即生效: ${info.name ?? info.openId}（${info.openId}）`);
-    }
-    if (!bound) {
-      throw new Error("管理员 lark 授权连续 3 次未完成，按要求不继续启动。请排查后重新运行 npm start。");
-    }
-    adminOpenId = bound;
+  if (adminOpenId) {
+    logger.info(`[Main] 启动 3/4 管理员 Open ID: ${adminOpenId}`);
+  } else if (config.feishuAdmin) {
+    logger.warn(`[Main] 启动 3/4 管理员身份解析失败（FEISHU_ADMIN=${config.feishuAdmin}），本次运行当作没有管理员`);
+  } else {
+    logger.warn("[Main] 未配置 FEISHU_ADMIN：管理员能力不可用");
   }
 
   // ---------- 消息传输 ----------
