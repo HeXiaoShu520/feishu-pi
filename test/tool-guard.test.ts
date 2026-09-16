@@ -16,7 +16,7 @@ const userPolicy: GroupPolicy = {
   describe: () => ({ bash: ["npm run test:*"], read: ["docs/**"], write: ["docs/**"], tools: ["*"] }),
 };
 
-/** deny 模拟：.env 家族 / 密钥 / 凭据类命中（与内置 DEFAULT_DENY_PATTERNS 语义一致） */
+/** deny 模拟：.env 家族 / 密钥 / 凭据类命中的规则集 */
 const isDeniedRef = (ref: string): boolean => {
   const base = ref.replace(/\\/g, "/").split("/").pop() ?? "";
   return base === ".env" || base.startsWith(".env.") || /\.env$/.test(base)

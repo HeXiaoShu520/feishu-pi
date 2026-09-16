@@ -126,9 +126,8 @@ describe("PermissionPolicy deny + allow 两输入", () => {
     // group_1 生效 read = 自身配置
     expect(d.groups.group_1.effective.read).toEqual(expect.arrayContaining(["docs/**", ".agent/skills/**"]));
     expect(d.groups.group_1.effective.tools).toEqual(["query_skill_usage"]);
-    // deny 全集 = 内置默认 + 追加
-    expect(d.deny).toContain(".env");
-    expect(d.deny).toContain("**/vault/**");
+    // deny 全集 = 完全来自 permissions.json
+    expect(d.deny).toEqual(["**/vault/**"]);
   });
 
   it("common 默认层：所有人自动叠加，组在其上追加；admin 并集不受影响", async () => {
@@ -164,17 +163,17 @@ describe("PermissionPolicy deny + allow 两输入", () => {
     expect(d.groups.common.effective.read).toContain(".agent/skills/**");
   });
 
-  it("deny 第 0 层：内置默认对所有人（含 admin）生效，deny 键可追加，先于 allow 判定", async () => {
+  it("deny 第 0 层：显式模式对所有人（含 admin）生效，先于 allow 判定", async () => {
     const { file } = await writePolicy({
-      deny: ["**/vault/**"],
+      deny: ["**/.env", ".env.*", "*.key", "**/vault/**"],
       allow: { admin: ["Bash(*)", "Read(**)", "Write(**)", "Tools(*)"] },
     });
     const policy = new PermissionPolicy(file, { groupMembership: { admin: ["张三"] } });
     const admin = await policy.forGroups(["admin"]);
 
-    // allow 规则全放行，但 deny 清单命中即拦（.env 为内置默认，无需配置）
+    // allow 规则全放行，但 deny 清单命中即拦
     expect(admin.readAllowed(".env")).toBe(true);
-    expect(admin.deniedPath(".env")).toBe(".env");
+    expect(admin.deniedPath(".env")).toBe("**/.env");
     expect(admin.deniedPath("config/.env.local")).toBe(".env.*");
     expect(admin.deniedPath("certs/server.key")).toBe("*.key");
     // 自定义追加模式生效

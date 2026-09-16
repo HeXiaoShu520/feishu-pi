@@ -60,19 +60,6 @@ export interface GroupPolicy {
   describe(): Required<Omit<GroupFields, "tools">> & { tools: string[] };
 }
 
-/**
- * 内置 deny 模式（路径 glob，无目录分隔符的条目匹配任意层级，与 Read/Write 同语义）：
- * .env 等环境配置与密钥/凭据文件一律禁止经智能体读写，零配置即生效；
- * permissions.json 顶层 "deny" 数组可追加自定义模式（与内置合并去重）。
- */
-export const DEFAULT_DENY_PATTERNS: readonly string[] = [
-  ".env", ".env.*", "*.env",                              // 环境变量/密钥配置
-  "*.key", "*.pem", "*.p12", "*.pfx", "*.jks",            // 密钥与证书
-  "id_rsa*", "id_ed25519*", "id_ecdsa*",                  // SSH 私钥
-  "*credential*", "*secret*",                             // 凭据类文件名
-  ".git-credentials", ".netrc",                           // 版本控制/网络凭据
-];
-
 /** 不在任何组时的保守缺省：仅技能目录可读（零配置行为） */
 const UNGROUPED_READ = [".agent/skills/**"];
 
@@ -89,7 +76,7 @@ export class PermissionPolicy {
   private groups: Record<string, GroupFields> = {};
   /** common 默认层：所有人自动叠加的基础权限 */
   private common: GroupFields = {};
-  /** deny 追加模式（permissions.json 顶层 "deny"，与内置默认合并为第 0 层） */
+  /** deny 模式（permissions.json 顶层 "deny"，第 0 层的唯一来源） */
   private denyExtras: string[] = [];
   private groupMembership: Record<string, string[]>;
   private loadedMtimeMs = -1;
@@ -103,9 +90,9 @@ export class PermissionPolicy {
     this.cwd = options.cwd ?? process.cwd();
   }
 
-  /** 当前生效的 deny 模式全集（内置默认 ∪ 配置追加，去重）。 */
+  /** 当前生效的 deny 模式全集（完全来自 permissions.json 顶层 "deny"，无内置默认）。 */
   private get denyPatterns(): string[] {
-    return [...new Set([...DEFAULT_DENY_PATTERNS, ...this.denyExtras])];
+    return this.denyExtras;
   }
 
   /**
