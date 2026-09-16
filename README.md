@@ -16,7 +16,7 @@ feishu-pi 是一个基于 [Pi](https://github.com/earendil-works/pi) 的飞书 A
 - ✅ **消息去重** - 防止重复处理同一消息
 - ✅ **自动重连** - WebSocket 断线自动恢复
 - ✅ **飞书用户上下文** - 自动查询并缓存用户信息（中文名、英文名、部门名；经管理员 `/login` 授权的用户身份查询），供所有技能和 Function Calling 直接使用
-- ✅ **基于组的权限控制** - admin、common 与用户组（group_1、group_2……），规则扁平分组、动态热重载；deny 规则（.env 等敏感路径）全局禁止读写
+- ✅ **基于组的权限控制** - admin、common 与用户组（group、group_1……），规则扁平分组、动态热重载；deny 规则（.env 等敏感路径）全局禁止读写
 - ✅ **工具调用 Guard** - deny 规则（.env/密钥/凭据一律禁止读写，含管理员）+ 指令白名单（正则）+ 大模型审核 + 管理员授权卡（单次确认，支持转发到管理员私聊），高危调用默认弹卡；系统提示注入密钥安全规则（确需返回敏感值必须加 * 遮蔽）
 - ✅ **Skills 支持** - 基于 Pi-agent 的技能系统，支持权限配置
 - ✅ **Function Calling** - 自定义工具注册，支持权限控制
@@ -476,7 +476,7 @@ call check_health() → ✅ 服务健康
 **一个策略文件 + 两道闸门：白名单先行，智能体兜底；常用操作免审，边界操作灵活判断，敏感操作交人工确认。**
 
 - `.agent/permissions.json` 只有两个输入：`deny`（全局禁止读写的路径清单）与 `allow`（各身份组的放行规则，含 common/admin/group_*）——每条规则用类型前缀标明范围
-- 组成员在 `.env` 中配置：团队组用纯数字简写 `FEISHU_GROUP_1=成员1,成员2`（对应组 `group_1`，扩展 `FEISHU_GROUP_2` → `group_2`）；非数字组名用全名 `FEISHU_GROUP_<组名>`；`FEISHU_ADMIN` 自动属于 admin 组
+- 组成员在 `.env` 中配置：`FEISHU_GROUP=成员1,成员2` 对应主团队组 `group`；`FEISHU_GROUP_1=成员1` 对应组 `group_1`（扩展 `FEISHU_GROUP_2` → `group_2`）；非数字组名用全名 `FEISHU_GROUP_<组名>`；`FEISHU_ADMIN` 自动属于 admin 组
 - 每次工具调用时，先过 deny 规则（.env 等敏感路径一律禁止读写，对所有人含管理员生效），再过白名单闸门（匹配即放行），未命中交智能体闸门综合判断，再不行弹授权卡交管理员
 - **密钥防护双轨**：执行侧由 deny 规则硬拦（.env 等内置默认 + `permissions.json` 顶层 `deny` 可扩展，read/write/bash 全覆盖）；模型侧由系统提示注入「密钥安全规则」（确需返回密钥之类的值时，一定要加 `*` 遮蔽）
 
@@ -523,7 +523,7 @@ call check_health() → ✅ 服务健康
 | `Bash(cmd)` | 命令、`cmd:*` 或 `*` | 该组可执行的 bash 命令（精确/前缀/全部） |
 
 - **admin 组**（保留名）：`FEISHU_ADMIN` 自动属于；未配置的字段取全量缺省（`Bash(*)`、`Read(**)`、`Write(**)`、`Tools(*)`）
-- **团队组**：命名 `group_1`、`group_2`……，组员宏可用纯数字简写 `FEISHU_GROUP_1`（只暂定一个团队时配 `FEISHU_GROUP_1` 即可）
+- **团队组**：主团队组命名 `group`（组员宏 `FEISHU_GROUP=…`），扩展组命名 `group_1`、`group_2`……（组员宏 `FEISHU_GROUP_1`、`FEISHU_GROUP_2`……）
 - **其他组**（组名任意，如 `vip`）：组员宏用全名 `FEISHU_GROUP_VIP`；未配置的字段取保守缺省（仅技能目录可读、无工具、无命令）
 - **不在任何组**：仅技能目录可读，其余全部拦截
 - 一人可属多组，能力取**并集**

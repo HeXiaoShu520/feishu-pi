@@ -30,9 +30,10 @@ describe("loadConfig 模型统计小字开关", () => {
 
 describe("parseGroupMembership（FEISHU_GROUP 配置语义）", () => {
   const warn = vi.fn();
-  it("FEISHU_GROUP（无后缀）与 FEISHU_GROUP_1 都映射到主团队组 group_1，成员合并去重", () => {
-    const groups = parseGroupMembership({ FEISHU_GROUP: "李雷, 韩梅梅", FEISHU_GROUP_1: "韩梅梅,王强" });
-    expect(groups["group_1"]).toEqual(["李雷", "韩梅梅", "王强"]);
+  it("FEISHU_GROUP（无后缀）映射到主团队组 group；FEISHU_GROUP_1 映射到 group_1（两者是不同组）", () => {
+    const groups = parseGroupMembership({ FEISHU_GROUP: "李雷, 韩梅梅", FEISHU_GROUP_1: "王强" });
+    expect(groups["group"]).toEqual(["李雷", "韩梅梅"]);
+    expect(groups["group_1"]).toEqual(["王强"]);
   });
 
   it("纯数字后缀映射 group_<N>；自定义组名转小写", () => {

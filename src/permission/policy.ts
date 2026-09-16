@@ -23,7 +23,7 @@ import { logger } from "../utils/logger.ts";
  * allow 里的保留组名：
  *   - common——所有人默认拥有的基础权限（每个用户自动叠加，无需归属）；
  *   - admin——管理员组，FEISHU_ADMIN 自动属于；未配置的字段取全量缺省。
- *   其余组名任取（团队组暂定 group_1、group_2……）。
+ *   其余组名任取（团队组如 group、group_1、group_2……）。
  *
  * 组成员在 .env 中通过 FEISHU_GROUP_<组名>=成员1,成员2,... 配置；
  * 纯数字后缀简写为团队组：FEISHU_GROUP_1 → group_1、FEISHU_GROUP_2 → group_2。

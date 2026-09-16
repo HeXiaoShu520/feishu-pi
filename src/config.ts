@@ -33,12 +33,12 @@ function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
   return ["1", "true", "on", "yes"].includes(value.trim().toLowerCase());
 }
 
-/** 主团队组名：FEISHU_GROUP（无后缀）与 FEISHU_GROUP_1 都落到这里（与 permissions.json 的 group_1 对应） */
-const PRIMARY_GROUP = "group_1";
+/** 主团队组名：FEISHU_GROUP（无后缀）落到这里（与 permissions.json 的 group 对应） */
+const PRIMARY_GROUP = "group";
 
 /**
  * 解析组成员配置：
- * - FEISHU_GROUP=x,y        → group_1（主团队组）
+ * - FEISHU_GROUP=x,y        → group（主团队组）
  * - FEISHU_GROUP_<数字>      → group_<数字>（与 permissions.json 的组名对应）
  * - FEISHU_GROUP_<组名>      → 组名小写（自定义组）
  * 同组多来源成员合并去重，保持首次出现顺序。
@@ -57,7 +57,7 @@ export function parseGroupMembership(env: NodeJS.ProcessEnv): Record<string, str
     if (!key.startsWith("FEISHU_GROUP")) continue;
     const raw = key.slice("FEISHU_GROUP".length);
     if (raw === "") {
-      // 主团队组：FEISHU_GROUP → group_1
+      // 主团队组：FEISHU_GROUP → group
       add(PRIMARY_GROUP, toMembers(value));
       continue;
     }
@@ -103,7 +103,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     guardApiKey: env.FEISHU_GUARD_API_KEY ?? env.FEISHU_PI_MODEL_API_KEY,
     guardTimeoutMs: Number(env.FEISHU_GUARD_TIMEOUT_MS) > 0 ? Number(env.FEISHU_GUARD_TIMEOUT_MS) : 15_000,
     // 各组归属关系：解析 FEISHU_GROUP[<_N>]=成员1,成员2,... 格式；
-    // FEISHU_GROUP（无后缀）与 FEISHU_GROUP_1 都映射到主团队组 group_1（成员合并去重），
+    // FEISHU_GROUP（无后缀）映射到主团队组 group，
     // FEISHU_GROUP_2..N 对应 group_2..N；成员除 open_id/中英文名外还支持组织架构部门名
     // （用户缓存的部门路径包含该部门名即视为组成员，见 PermissionPolicy.groupsFor）。
     groupMembership: parseGroupMembership(env),
