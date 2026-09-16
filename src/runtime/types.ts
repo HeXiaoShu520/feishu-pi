@@ -63,8 +63,6 @@ export interface FeishuPiSession {
   abort(): void;
   getStats(): SessionStats;
   getModelName?(): string;
-  /** 当前上下文占用估算（含窗口与百分比），可选 */
-  getContextUsage?(): { tokens: number | null; contextWindow: number; percent: number | null } | undefined;
 }
 
 /** 项目工具类型：Pi AgentTool + 可选高危标记（risk: "high" 时跳过策略放行走授权卡） */

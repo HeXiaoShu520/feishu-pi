@@ -10,21 +10,20 @@ interface MessageRecord {
   updatedAt: number;
 }
 
+/** processing 状态超过该时长视为卡住，允许重新认领 */
+const PROCESSING_TTL_MS = 10 * 60 * 1000;
+
 /** 使用 JSON 保存消息处理状态，避免重复投递重复执行 Agent。 */
 export class MessageStore extends JsonMapStore<MessageRecord> {
-  /** processing 状态超过该时长视为卡住，允许重新认领 */
-  private readonly processingTtlMs: number;
-
-  constructor(filePath: string, processingTtlMs = 10 * 60 * 1000) {
+  constructor(filePath: string) {
     super(filePath);
-    this.processingTtlMs = processingTtlMs;
   }
 
   /** 原子认领一条消息；已完成或仍在处理的消息不会再次执行。 */
   async claim(messageId: string): Promise<boolean> {
     await this.ensureLoaded();
     const existing = this.records.get(messageId);
-    if (existing && (existing.status === "completed" || (existing.status === "processing" && Date.now() - existing.updatedAt < this.processingTtlMs))) return false;
+    if (existing && (existing.status === "completed" || (existing.status === "processing" && Date.now() - existing.updatedAt < PROCESSING_TTL_MS))) return false;
     await this.setStatus(messageId, "processing");
     return true;
   }

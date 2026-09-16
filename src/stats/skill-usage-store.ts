@@ -33,7 +33,7 @@ interface UserCacheRecord {
 }
 
 /** 允许的技能目录前缀（相对 cwd，统一正斜杠后前缀匹配），与 restricted-read 保持一致 */
-export const SKILL_DIR_PREFIXES = [".agent/skills/"];
+const SKILL_DIR_PREFIXES = [".agent/skills/"];
 
 /**
  * 判断一次工具调用是否为「读取技能文件」，是则返回技能名，否则返回 null。

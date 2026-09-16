@@ -42,7 +42,6 @@ export class FeishuAgentBridge {
       onEvent?: FeishuEventHandler;
       messages?: MessageStore;
       client?: Client;
-      enableReaction?: boolean;
       /** 额外指令（如 /perm），注册在默认指令之后 */
       extraCommands?: CommandHandler[];
       /** 回复末尾是否显示模型统计小字（默认显示）；工具过程状态不受影响 */
@@ -60,9 +59,7 @@ export class FeishuAgentBridge {
     this.client = options?.client;
     this.showModelStats = options?.showModelStats ?? true;
     this.peopleRoster = options?.peopleRoster;
-    this.reactionController = options?.client && (options?.enableReaction ?? true)
-      ? new ReactionController(options.client)
-      : undefined;
+    this.reactionController = options?.client ? new ReactionController(options.client) : undefined;
     this.commandRegistry = createDefaultRegistry(options?.modelInfo);
     // /detail on|off 设置详细/精简模式，状态由 bridge 持有（按 chatId 记忆，默认精简）
     this.commandRegistry.register(new DetailCommand(

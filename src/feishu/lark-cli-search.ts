@@ -14,13 +14,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../utils/logger.ts";
-
-/** 单次查询通道的返回（与 lark-cli.ts 的 ProfileName 对齐；此处反向依赖会造成环，结构化定义） */
-export interface SearchedProfile {
-  name?: string;
-  en_name?: string;
-  department_name?: string[];
-}
+import type { ProfileName } from "./lark-cli.ts";
 
 export interface CliSearchUserOptions {
   appId: string;
@@ -42,7 +36,7 @@ export interface CliSearchUserOptions {
 const str = (v: unknown): string => (typeof v === "string" ? v : "");
 
 /** 解析 contact +search-user 的 JSON 输出（容忍前后夹杂的非 JSON 提示行）。 */
-export function parseSearchUserOutput(stdout: string): SearchedProfile | undefined {
+export function parseSearchUserOutput(stdout: string): ProfileName | undefined {
   let data: unknown;
   try {
     data = JSON.parse(stdout);
@@ -105,14 +99,14 @@ export function resolveLarkCliBinary(cwd: string): string | undefined {
   return existsSync(path) ? path : undefined;
 }
 
-export type CliSearchUser = (targetOpenId: string) => Promise<SearchedProfile | undefined>;
+export type CliSearchUser = (targetOpenId: string) => Promise<ProfileName | undefined>;
 
 export function createCliSearchUser(options: CliSearchUserOptions): CliSearchUser {
   const cwd = options.cwd ?? process.cwd();
   const run = options.run ?? defaultRun;
   const timeoutMs = options.timeoutMs ?? 20_000;
 
-  return async (targetOpenId: string): Promise<SearchedProfile | undefined> => {
+  return async (targetOpenId: string): Promise<ProfileName | undefined> => {
     const exe = resolveLarkCliBinary(cwd);
     if (!exe) {
       logger.warn("[CliSearch] 未找到项目内 lark-cli 二进制（node_modules/@larksuite/cli），跳过用户态搜索通道");

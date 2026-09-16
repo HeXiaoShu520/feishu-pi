@@ -102,11 +102,6 @@ export async function resolveAdminOpenId(
 // 冷启动兜底：从已 /login 用户的登录身份中识别管理员
 // ---------------------------------------------------------------------------
 
-/** 用户缓存文件路径（与 LarkCli 的资料缓存同一份：data/users/{appId}_users.json） */
-export function usersCachePath(appId: string, dataDir = join(process.cwd(), "data", "users")): string {
-  return join(dataDir, `${appId}_users.json`);
-}
-
 /** 把资料并入用户缓存文件（已有条目字段保留合并，供 admin 缓存通道 / 群组部门匹配等复用）。 */
 export async function persistUserProfile(
   usersFile: string,

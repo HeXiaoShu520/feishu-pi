@@ -68,11 +68,6 @@ class SessionWrapper implements FeishuPiSession {
     return this.raw.model?.id || "unknown";
   }
 
-  /** 当前上下文占用（token 数 / 窗口 / 百分比），用于统计小字的 ctx 显示。 */
-  getContextUsage(): { tokens: number | null; contextWindow: number; percent: number | null } | undefined {
-    return (this.raw as { getContextUsage?: () => { tokens: number | null; contextWindow: number; percent: number | null } | undefined }).getContextUsage?.();
-  }
-
   subscribe(listener: (event: FeishuPiEvent) => void): () => void {
     return this.raw.subscribe((event) => {
       const mapped = mapPiEvent(event as unknown as PiRawEvent);

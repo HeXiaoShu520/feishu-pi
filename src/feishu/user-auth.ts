@@ -141,8 +141,6 @@ export interface UserAuthOptions {
    * 重启后走缓存通道自动识别管理员。
    */
   onLoginBound?: (info: LoginIdentity & { openId: string }) => void | Promise<void>;
-  /** 轮询基准间隔（秒）；发起响应自带 interval 时优先用响应值 */
-  pollIntervalSec?: number;
   /** 以下均为测试注入：HTTP 实现、时钟与睡眠 */
   postForm?: PostForm;
   now?: () => number;
@@ -217,7 +215,7 @@ export class UserAuthService {
       return { card: markdownCard(`❌ 发起授权失败：${reason}\n请检查应用后台是否已开通并发布对应权限，以及 FEISHU_USER_AUTH_SCOPES 配置。`) };
     }
 
-    const intervalMs = (num(begin.interval) || this.options.pollIntervalSec || 5) * 1000;
+    const intervalMs = (num(begin.interval) || 5) * 1000;
     const expiresInMs = (num(begin.expires_in) || 300) * 1000;
     const link = str(begin.verification_uri_complete) || str(begin.verification_uri);
     const userCode = str(begin.user_code);
@@ -382,7 +380,7 @@ export class UserAuthService {
       expiresInMin: Math.round((num(begin!.expires_in) || 300) / 60_000),
     });
 
-    const intervalMs = (num(begin!.interval) || this.options.pollIntervalSec || 5) * 1000;
+    const intervalMs = (num(begin!.interval) || 5) * 1000;
     const deadline = this.now() + (num(begin!.expires_in) || 300) * 1000;
     let waitMs = intervalMs;
     while (this.now() < deadline) {
