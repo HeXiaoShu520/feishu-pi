@@ -62,9 +62,14 @@ export class CredentialVault {
     if (cached) return cached;
     const keyFilePath = opts.keyFile ?? join(dirname(filePath), ".vault-key");
     const vault = new CredentialVault(filePath, keyFilePath);
-    await vault.ensureLoaded();
+    // 同步占位：并发 open 同一路径时不得建出多个实例（各自写队列会互相覆盖丢数据）
     CredentialVault.instances.set(filePath, vault);
-    logger.info(`[Vault] 凭证库就绪: ${filePath}（主密钥来源 ${vault.keySource}，共 ${vault.records.size} 条）`);
+    try {
+      await vault.ensureLoaded();
+    } catch (error) {
+      CredentialVault.instances.delete(filePath);
+      throw error;
+    }
     return vault;
   }
 

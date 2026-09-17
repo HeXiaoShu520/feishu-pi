@@ -1,6 +1,5 @@
 import "./bootstrap-env.ts"; // 最早执行：.env 缺失自动拷贝（必须在 dotenv 之前）
 import "dotenv/config";
-import { registerStatsRoutes } from "./stats-server.ts"; // 统计页面服务器（模块加载即监听 127.0.0.1:3456）
 import { ConversationManager } from "./runtime/conversation-manager.ts";
 import { FeishuPiRuntime } from "./runtime/feishu-pi-runtime.ts";
 import { FeishuAgentBridge } from "./feishu/agent-bridge.ts";
@@ -10,7 +9,6 @@ import { ConversationStore } from "./runtime/conversation-store.ts";
 import { MessageStore } from "./feishu/message-store.ts";
 import { DataCleaner } from "./runtime/data-cleaner.ts";
 import { resolveAdminOpenId, persistUserProfile, resolveAdminFromLogins } from "./feishu/admin-resolver.ts";
-import { SkillUsageStore } from "./stats/skill-usage-store.ts";
 import { ScheduleService } from "./schedule/service.ts";
 import { PermissionPolicy } from "./permission/policy.ts";
 import { PermCommand, markdownCard } from "./feishu/commands.ts";
@@ -19,10 +17,11 @@ import { PeopleRoster } from "./feishu/people-roster.ts";
 import { createIdentityBashTool } from "./runtime/identity-bash.ts";
 import { runSetupWizard } from "./feishu/setup-wizard.ts";
 import { MEEGLE_DEFAULT_HOST, StaticCredentialService } from "./feishu/meegle-auth.ts";
-import { createCliSearchUser } from "./feishu/lark-cli-search.ts";
+import { createCliSearchUser, resolveLarkCliBinary } from "./feishu/lark-cli-search.ts";
 import { delimiter, dirname, join } from "node:path";
+import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
-import { Client } from "@larksuiteoapi/node-sdk";
+import { Client, LoggerLevel } from "@larksuiteoapi/node-sdk";
 import qr from "qrcode-terminal";
 import { logger } from "./utils/logger.ts";
 import { scrubSecretsInDir } from "./utils/session-scrub.ts";
@@ -104,6 +103,7 @@ export async function main(): Promise<void> {
   const client = new Client({
     appId: config.feishuAppId,
     appSecret: config.feishuAppSecret,
+    loggerLevel: LoggerLevel.warn, // SDK 自己的 logger 格式与项目不一致；只在异常时出声
   });
 
   // —— 启动第 1 步：机器人身份（openId）是硬门槛 ——
@@ -116,8 +116,9 @@ export async function main(): Promise<void> {
         method: "GET",
         url: "/open-apis/bot/v3/info",
       });
-      if (res.code === 0 && res.data?.bot?.open_id) {
-        botOpenId = res.data.bot.open_id;
+      // SDK 拦截器直接返回响应体；/bot/v3/info 的 bot 字段在顶层（无 data 包裹）
+      if (res.code === 0 && res.bot?.open_id) {
+        botOpenId = res.bot.open_id;
         logger.info(`[Main] 启动 1/4 机器人身份就绪: ${botOpenId}${attempt > 1 ? `（第 ${attempt} 次尝试成功）` : ""}`);
         break;
       }
@@ -174,7 +175,7 @@ export async function main(): Promise<void> {
     // 增量授权：能力需要新 scope 时自动向该会话发授权卡
     sendCard: (chatId, card) => transport.sendCardToChat(chatId, card),
     // /login 绑定完成时：管理员尚未识别且登录者与管理员配置匹配 → 资料入缓存（重启即生效）
-    onLoginBound: (info) => captureAdminFromLogin(info),
+    onLoginBound: (info) => handleLoginBound(info),
   });
 
   // 存量会话清洗（后台）：用凭证库已知密钥值扫描历史会话 jsonl，命中的明文替换为 ***
@@ -188,7 +189,31 @@ export async function main(): Promise<void> {
     if (replaced > 0) logger.info(`[Main] 已清洗历史会话文件中的明文凭证（处理 ${replaced} 个文件）`);
   })().catch((error) => logger.warn("[Main] 会话清洗失败:", error));
 
-  // —— 启动第 2 步：lark cli 登录（无前提：没有登录态就必须授权，仅一次机会，失败自动退出）——
+  // —— 启动第 2 步：lark-cli 就绪（二进制存在 + 管理员已登录）——
+  // 登录指管理员绑定自己的用户身份；其余成员可各自 /login 绑定凭证（运行时身份 bash 用），
+  // 启动门槛只看管理员。
+  if (!resolveLarkCliBinary(config.cwd)) {
+    throw new Error("lark-cli 二进制缺失（node_modules/@larksuite/cli），请重新 npm install 后启动");
+  }
+
+  /** 管理员登录态：FEISHU_PI_ADMIN 为 open_id 直接查；否则经用户缓存姓名匹配出 openId 再查。
+   *  返回 active=有效 / expired=已过期 / none=找不到管理员对应的登录。 */
+  const adminLoginState = async (): Promise<"active" | "expired" | "none"> => {
+    const identifier = config.feishuAdmin;
+    if (!identifier) return "none";
+    let openId = identifier.startsWith("ou_") ? identifier : undefined;
+    if (!openId) {
+      try {
+        const cache = JSON.parse(await readFile(usersFile, "utf8")) as Record<string, { name?: string; en_name?: string }>;
+        openId = Object.entries(cache).find(([, p]) => p.name === identifier || p.en_name === identifier)?.[0];
+      } catch {
+        openId = undefined; // 缓存不存在/损坏按未匹配处理
+      }
+    }
+    if (!openId) return "none";
+    return (await userAuth.loginStatus(openId)).state;
+  };
+
   let loginUsers: string[] = [];
   try {
     loginUsers = await userAuth.listLoginUsers();
@@ -210,7 +235,16 @@ export async function main(): Promise<void> {
     if (!login.ok || !login.identity) {
       throw new Error(`lark 授权未完成（${login.reason ?? "未知原因"}），自动退出。请重新运行 npm start 重试。`);
     }
-    logger.info(`[Main] 启动 2/4 lark 登录成功: ${login.identity.name ?? login.identity.openId}`);
+    logger.info(`[Main] 启动 2/4 lark-cli 就绪：管理员 ${login.identity.name ?? login.identity.openId} 已登录`);
+  } else {
+    const state = await adminLoginState();
+    if (state === "active") {
+      logger.info("[Main] 启动 2/4 lark-cli 就绪：管理员已登录");
+    } else if (state === "expired") {
+      logger.warn("[Main] 启动 2/4 lark-cli 管理员登录已失效，请在聊天中发 /login lark 重新授权");
+    } else {
+      logger.warn(`[Main] 启动 2/4 lark-cli 管理员（${config.feishuAdmin}）尚未登录，管理员相关能力不可用（可 /login lark 授权）`);
+    }
   }
 
   // —— 启动第 3 步：管理员身份解析（解析不了就当没有管理员，服务照常运行）——
@@ -219,7 +253,11 @@ export async function main(): Promise<void> {
     adminOpenId = await resolveAdminFromLogins(userAuth, config.feishuAdmin, usersFile);
   }
   if (adminOpenId) {
-    logger.info(`[Main] 启动 3/4 管理员 Open ID: ${adminOpenId}`);
+    logger.info(
+      config.feishuAdmin === adminOpenId
+        ? `[Main] 启动 3/4 管理员 Open ID: ${adminOpenId}`
+        : `[Main] 启动 3/4 管理员: ${config.feishuAdmin} → ${adminOpenId}`,
+    );
   } else if (config.feishuAdmin) {
     logger.warn(`[Main] 启动 3/4 管理员身份解析失败（FEISHU_PI_ADMIN=${config.feishuAdmin}），本次运行当作没有管理员`);
   } else {
@@ -253,9 +291,13 @@ export async function main(): Promise<void> {
     onModelSwitch: (name) => runtime?.setModelName(name),
   });
 
-  /** /login 绑定完成时的管理员捕获：管理员尚未识别且登录者身份与 FEISHU_PI_ADMIN 匹配
-   *  → 资料写入用户缓存，重启后走缓存通道自动识别（"管理员先 /login、再重启一遍"）。 */
-  const captureAdminFromLogin = (info: { openId: string; name?: string; en_name?: string; email?: string }): void => {
+  /** /login 绑定完成时：① 身份 API 给出的姓名是权威资料，直接写入用户缓存
+   *  （无需等搜索通道，冷却空档案立即被覆盖）；② 管理员尚未识别且登录者与
+   *  FEISHU_PI_ADMIN 匹配 → 记录资料，重启后走缓存通道自动识别。 */
+  const handleLoginBound = (info: { openId: string; name?: string; en_name?: string; email?: string }): void => {
+    void transport
+      .seedUserProfile(info.openId, { name: info.name, en_name: info.en_name })
+      .catch((error) => logger.warn("[Main] 登录资料写入用户缓存失败:", error));
     const identifier = config.feishuAdmin;
     if (!identifier || adminOpenId) return;
     const matched =
@@ -396,15 +438,9 @@ export async function main(): Promise<void> {
     }
   });
 
-  // ---------- 统计与定时任务 ----------
+  // ---------- 定时任务 ----------
 
-  // 技能使用统计：独立事件流（data/stats/，不参与 7 天清理），展示名解析复用用户缓存
   const dataDir = dirname(config.sessionDir);
-  const usageStore = new SkillUsageStore(
-    join(dataDir, "stats", "skill-usage.jsonl"),
-    join(dataDir, "users", `${config.feishuAppId}_users.json`),
-  );
-  registerStatsRoutes(usageStore);
 
   // 定时任务：持久化（data/schedules.json）+ cron 调度；触发时以创建者身份跑智能体并推送结果卡片
   // 注意：runTask 闭包引用下方才声明的 conversations（前向引用），仅在任务触发（启动完成后）才会执行
@@ -452,7 +488,6 @@ ${trimmed}` }] },
     systemPrompt: config.systemPrompt,
     permissionPolicy: policy,
     toolGuard: (groupPolicy, params, signal) => toolGuard.check(groupPolicy, params, signal),
-    skillUsageStore: usageStore,
     scheduleService,
     // 会话级带身份 bash：按发起人（含管理员）注入 lark-cli 凭证 env；
     // 同步读内存缓存，未登录时不注入（lark-cli 走默认身份，调用方提示 /login）。
@@ -546,7 +581,6 @@ ${trimmed}` }] },
   await scheduleService.start();
 
   logger.info("[Main] 启动 4/4 服务开始工作");
-  console.log(`\n配置页面: http://localhost:3456\n`);
 
   // 优雅退出处理：Windows 上 WebSocket disconnect 可能挂住，
   // 因此后台尝试断开 + 短宽限后立即硬退出，不阻塞终端

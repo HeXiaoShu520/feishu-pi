@@ -27,7 +27,6 @@ function detectPython(): string {
     try {
       execFileSync(cmd, ["--version"], { stdio: "pipe", windowsHide: true });
       _pythonCmd = cmd;
-      logger.info(`[Registry] 检测到 Python 命令: ${cmd}`);
       return cmd;
     } catch {
       continue;

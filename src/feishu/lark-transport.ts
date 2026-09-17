@@ -1,4 +1,4 @@
-import { EventDispatcher, normalize, normalizeCardAction, WSClient, type Client } from "@larksuiteoapi/node-sdk";
+import { EventDispatcher, LoggerLevel, normalize, normalizeCardAction, WSClient, type Client } from "@larksuiteoapi/node-sdk";
 import type { FeishuInboundMessage, FeishuTransport } from "./types.ts";
 import { LarkCli } from "./lark-cli.ts";
 import { TopicRootStore } from "./topic-root-store.ts";
@@ -158,6 +158,7 @@ export class LarkTransport implements FeishuTransport {
       appId: this.appId,
       appSecret: this.appSecret,
       source: this.source,
+      loggerLevel: LoggerLevel.warn, // SDK 自己的 logger 格式与项目不一致；只在异常时出声
       handshakeTimeoutMs: this.handshakeTimeoutMs,
       wsConfig: { pingTimeout: this.pingTimeout },
       onReconnecting: () => logger.warn("[LarkTransport] 飞书 WebSocket 正在重连"),
@@ -563,6 +564,11 @@ export class LarkTransport implements FeishuTransport {
       logger.warn(`[Roster] 团队成员收集中断（已完成部分保留）: ${error instanceof Error ? error.message : String(error)}`);
     }
     return this.larkCli.upsertRosterNames([...entries].map(([openId, name]) => ({ openId, name })));
+  }
+
+  /** 登录绑定：把身份 API 给出的权威姓名直接写入用户资料缓存（冷却空档案立即被覆盖）。 */
+  seedUserProfile(openId: string, profile: { name?: string; en_name?: string }): Promise<void> {
+    return this.larkCli.putProfile(openId, profile);
   }
 
   /** 按 messageId 更新已发送的卡片。 */

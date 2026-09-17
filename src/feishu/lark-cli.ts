@@ -163,4 +163,20 @@ export class LarkCli {
     if (added > 0) logger.info(`[LarkCli] 团队名单入库 ${added} 人（仅姓名，部门待补全）`);
     return added;
   }
+
+  /**
+   * 直接写入/合并资料并落盘（登录绑定时身份 API 已给出权威姓名，无需走搜索通道，
+   * 冷却空档案立即被覆盖）。
+   */
+  async putProfile(openId: string, profile: ProfileName): Promise<void> {
+    await this.loadCache();
+    const prev = this.cache[openId];
+    this.cache[openId] = {
+      name: profile.name ?? prev?.name ?? "",
+      en_name: profile.en_name ?? prev?.en_name ?? "",
+      department_name: profile.department_name ?? prev?.department_name ?? [],
+      updatedAt: new Date().toISOString(),
+    };
+    await this.saveCache();
+  }
 }

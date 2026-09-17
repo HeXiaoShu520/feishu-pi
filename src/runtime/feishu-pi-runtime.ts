@@ -8,9 +8,7 @@ import { logger, colors } from "../utils/logger.ts";
 import { redactSecrets } from "../utils/redact.ts";
 import { conversationDir } from "../utils/session-paths.ts";
 import { createScheduleManagerTool } from "../schedule/tool.ts";
-import { matchSkillRead } from "../stats/skill-usage-store.ts";
 import { rewritePlaintextCliCredentials } from "./identity-bash.ts";
-import type { SkillUsageStore } from "../stats/skill-usage-store.ts";
 import type { GroupPolicy } from "../permission/policy.ts";
 
 /** .agent/tools/ 里的脚本可在导出对象上附带 risk: "high"（强制走授权卡） */
@@ -190,15 +188,8 @@ export class FeishuPiRuntime {
     const { skills } = baseResourceLoader.getSkills();
 
     if (skills.length > 0) {
-      logger.info(`[Runtime] 已加载 ${colors.bright}${colors.magenta}${skills.length}${colors.reset} 个 Skills（对所有人开放）:`);
-      skills.forEach((skill) => {
-        // 每行（含名字）最多显示 90 个可见字符，超长描述截断
-        const head = `  ✆ ${skill.name}: `;
-        const desc = String(skill.description ?? "").replace(/\s+/g, " ").trim();
-        const maxDesc = Math.max(0, 90 - head.length);
-        const shown = desc.length > maxDesc ? `${desc.slice(0, maxDesc)}…` : desc;
-        logger.info(`  ${colors.magenta}✆${colors.reset} ${colors.cyan}${skill.name}${colors.reset}: ${shown}`);
-      });
+      // 只报数量不逐个罗列：技能一多逐行打印就是刷屏，明细看 /stats 页面
+      logger.info(`[Runtime] 已加载 ${colors.bright}${colors.magenta}${skills.length}${colors.reset} 个 Skills（对所有人开放）`);
     } else {
       logger.warn(`[Runtime] 未找到任何 Skills`);
     }
@@ -211,20 +202,13 @@ export class FeishuPiRuntime {
       logger.warn("[Runtime] 自定义 Tools 加载失败（不影响启动，下个会话重试）:", error);
     }
     if (customTools.length > 0) {
-      logger.info(`[Runtime] 已加载 ${colors.bright}${colors.cyan}${customTools.length}${colors.reset} 个 Tools（.agent/tools，随组策略注册）:`);
-      customTools.forEach((tool) => {
-        const head = `  ⚙ ${tool.name}: `;
-        const desc = String(tool.description ?? "").replace(/\s+/g, " ").trim();
-        const maxDesc = Math.max(0, 90 - head.length);
-        const shown = desc.length > maxDesc ? `${desc.slice(0, maxDesc)}…` : desc;
-        logger.info(`  ${colors.cyan}⚙${colors.reset} ${colors.cyan}${tool.name}${colors.reset}: ${shown}`);
-      });
+      logger.info(`[Runtime] 已加载 ${colors.bright}${colors.cyan}${customTools.length}${colors.reset} 个 Tools（对所有人开放）`);
     } else {
       logger.info(`[Runtime] 未找到自定义 Tools（.agent/tools/ 为空）`);
     }
 
     // 打印内置工具列表
-    logger.info(`[Runtime] 内置工具(按组策略注册): ${colors.gray}${DEFAULT_BUILTIN_TOOLS.join(", ")}${colors.reset}`);
+    logger.info(`[Runtime] 内置工具: ${colors.gray}${DEFAULT_BUILTIN_TOOLS.join(", ")}${colors.reset}`);
   }
 
   /** 自定义工具全集：进程内只扫描/导入一次，各会话复用同一份定义（失败可重试） */
@@ -260,6 +244,32 @@ export class FeishuPiRuntime {
     ]);
   }
 
+  /**
+   * 解析会话模型：内置目录命中直接用（可覆写 base_url）；未命中按同协议构造自定义模型——
+   * 任意 OpenAI/Anthropic 兼容端点（中转站、DeepSeek 等）凭 base_url 即可接入，不要求目录收录。
+   */
+  private resolveModel(): NonNullable<ReturnType<typeof getModel>> {
+    const { modelProvider: provider, modelName: name, modelBaseUrl: baseUrl } = this.config;
+    const known = getModel(provider as never, name as never);
+    if (known) return baseUrl ? { ...known, baseUrl } : known;
+    const anthropicCompatible = provider === "anthropic";
+    logger.info(
+      `[Runtime] 模型 ${provider}/${name} 不在内置目录，按 ${anthropicCompatible ? "Anthropic" : "OpenAI"} 兼容协议自定义接入（baseUrl=${baseUrl ?? "官方默认"}）`,
+    );
+    return {
+      id: name,
+      name,
+      api: anthropicCompatible ? "anthropic-messages" : "openai-completions",
+      provider,
+      baseUrl: baseUrl || (anthropicCompatible ? "https://api.anthropic.com" : "https://api.openai.com/v1"),
+      reasoning: false,
+      input: ["text", "image"],
+      cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
+      contextWindow: 128_000,
+      maxTokens: 8192,
+    } as NonNullable<ReturnType<typeof getModel>>;
+  }
+
   async createSession(sessionFile: string | undefined, userId: string, context?: FeishuContext): Promise<FeishuPiSession> {
     // 设置 API key 到对应厂商的环境变量
     const apiKey = process.env.FEISHU_PI_MODEL_API_KEY;
@@ -284,15 +294,13 @@ export class FeishuPiRuntime {
     const sessionManager = sessionFile
       ? SessionManager.open(sessionFile, convDir, this.config.cwd)
       : SessionManager.create(this.config.cwd, convDir);
-    const model = getModel(this.config.modelProvider as never, this.config.modelName as never);
-    if (!model) throw new Error(`Model not found: ${this.config.modelProvider}/${this.config.modelName}`);
+    const model = this.resolveModel();
 
     // 技能/自定义工具均上电加载一次（进程内缓存复用，修改后需重启生效）
     const baseResourceLoader = await this.loadBaseLoaderOnce();
     const customTools = await this.loadCustomToolsOnce();
     // 项目内置交互工具（ask_user_question 等）：随会话注册，并把调用者身份注入参数，
     // 工具执行时经 params._caller 拿到提问对象与会话（见 bindCallers）
-    // identityBash（可选）：同名覆盖内置 bash，spawn 前按会话用户注入 CLI 凭证环境变量
     // identityBash（可选）：同名覆盖内置 bash，spawn 前按会话用户注入 CLI 凭证环境变量
     const identityBashTool = this.config.identityBash?.(userId, context);
     const sessionTools = [
@@ -322,7 +330,7 @@ export class FeishuPiRuntime {
     const { session } = await createAgentSession({
       cwd: this.config.cwd,
       sessionManager,
-      model: this.config.modelBaseUrl ? { ...model, baseUrl: this.config.modelBaseUrl } : model,
+      model,
       tools: builtinNames,
       customTools: sessionTools,
       resourceLoader: baseResourceLoader,
@@ -340,9 +348,7 @@ export class FeishuPiRuntime {
     //   read → 所属组可读范围判定（范围外拦截不弹卡，范围内放行）
     //   bash / write / edit / 自定义工具 → ToolGuard 按所属组策略判定（名单外交授权卡）
     //   自定义工具另由 tools 字段控制可用性
-    // 放行后记录技能使用事件。统计失败只告警不阻塞。
     const toolGuard = this.config.toolGuard;
-    const usageStore = this.config.skillUsageStore;
     const chatId = context?.chatId;
     session.agent.beforeToolCall = async (ctx, signal) => {
       // bash 明文凭证防线（先于一切判定与落盘）：bbt 命令里写了真实账号/密码时，
@@ -370,15 +376,6 @@ export class FeishuPiRuntime {
           const allowed = groupPolicy.readAllowed(target);
           if (!allowed) {
             return { block: true, reason: "⛔ 该路径不在你的可读范围内" };
-          }
-        }
-        // 范围内的技能读取：记录使用事件（被拦截的不算使用），随后放行
-        if (usageStore) {
-          const skill = matchSkillRead(ctx.toolCall.name, ctx.args, this.config.cwd, `${this.config.cwd}/.agent`);
-          if (skill) {
-            await usageStore.record({ ts: Date.now(), user: userId, skill, chatId }).catch((error) => {
-              logger.warn(`[Runtime] 技能使用记录失败: ${error instanceof Error ? error.message : String(error)}`);
-            });
           }
         }
         return undefined;

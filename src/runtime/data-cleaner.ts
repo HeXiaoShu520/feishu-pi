@@ -98,7 +98,10 @@ export class DataCleaner {
     try {
       entries = await readdir(this.sessionDir, { withFileTypes: true });
     } catch (err) {
-      logger.error("[DataCleaner] 清理会话文件失败:", err);
+      // 目录不存在 = 还没有会话数据，无东西可清
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        logger.error("[DataCleaner] 清理会话文件失败:", err);
+      }
       return;
     }
 
@@ -128,7 +131,10 @@ export class DataCleaner {
     try {
       entries = await readdir(this.sessionDir, { withFileTypes: true });
     } catch (err) {
-      logger.error("[DataCleaner] 清理附件失败:", err);
+      // 目录不存在 = 还没有会话数据，无东西可清
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+        logger.error("[DataCleaner] 清理附件失败:", err);
+      }
       return;
     }
 

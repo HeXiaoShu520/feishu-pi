@@ -42,7 +42,6 @@ export async function resolveAdminOpenId(
       for (const [openId, profile] of Object.entries(cache)) {
         const { name, en_name } = profile;
         if (name === identifier || en_name === identifier) {
-          logger.info(`[AdminResolver] 从缓存解析 ${identifier} -> ${openId}`);
           return openId;
         }
       }
@@ -61,9 +60,7 @@ export async function resolveAdminOpenId(
         },
       });
       if (res.code === 0 && res.data?.user_list?.[0]?.user_id) {
-        const openId = res.data.user_list[0].user_id;
-        logger.info(`[AdminResolver] 通过邮箱 ${identifier} 解析为 Open ID: ${openId}`);
-        return openId;
+        return res.data.user_list[0].user_id;
       }
     } catch (err) {
       logger.warn(`[AdminResolver] 通过邮箱查找失败:`, err);
@@ -84,9 +81,7 @@ export async function resolveAdminOpenId(
         const name = user.name;
         const enName = user.en_name;
         if (name === identifier || enName === identifier) {
-          const openId = user.open_id;
-          logger.info(`[AdminResolver] 通过姓名 ${identifier} 解析为 Open ID: ${openId}`);
-          return openId;
+          return user.open_id;
         }
       }
     }
@@ -94,7 +89,6 @@ export async function resolveAdminOpenId(
     logger.warn(`[AdminResolver] 通过姓名搜索失败:`, err);
   }
 
-  logger.error(`[AdminResolver] 无法解析管理员标识: ${identifier}`);
   return undefined;
 }
 
@@ -160,7 +154,6 @@ export async function resolveAdminFromLogins(
       (Boolean(identity.email) && identity.email === identifier);
     if (!matched) continue;
 
-    logger.info(`[AdminResolver] 经已登录身份识别管理员：${identity.name ?? identity.openId} -> ${identity.openId}`);
     // 资料写入用户缓存：下次启动走缓存通道直接解析，无需再反查身份
     try {
       await persistUserProfile(usersFile, identity.openId, { name: identity.name, en_name: identity.en_name });

@@ -377,7 +377,8 @@ export class UserAuthService {
     opts.onLink({
       link,
       userCode: str(begin!.user_code),
-      expiresInMin: Math.round((num(begin!.expires_in) || 300) / 60_000),
+      // expires_in 单位是秒（与下方 deadline 的 *1000 一致），换算分钟除以 60
+      expiresInMin: Math.round((num(begin!.expires_in) || 300) / 60),
     });
 
     const intervalMs = (num(begin!.interval) || 5) * 1000;

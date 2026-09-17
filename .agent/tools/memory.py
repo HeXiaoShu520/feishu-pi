@@ -1,4 +1,4 @@
-#! {"name":"memory","description":"团队长期记忆：action=read 查看（记忆过多时会提示整理）；action=append 追加一条要点；action=rewrite 用整理后的内容整体覆盖（去重/合并/清理过时条目）。","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["read","append","rewrite"],"description":"read=查看全部，append=追加一条，rewrite=用整理后的内容整体覆盖"},"text":{"type":"string","description":"append=一条要点；rewrite=整理后的全部记忆（每行一条，保留时间前缀可省略）"}},"required":["action"]}}
+#! {"name":"memory","description":"长期记忆（全局唯一一份：data/memory/MEMORY.md，所有会话与用户共用）：action=read 查看（记忆过多时会提示整理）；action=append 追加一条要点；action=rewrite 用整理后的内容整体覆盖（去重/合并/清理过时条目）。","parameters":{"type":"object","properties":{"action":{"type":"string","enum":["read","append","rewrite"],"description":"read=查看全部，append=追加一条，rewrite=用整理后的内容整体覆盖"},"text":{"type":"string","description":"append=一条要点；rewrite=整理后的全部记忆（每行一条，保留时间前缀可省略）"}},"required":["action"]}}
 import sys
 import json
 import os
