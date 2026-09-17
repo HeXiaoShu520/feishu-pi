@@ -298,8 +298,9 @@ export class FeishuPiRuntime {
       ...bindCallers(this.tools, { openId: userId, chatId: context?.chatId ?? "" }),
       ...customTools,
       ...(identityBashTool ? [identityBashTool] : []),
-      // 定时任务管理工具：仅管理员会话注入，直连进程内 ScheduleService
-      ...(groups.includes("admin") && this.config.scheduleService
+      // 定时任务管理工具：直连进程内 ScheduleService；对所有会话注入，
+      // 可见性由组策略 Tools(schedule_manager) 决定（任务以创建者身份与权限执行）
+      ...(this.config.scheduleService
         ? [createScheduleManagerTool(this.config.scheduleService, {
             chatId: context?.chatId ?? "",
             createdBy: userId,
