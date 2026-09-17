@@ -312,11 +312,10 @@ export class FeishuPiRuntime {
       customTools.filter((tool) => tool.risk === "high").map((tool) => tool.name),
     );
 
-    // 内置工具：read 人人都有（阅读技能/文档，可读范围由策略限制）；
-    // bash 亦注册（能否执行哪些命令由组名单决定）；write/edit 仅 admin 组。
-    const builtinNames: string[] = groups.includes("admin")
-      ? ["read", "bash", "write", "edit"]
-      : ["read", "bash"];
+    // 内置工具对所有会话统一注册：read / bash / write / edit。
+    // 能不能用、用在哪，完全由 permissions.json 的组策略决定——
+    // 未配置 Write 规则的调用一律拦截（fail-safe），不按身份砍工具。
+    const builtinNames = ["read", "bash", "write", "edit"];
 
     const { session } = await createAgentSession({
       cwd: this.config.cwd,
