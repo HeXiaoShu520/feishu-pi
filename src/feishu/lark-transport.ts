@@ -10,6 +10,7 @@ import { upsertEnvLine } from "../utils/env-file.ts";
 import { toBuffer } from "./resource-buffer.ts";
 import { extractCredentialFields } from "./credential-card.ts";
 import { mentionedUserIds } from "./people-roster.ts";
+import { WorkspaceManager } from "./workspace.ts";
 import { redactSecrets } from "../utils/redact.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -53,6 +54,8 @@ export interface LarkTransportConfig {
   adminOpenId?: string;
   /** 话题根持久化文件路径（话题群会话收敛用） */
   topicRootsFile?: string;
+  /** 会话工作区根目录（可选，默认 work_space/）：每个会话一个文件夹收纳其文件 */
+  workspaceRoot?: string;
   /** lark-cli 用户态搜索通道（contact +search-user，见 lark-cli-search.ts）：部门信息的来源 */
   searchUserProfile?: (openId: string) => Promise<{ name?: string; en_name?: string; department_name?: string[] } | undefined>;
   /** 模型切换回调（/model 指令确认后触发，用于运行时热切换） */
@@ -88,6 +91,7 @@ export class LarkTransport implements FeishuTransport {
   /** 会话模式缓存（p2p/group/topic），话题群与普通群的会话隔离策略不同 */
   private readonly chatModeCache = new Map<string, "p2p" | "group" | "topic">();  /** 话题根持久化（chatId -> 待定话题根 messageId） */
   private readonly topicRoots?: TopicRootStore;
+  private readonly workspace?: WorkspaceManager;
   /** 会话数据根目录（附件下载到 {根目录}/{会话}/files/） */
   private readonly sessionDataDir?: string;
   /** 图片缓存目录（供附件下载参考） */
@@ -107,6 +111,9 @@ export class LarkTransport implements FeishuTransport {
     this.imageCacheDir = config.imageCacheDir;
     if (config.topicRootsFile) {
       this.topicRoots = new TopicRootStore(config.topicRootsFile);
+    }
+    if (config.workspaceRoot) {
+      this.workspace = new WorkspaceManager(config.workspaceRoot);
     }
     this.larkCli = new LarkCli(config.appId, config.userProfileDir, {
       searchUser: config.searchUserProfile,
@@ -220,6 +227,9 @@ export class LarkTransport implements FeishuTransport {
       const threadId = message.threadId;
       const conversationId = await this.buildConversationId(chatId, chatMode, threadId, message.messageId);
 
+      // 会话工作区：该会话的一切文件（下载附件、图片等）都归拢到这个文件夹
+      const workspaceDir = this.workspace ? await this.workspace.dirFor(conversationId) : undefined;
+
       // 处理图片附件（含 post 富文本里的图片：SDK 会把它们放进 resources）
       let images;
       let imageCount = 0;
@@ -228,7 +238,7 @@ export class LarkTransport implements FeishuTransport {
         const imageKeys = resources.filter((r) => r.type === "image").map((r) => r.fileKey);
         if (imageKeys.length > 0) {
           imageCount = imageKeys.length;
-          images = await this.imageProcessor?.processImages(imageKeys);
+          images = await this.imageProcessor?.processImages(imageKeys, workspaceDir ? join(workspaceDir, "images") : undefined);
         }
       }
 
@@ -239,8 +249,7 @@ export class LarkTransport implements FeishuTransport {
       // Agent 可用 read/bash 直接访问
       if (this.sessionDataDir) {
         const attachmentNote = await downloadFileAttachments(
-          this.sessionDataDir,
-          conversationId,
+          workspaceDir ?? join(this.sessionDataDir, conversationId),
           resources,
           (fileKey, type) => this.downloadResource(fileKey, type),
         );
@@ -593,12 +602,11 @@ export class LarkTransport implements FeishuTransport {
  * 下载文件类附件（file/audio/video/media）到会话文件夹的 files/ 子目录
  * （`{sessionDataDir}/{会话目录}/files/`），返回要追加到消息文本的附件说明（无附件时为空串）。
  *
- * 历史记录与附件同住一个会话文件夹，磁盘布局与会话隔离模型一一对应。
+ * 附件落盘到指定的目标目录（会话工作区/files）。
  * 文件名带时间戳前缀，同一会话先后传同名文件不互相覆盖；单个下载失败只记 warn，不影响其余附件。
  */
 export async function downloadFileAttachments(
-  sessionDataDir: string,
-  conversationId: string,
+  targetDir: string,
   resources: ReadonlyArray<{ type: string; fileKey: string; fileName?: string }>,
   download: (fileKey: string, type: string) => Promise<Buffer>,
 ): Promise<string> {
@@ -606,7 +614,6 @@ export async function downloadFileAttachments(
   if (fileResources.length === 0) return "";
 
   const { writeFile, mkdir } = await import("node:fs/promises");
-  const targetDir = attachmentsDir(sessionDataDir, conversationId);
   await mkdir(targetDir, { recursive: true });
 
   let attachmentNote = "";

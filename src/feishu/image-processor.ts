@@ -19,8 +19,8 @@ export interface ProcessedImage {
 export interface FeishuImageProcessor {
   /** 下载图片并转换为 Pi 可用格式 */
   processImage(imageKey: string): Promise<ProcessedImage | undefined>;
-  /** 批量处理图片 */
-  processImages(imageKeys: string[]): Promise<ProcessedImage[]>;
+  /** 批量处理图片（cacheDir 可覆盖默认缓存目录） */
+  processImages(imageKeys: string[], cacheDir?: string): Promise<ProcessedImage[]>;
 }
 
 export class LarkImageProcessor implements FeishuImageProcessor {
@@ -65,7 +65,7 @@ export class LarkImageProcessor implements FeishuImageProcessor {
   }
 
   /** 并发处理多张图片；单张失败自动跳过（allSettled + 过滤 undefined）。 */
-  async processImages(imageKeys: string[]): Promise<ProcessedImage[]> {
+  async processImages(imageKeys: string[], cacheDir?: string): Promise<ProcessedImage[]> {
     const results = await Promise.allSettled(imageKeys.map((key) => this.processImage(key)));
     return results
       .filter((r): r is PromiseFulfilledResult<ProcessedImage | undefined> => r.status === "fulfilled")
