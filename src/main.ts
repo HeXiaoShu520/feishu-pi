@@ -78,6 +78,7 @@ export async function main(): Promise<void> {
   // 启动时清理过期数据和卡住的消息
   const cleaner = new DataCleaner({
     sessionDir: config.sessionDir,
+    imagesDir: join(config.dataDir, "cache", "images"),
     retentionDays: 7,
   });
 
@@ -236,7 +237,8 @@ export async function main(): Promise<void> {
     appSecret: config.feishuAppSecret,
     botOpenId,
     client,
-    imageCacheDir: join(config.sessionDir, "images"),
+    // 图片下载缓存：纯排查用途（只写不读），放 cache/ 与会话数据分家
+    imageCacheDir: join(config.dataDir, "cache", "images"),
     sessionDataDir: config.sessionDir,
     adminOpenId,
     topicRootsFile: join(config.sessionDir, "topic-roots.json"),

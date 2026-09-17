@@ -15,6 +15,8 @@ import { ATTACHMENTS_SUBDIR } from "../utils/session-paths.ts";
 export interface CleanupOptions {
   /** 会话数据根目录 */
   sessionDir: string;
+  /** 图片缓存目录（可选，默认 {sessionDir}/images） */
+  imagesDir?: string;
   /** 保留天数，默认 7 天 */
   retentionDays?: number;
   /** 是否执行清理（false 只返回统计） */
@@ -33,12 +35,14 @@ export interface CleanupStats {
 
 export class DataCleaner {
   private readonly sessionDir: string;
+  private readonly imagesDir: string;
   /** 保留天数（默认 7 天） */
   private readonly retentionDays: number;
   private readonly retentionMs: number;
 
   constructor(options: CleanupOptions) {
     this.sessionDir = options.sessionDir;
+    this.imagesDir = options.imagesDir ?? join(options.sessionDir, "images");
     this.retentionDays = options.retentionDays ?? 7;
     this.retentionMs = this.retentionDays * 24 * 60 * 60 * 1000;
   }
@@ -147,7 +151,7 @@ export class DataCleaner {
 
   /** 清理过期的图片缓存 */
   private async cleanupImages(cutoffTime: number, stats: CleanupStats): Promise<void> {
-    const imagesDir = join(this.sessionDir, "images");
+    const imagesDir = this.imagesDir;
 
     try {
       const files = await readdir(imagesDir);
