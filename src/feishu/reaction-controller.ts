@@ -12,40 +12,20 @@ interface ReactionState {
   stopRequested: boolean;
 }
 
-/** 随机表情池 - 只使用飞书支持的合法表情 */
+/** 随机表情池 - 预制全套飞书表情（emoji_type 命名与飞书一致） */
 const EMOJI_POOL = [
-  "THINKING",
-  "SMILE",
-  "BLUSH",
-  "OK",
-  "THUMBSUP",
-  "THANKS",
-  "MUSCLE",
-  "APPLAUSE",
-  "DONE",
-  "JIAYI",
-  "LAUGH",
-  "LOVE",
-  "WINK",
-  "PROUD",
-  "SMART",
-  "Fire",
-  "Coffee",
-  "Trophy",
-  "CheckMark",
-  "Hundred",
-  "AWESOMEN",
-  "LGTM",
-  "Get",
-  "Yes",
-  "SALUTE",
-  "HIGHFIVE",
-  "Typing",
-  "YouAreTheBest",
-  "PARTY",
-  "GIFT",
-  "HEART",
-  "ROSE",
+  "OK", "THUMBSUP", "THANKS", "MUSCLE", "FINGERHEART", "APPLAUSE", "FISTBUMP", "JIAYI", "DONE", "SMILE",
+  "BLUSH", "LAUGH", "SMIRK", "LOL", "FACEPALM", "LOVE", "WINK", "PROUD", "WITTY", "SMART",
+  "SCOWL", "THINKING", "SOB", "CRY", "ERROR", "NOSEPICK", "HAUGHTY", "SLAP", "SPITBLOOD", "TOASTED",
+  "GLANCE", "DULL", "INNOCENTSMILE", "JOYFUL", "WOW", "TRICK", "YEAH", "ENOUGH", "TEARS", "EMBARRASSED",
+  "KISS", "SMOOCH", "DROOL", "OBSESSED", "MONEY", "TEASE", "SHOWOFF", "COMFORT", "CLAP", "PRAISE",
+  "STRIVE", "XBLUSH", "SILENT", "WAVE", "WHAT", "FROWN", "SHY", "DIZZY", "LOOKDOWN", "CHUCKLE",
+  "WAIL", "CRAZY", "WHIMPER", "HUG", "BLUBBER", "WRONGED", "HUSKY", "SHHH", "SMUG", "ANGRY",
+  "HAMMER", "SHOCKED", "TERROR", "PETRIFIED", "SKULL", "SWEAT", "SPEECHLESS", "SLEEP", "DROWSY", "YAWN",
+  "SICK", "PUKE", "BETRAYED", "HEADSET", "EatingFood", "MeMeMe", "Sigh", "Typing", "Lemon", "Get",
+  "LGTM", "OnIt", "OneSecond", "VRHeadset", "YouAreTheBest", "Yes", "No", "OKR", "CheckMark", "CrossMark",
+  "MinusOne", "Hundred", "AWESOMEN", "Pin", "BeamingFace", "Delighted", "ColdSweat", "FullMoonFace", "Partying", "GoGoGo",
+  "ThanksFace", "SaluteFace", "Shrug", "ClownFace", "HappyDragon",
 ];
 
 /** 随机选择一个表情 */
