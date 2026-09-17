@@ -127,7 +127,7 @@ export interface UserAuthOptions {
   scopes: string[];
   /** 加密凭证库文件路径（data/credentials/lark.vault.json） */
   vaultFile: string;
-  /** 主密钥文件路径（data/.vault-key）；也可用环境变量 MINI_PI_VAULT_KEY 覆盖 */
+  /** 主密钥文件路径（data/.vault-key，CredentialVault 首次打开时自动生成） */
   vaultKeyFile: string;
   /** 指引卡的原地更新（轮询结束后把"待授权"卡更新为结果卡） */
   updateCard: (messageId: string, card: object) => Promise<void>;

@@ -1,4 +1,4 @@
-import "./bootstrap-env.ts"; // 最早执行：.env 缺失自动拷贝 + 凭证库主密钥写入 .env（必须在 dotenv 之前）
+import "./bootstrap-env.ts"; // 最早执行：.env 缺失自动拷贝（必须在 dotenv 之前）
 import "dotenv/config";
 import { registerStatsRoutes } from "./stats-server.ts"; // 统计页面服务器（模块加载即监听 127.0.0.1:3456）
 import { ConversationManager } from "./runtime/conversation-manager.ts";

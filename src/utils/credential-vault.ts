@@ -9,19 +9,16 @@ import { logger } from "./logger.ts";
  *
  * 线上格式（data/credentials/<provider>.vault.json）：整个记录表序列化为 JSON 后整体 AES-256-GCM 加密，
  * 落盘内容为 { version, salt, iv, tag, data }（全部 base64）。防的是"主体文件单独泄漏"
- * （备份 / 网盘同步 / 误提交），主密钥独立存放于环境变量或本机密钥文件。
+ * （备份 / 网盘同步 / 误提交），主密钥独立存放在本机密钥文件。
  *
- * 密钥来源（优先级从高到低）：
- * 1. 打开参数 keyHex；
- * 2. 环境变量 MINI_PI_VAULT_KEY（64 位 hex = 32 字节）；
- * 3. 密钥文件（默认与库文件同目录的 .vault-key，首次自动生成并收紧权限）。
+ * 密钥来源：密钥文件（默认与库文件同目录的 .vault-key，首次自动生成并收紧权限）。
+ * 换钥 = 换锁：密钥文件丢失后旧密文不可解密，需删除库文件重新 /login。
  *
  * 记录键为 `provider:userKey`（如 `lark:ou_xxx`），provider 之间命名空间互不可见，
  * 各 CLI 的凭证互不干扰；写入走串行队列 + 临时文件原子替换（与 JsonMapStore 同款约定）。
  */
 
 const VAULT_VERSION = 1;
-const DEFAULT_KEY_ENV = "MINI_PI_VAULT_KEY";
 
 interface VaultEnvelope {
   version: number;
@@ -45,23 +42,11 @@ export class CredentialVault {
   private readonly filePath: string;
   private readonly key: Buffer;
   private readonly keySource: string;
-  private readonly env: NodeJS.ProcessEnv;
   private readonly keyFilePath: string;
 
-  private constructor(filePath: string, keyHex: string | undefined, env: NodeJS.ProcessEnv, keyFilePath: string) {
+  private constructor(filePath: string, keyFilePath: string) {
     this.filePath = filePath;
-    this.env = env;
     this.keyFilePath = keyFilePath;
-    const fromEnv = (env[DEFAULT_KEY_ENV] ?? "").trim();
-    const raw = keyHex ?? (isHex64(fromEnv) ? fromEnv : undefined);
-    if (raw !== undefined) {
-      if (!isHex64(raw)) {
-        throw new Error(`[Vault] ${DEFAULT_KEY_ENV} 必须是 64 位 hex（32 字节），当前长度不合法`);
-      }
-      this.key = Buffer.from(raw, "hex");
-      this.keySource = `env:${DEFAULT_KEY_ENV}`;
-      return;
-    }
     this.keySource = `file:${keyFilePath}`;
     this.key = this.loadOrCreateKeyFile();
   }
@@ -71,13 +56,12 @@ export class CredentialVault {
 
   static async open(
     filePath: string,
-    opts: { keyHex?: string; env?: NodeJS.ProcessEnv; keyFile?: string } = {},
+    opts: { keyFile?: string } = {},
   ): Promise<CredentialVault> {
     const cached = CredentialVault.instances.get(filePath);
     if (cached) return cached;
-    const env = opts.env ?? process.env;
     const keyFilePath = opts.keyFile ?? join(dirname(filePath), ".vault-key");
-    const vault = new CredentialVault(filePath, opts.keyHex, env, keyFilePath);
+    const vault = new CredentialVault(filePath, keyFilePath);
     await vault.ensureLoaded();
     CredentialVault.instances.set(filePath, vault);
     logger.info(`[Vault] 凭证库就绪: ${filePath}（主密钥来源 ${vault.keySource}，共 ${vault.records.size} 条）`);
@@ -130,7 +114,7 @@ export class CredentialVault {
     const fresh = randomBytes(32).toString("hex");
     mkdirSync(dirname(this.keyFilePath), { recursive: true });
     writeFileSync(this.keyFilePath, `${fresh}\n`, { mode: 0o600 });
-    logger.info(`[Vault] 已生成主密钥文件 ${this.keyFilePath}（建议改用环境变量 ${DEFAULT_KEY_ENV} 便于备份迁移）`);
+    logger.info(`[Vault] 已生成主密钥文件 ${this.keyFilePath}（备份 data/ 时请一并备份）`);
     return Buffer.from(fresh, "hex");
   }
 
