@@ -238,7 +238,6 @@ export async function main(): Promise<void> {
     botOpenId,
     client,
     // 图片下载缓存：纯排查用途（只写不读），放 cache/ 与会话数据分家
-    imageCacheDir: join(config.dataDir, "cache", "images"),
     sessionDataDir: config.sessionDir,
     adminOpenId,
     topicRootsFile: join(config.sessionDir, "topic-roots.json"),

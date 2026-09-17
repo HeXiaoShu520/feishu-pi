@@ -5,7 +5,7 @@
  * resource-buffer.toBuffer；本模块只关心缓存落盘与 MIME 识别。
  */
 import type { Client } from "@larksuiteoapi/node-sdk";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { toBuffer } from "./resource-buffer.ts";
 import { logger } from "../utils/logger.ts";
@@ -25,33 +25,23 @@ export interface FeishuImageProcessor {
 
 export class LarkImageProcessor implements FeishuImageProcessor {
   private readonly client: Client;
-  private readonly cacheDir?: string;
 
-  constructor(client: Client, options?: { cacheDir?: string }) {
+  constructor(client: Client) {
     this.client = client;
-    this.cacheDir = options?.cacheDir;
-    if (this.cacheDir) {
-      try {
-        mkdirSync(this.cacheDir, { recursive: true });
-      } catch (err) {
-        // 缓存目录创建失败不阻断启动，仅丢失本地缓存能力
-        logger.warn("[LarkImageProcessor] 创建图片缓存目录失败", err);
-      }
-    }
   }
 
   /** 下载单张图片：失败返回 undefined（不阻断其余图片/消息处理）。 */
-  async processImage(imageKey: string): Promise<ProcessedImage | undefined> {
+  async processImage(imageKey: string, cacheDir?: string): Promise<ProcessedImage | undefined> {
     try {
       const response = await this.client.im.image.get({
         path: { image_key: imageKey },
       });
       const imageData = await toBuffer(response);
 
-      // 可选：保存到本地缓存（供排查与复用；失败不影响返回）
-      if (this.cacheDir) {
+      // 可选：落盘到指定目录（会话工作区/images；供排查，失败不影响返回）
+      if (cacheDir) {
         try {
-          writeFileSync(join(this.cacheDir, `${imageKey}.jpg`), imageData);
+          writeFileSync(join(cacheDir, `${imageKey}.jpg`), imageData);
         } catch (err) {
           logger.warn("[LarkImageProcessor] 保存图片缓存失败", err);
         }
@@ -64,9 +54,10 @@ export class LarkImageProcessor implements FeishuImageProcessor {
     }
   }
 
-  /** 并发处理多张图片；单张失败自动跳过（allSettled + 过滤 undefined）。 */
+  /** 并发处理多张图片；单张失败自动跳过（allSettled + 过滤 undefined）。
+   *  cacheDir 传入时把图片落盘到该目录（会话工作区/images），不传则不落盘。 */
   async processImages(imageKeys: string[], cacheDir?: string): Promise<ProcessedImage[]> {
-    const results = await Promise.allSettled(imageKeys.map((key) => this.processImage(key)));
+    const results = await Promise.allSettled(imageKeys.map((key) => this.processImage(key, cacheDir)));
     return results
       .filter((r): r is PromiseFulfilledResult<ProcessedImage | undefined> => r.status === "fulfilled")
       .map((r) => r.value)

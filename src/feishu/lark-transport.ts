@@ -46,8 +46,6 @@ export interface LarkTransportConfig {
   pingTimeout?: number;
   /** 飞书 Client 实例（消息发送、卡片更新、资源下载等 API 调用） */
   client: Client;
-  /** 图片缓存目录（可选） */
-  imageCacheDir?: string;
   /** 会话数据根目录（可选，提供后支持 file/audio/video 附件下载，存放在 {根目录}/{会话}/files/） */
   sessionDataDir?: string;
   /** 管理员 Open ID（可选） */
@@ -95,7 +93,6 @@ export class LarkTransport implements FeishuTransport {
   /** 会话数据根目录（附件下载到 {根目录}/{会话}/files/） */
   private readonly sessionDataDir?: string;
   /** 图片缓存目录（供附件下载参考） */
-  private readonly imageCacheDir?: string;
 
   constructor(config: LarkTransportConfig) {
     this.appId = config.appId;
@@ -108,7 +105,6 @@ export class LarkTransport implements FeishuTransport {
     this.onModelSwitch = config.onModelSwitch;
     this.client = config.client;
     this.sessionDataDir = config.sessionDataDir;
-    this.imageCacheDir = config.imageCacheDir;
     if (config.topicRootsFile) {
       this.topicRoots = new TopicRootStore(config.topicRootsFile);
     }
@@ -118,9 +114,7 @@ export class LarkTransport implements FeishuTransport {
     this.larkCli = new LarkCli(config.appId, config.userProfileDir, {
       searchUser: config.searchUserProfile,
     });
-    this.imageProcessor = new LarkImageProcessor(config.client, {
-      cacheDir: config.imageCacheDir,
-    });
+    this.imageProcessor = new LarkImageProcessor(config.client);
   }
 
   /** 建立飞书长连接并开始接收事件。 */
