@@ -196,12 +196,18 @@ export class LarkTransport implements FeishuTransport {
     if (this.botOpenId && message.senderId === this.botOpenId) return;
     const chatId = message.chatId;
     try {
-      // 会话模式先行：决定用户资料的查询通道（私聊 contact API / 群聊群成员名单）与 conversationId 归属
+      // 会话模式先行：决定响应资格（群聊需 @）与 conversationId 归属
       const chatMode = await this.getChatModeCached(chatId);
 
       // 群聊/话题群只响应 @机器人 的消息；私聊全响应。
       // 未 @ 的消息静默忽略（不查资料、不入会话，避免群聊刷屏误触发）。
       if (chatMode !== "p2p" && !message.mentionedBot) return;
+
+      // 会话 ID + 工作区文件夹最先就位：消息一旦开始处理，
+      // 归属与落盘位置即已确定（先于资料查询与模型思考）
+      const threadId = message.threadId;
+      const conversationId = await this.buildConversationId(chatId, chatMode, threadId, message.messageId);
+      const workspaceDir = this.workspace ? await this.workspace.dirFor(conversationId) : undefined;
 
       const profile = await this.larkCli.getUserProfile(message.senderId);
       const displayName = profile.name || profile.en_name || message.senderId;
@@ -212,17 +218,6 @@ export class LarkTransport implements FeishuTransport {
       for (const mentioned of mentionedUserIds(message.mentions ?? [], message.senderId)) {
         void this.larkCli.getUserProfile(mentioned).catch(() => undefined);
       }
-
-      // 构造 conversationId：
-      // - 话题群：同一话题内所有用户共享一个会话；首条消息没有 threadId，
-      //   用该消息的 messageId 作为话题键并持久化——后续消息的 threadId 恰好就是这条根消息的 ID，
-      //   收敛到同一会话；若根未确立前用户追加消息，从持久化中取回话题根，避免裂成新会话
-      // - 其他会话（私聊/普通群）：按用户隔离
-      const threadId = message.threadId;
-      const conversationId = await this.buildConversationId(chatId, chatMode, threadId, message.messageId);
-
-      // 会话工作区：该会话的一切文件（下载附件、图片等）都归拢到这个文件夹
-      const workspaceDir = this.workspace ? await this.workspace.dirFor(conversationId) : undefined;
 
       // 处理图片附件（含 post 富文本里的图片：SDK 会把它们放进 resources）
       let images;
