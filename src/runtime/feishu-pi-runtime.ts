@@ -142,7 +142,8 @@ const DEFAULT_PERSONA = [
  * 会话历史 7 天即清，跨会话的事实/偏好/约定靠它留存。
  */
 const MEMORY_RULE = [
-  "【长期记忆】工具 memory 是团队的持久记忆（所有人可见）。当用户交代需要长期记住的事实、偏好或约定，或对话中沉淀出值得保留的结论时，调用 memory(action=\"append\", text=一句话要点) 记下；当任务可能与既往背景相关时，先 memory(action=\"read\") 回忆，避免重复询问。追加前先 read 防止重复；记忆对团队全员可见，禁止写入密码等敏感信息。",
+  "【长期记忆】工具 memory 是团队的持久记忆（所有人可见）。当用户交代需要长期记住的事实、偏好或约定，或对话中沉淀出值得保留的结论时，调用 memory(action=\"append\", text=一句话要点) 记下；当任务可能与既往背景相关时，先 memory(action=\"read\") 回忆，避免重复询问。",
+  "记忆要经常维护：条目重复、过时或 read 时提示超限时，用 rewrite 用去重合并后的精简版整体覆盖（拒绝空内容）。记忆对团队全员可见，禁止写入密码等敏感信息。",
 ].join(NL);
 
 export class FeishuPiRuntime {
