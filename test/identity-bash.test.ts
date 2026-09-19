@@ -34,9 +34,9 @@ describe("applyCredentialInjections（会话 bash 身份注入）", () => {
     expect(env.LARKSUITE_CLI_USER_ACCESS_TOKEN).toBeUndefined();
   });
 
-  it("未登录（无 token）→ 任何命令都不注入", () => {
+  it("未登录时拒绝执行，不能回退到 CLI 缓存账号", () => {
     const env: NodeJS.ProcessEnv = {};
-    applyCredentialInjections("lark-cli calendar +agenda", env, makeRules({}));
+    expect(() => applyCredentialInjections("lark-cli calendar +agenda", env, makeRules({}))).toThrow("当前用户未登录");
     expect(Object.keys(env)).toHaveLength(0);
   });
 
@@ -44,8 +44,8 @@ describe("applyCredentialInjections（会话 bash 身份注入）", () => {
     const env: NodeJS.ProcessEnv = {};
     applyCredentialInjections("lark-cli calendar +agenda", env, makeRules({ token: "uat_x" }));
     applyCredentialInjections("ls -la", env, makeRules({ token: "uat_x" }));
-    // 第二次命令不匹配 → 保留第一次的值不变（env 是本次 spawn 专属对象）
-    expect(env.LARKSUITE_CLI_USER_ACCESS_TOKEN).toBe("uat_x");
+    // 不匹配时也移除继承的用户 token。
+    expect(env.LARKSUITE_CLI_USER_ACCESS_TOKEN).toBeUndefined();
   });
 
   it("extraInjections 扩展位：其他 CLI 可按自己的匹配与 env 映射注入", () => {
@@ -98,4 +98,11 @@ describe("matchesUserIdentityCli（用户身份 CLI 判定，授权分流用）"
     expect(matchesUserIdentityCli("ls -la")).toBe(false);
     expect(matchesUserIdentityCli("npm run test")).toBe(false);
   });
+});
+
+
+it("复合命令和伪装成 CLI 的字符串不能由用户自行授权", () => {
+  for (const command of ["echo lark-cli", "lark-cli calendar +agenda; rm -rf anything", "lark-cli calendar +agenda > target", "lark-cli $(whoami)"]) {
+    expect(matchesUserIdentityCli(command)).toBe(false);
+  }
 });

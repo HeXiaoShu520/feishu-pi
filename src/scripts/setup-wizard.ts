@@ -1,6 +1,6 @@
 // npm run setup 的薄壳：解析 --new 参数，向导核心在 src/feishu/setup-wizard.ts
 // （main() 上电自检复用同一实现：无配置启动时自动进入扫码开通）。
-import { runBootstrap } from "../bootstrap-env.ts"; // .env 缺失自动拷贝（先于 dotenv）
+import "../bootstrap-env.ts"; // .env 缺失自动拷贝（先于 dotenv）
 import "dotenv/config";
 import { detectExistingAppId, runSetupWizard } from "../feishu/setup-wizard.ts";
 

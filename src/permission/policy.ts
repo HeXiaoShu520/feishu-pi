@@ -22,17 +22,17 @@ import { logger } from "../utils/logger.ts";
  *
  * allow 里的保留组名：
  *   - common——所有人默认拥有的基础权限（每个用户自动叠加，无需归属）；
- *   - admin——管理员组，FEISHU_PI_ADMIN 自动属于；未配置的字段取全量缺省。
+ *   - admin——管理员组，FEISHU_PI_ADMIN 自动属于；权限只来自显式规则。
  *   其余组名任取（团队组如 group、group_1、group_2……）。
  *
  * 组成员在 .env 中通过 FEISHU_PI_GROUP_<组名>=成员1,成员2,... 配置；
  * 纯数字后缀简写为团队组：FEISHU_PI_GROUP_1 → group_1、FEISHU_PI_GROUP_2 → group_2。
  *
- * 生效范围 = common ∪ 所属各组并集。组文件 mtime 热重载，新会话生效。
+ * 生效范围 = common ∪ 所属各组并集。组文件 mtime 热重载，每次工具调用生效。
  * 名单之外的调用一律交授权卡（非允许即 ask）；read 范围外交直接拦截（能力问题不问人）。
  * 文件缺失或解析失败时按保守默认处理（仅技能目录可读、无工具、无命令）。
  *
- * deny（第 0 层）：与内置默认模式（.env 等环境配置与密钥/凭据文件）合并，
+ * deny（第 0 层）：完全来自配置文件的显式模式，
  * 先于一切 allow 规则判定，对所有人（含管理员）生效——
  * 敏感配置不允许经智能体读或写（read 路径 / write·edit 路径 / bash 命令引用均拦截）。
  */
@@ -70,7 +70,7 @@ function countRules(fields: GroupFields): number {
 
 /** bash 命令里的 shell 链接符：命中即不参与前缀/精确匹配（防 `npm run test; rm -rf /` 逃逸）。
  *  换行符必须包含：多行命令的第二行不被前缀规则覆盖（`git status\nrm -rf /` 会整段放行）。 */
-export const SHELL_META = /[;&|`]|\$\(|[\r\n]/;
+export const SHELL_META = /[;&|`$<>\\()\r\n]/;
 
 export class PermissionPolicy {
   private readonly filePath: string;
@@ -137,9 +137,8 @@ export class PermissionPolicy {
     return [...groups];
   }
 
-  /** 单组字段：admin 组叠加全量缺省，其余组叠加保守缺省 */
+  /** 所有身份只获得显式配置的权限；管理员也不隐式补全。 */
   private fieldsFor(name: string): Required<Omit<GroupFields, "tools">> & { tools: string[] } {
-    if (name === "admin") return { ...adminDefaults(), ...(this.groups.admin ?? {}) };
     return { ...ungroupedDefaults(), ...(this.groups[name] ?? {}) };
   }
 
@@ -169,7 +168,7 @@ export class PermissionPolicy {
     const cwd = this.cwd;
     const isAdmin = groups.includes("admin");
 
-    // 合并顺序：common（人人默认）→ 所属各组（admin 组另有全量缺省）
+    // 合并顺序：common（人人默认）→ 所属各组
     const sources: GroupFields[] = [this.common];
     for (const g of groups) sources.push(this.fieldsFor(g));
     const merged = this.mergeFields(sources);
@@ -189,7 +188,9 @@ export class PermissionPolicy {
         if (bashAll) return true;
         if (SHELL_META.test(command)) return false; // 拼接逃逸不参与匹配，交授权卡
         return bashRules.some((rule) =>
-          rule.prefix !== undefined ? command.startsWith(rule.prefix) : command === rule.exact,
+          rule.prefix !== undefined
+            ? command === rule.prefix || command.startsWith(`${rule.prefix} `) || command.startsWith(`${rule.prefix}\t`)
+            : command === rule.exact,
         );
       },
       readAllowed: (path) => matchGlobs(merged.read, path, cwd),
@@ -216,7 +217,7 @@ export class PermissionPolicy {
     return { groups: out, deny: this.denyPatterns };
   }
 
-  /** 组文件加载；mtime 变化时重载。缺失/非法时按空组处理（fail-safe），deny 仍有内置默认兜底。 */
+  /** 组文件加载；mtime 变化时重载。缺失/非法时按空组处理（fail-safe）；deny 无隐藏默认。 */
   private async ensureLoaded(): Promise<void> {
     let mtimeMs: number;
     try {
@@ -284,10 +285,6 @@ export class PermissionPolicy {
       return undefined;
     }
   }
-}
-
-function adminDefaults(): Required<Omit<GroupFields, "tools">> & { tools: string[] } {
-  return { bash: ["*"], read: ["**"], write: ["**"], tools: ["*"] };
 }
 
 function ungroupedDefaults(): Required<Omit<GroupFields, "tools">> & { tools: string[] } {

@@ -87,7 +87,7 @@ export class ModelCommand implements CommandHandler {
             // 直接用 fetch，不通过 OpenAI SDK（支持无密钥访问）
             const headers: Record<string, string> = {};
             if (info.apiKey) headers["Authorization"] = `Bearer ${info.apiKey}`;
-            const response = await fetch(modelsUrl, { headers });
+            const response = await fetch(modelsUrl, { headers, signal: AbortSignal.timeout(10_000) });
 
             if (!response.ok) {
               // 404/405 说明该端点不存在，继续尝试下一个候选
@@ -217,7 +217,6 @@ export class HelpCommand implements CommandHandler {
       card: markdownCard(`**可用指令**
 
 \`/model\` - 查看并切换 AI 模型（仅管理员）
-\`/perm\` - 查看权限组与技能/工具分布（仅管理员）
 \`/login\` - 登录飞书用户身份（Device Flow 授权，用于"我的视角"能力）
 \`/logout\` - 退出用户身份登录
 \`/help\` - 显示此帮助信息

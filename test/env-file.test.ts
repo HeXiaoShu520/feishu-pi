@@ -20,3 +20,8 @@ describe("upsertEnvLine", () => {
     expect(out).toBe("A=1\nK=v1 EVIL=2\n");
   });
 });
+
+
+it("值中的美元替换符按字面保存", () => {
+  expect(upsertEnvLine("MODEL=old\n", "MODEL", "model-$&")).toBe("MODEL=model-$&\n");
+});

@@ -1,7 +1,6 @@
 import { EventDispatcher, LoggerLevel, normalize, normalizeCardAction, WSClient, type Client } from "@larksuiteoapi/node-sdk";
 import type { FeishuInboundMessage, FeishuTransport } from "./types.ts";
 import { LarkCli } from "./lark-cli.ts";
-import { TopicRootStore } from "./topic-root-store.ts";
 import { LarkImageProcessor } from "./image-processor.ts";
 import { formatLogText } from "./log-utils.ts";
 import { logger } from "../utils/logger.ts";
@@ -38,8 +37,6 @@ export interface LarkTransportConfig {
   sessions: SessionStore;
   /** 管理员 Open ID（可选） */
   adminOpenId?: string;
-  /** 话题根持久化文件路径（话题群会话收敛用） */
-  topicRootsFile?: string;
   /** lark-cli 用户态搜索通道（contact +search-user，见 lark-cli-search.ts）：部门信息的来源 */
   searchUserProfile?: (openId: string) => Promise<{ name?: string; en_name?: string; department_name?: string[] } | undefined>;
   /** 模型切换回调（/model 指令确认后触发，用于运行时热切换） */
@@ -74,8 +71,6 @@ export class LarkTransport implements FeishuTransport {
   private connecting?: Promise<void>;
   /** 会话模式缓存（p2p/group/topic），话题群与普通群的会话隔离策略不同 */
   private readonly chatModeCache = new Map<string, "p2p" | "group" | "topic">();
-  /** 话题根持久化（chatId -> 待定话题根 messageId） */
-  private readonly topicRoots?: TopicRootStore;
   private readonly sessions: SessionStore;
 
   constructor(config: LarkTransportConfig) {
@@ -89,9 +84,6 @@ export class LarkTransport implements FeishuTransport {
     this.onModelSwitch = config.onModelSwitch;
     this.client = config.client;
     this.sessions = config.sessions;
-    if (config.topicRootsFile) {
-      this.topicRoots = new TopicRootStore(config.topicRootsFile);
-    }
     this.larkCli = new LarkCli(config.appId, config.userProfileDir, {
       searchUser: config.searchUserProfile,
     });
@@ -197,7 +189,7 @@ export class LarkTransport implements FeishuTransport {
       // 归属与落盘位置即已确定（先于资料查询与模型思考）。
       // 会话目录由会话注册表给出（/new 之后拿到的是新会话目录）
       const threadId = message.threadId;
-      const conversationId = await this.buildConversationId(chatId, chatMode, threadId, message.messageId);
+      const conversationId = buildConversationId(chatId, chatMode, threadId, message.messageId);
       const sessionDir = await this.sessions.dirFor(conversationId, message.senderId);
 
       const profile = await this.larkCli.getUserProfile(message.senderId);
@@ -340,7 +332,7 @@ export class LarkTransport implements FeishuTransport {
         logger.info(`[CardAction] 管理员切换模型: ${value.model_id}`);
         try {
           const modelName = typeof value.model_id === "string" ? value.model_id.trim() : "";
-          if (!modelName) throw new Error("模型 ID 不能为空");
+          if (!modelName || /[\r\n]/.test(modelName)) throw new Error("模型 ID 不合法");
           this.persistModelName(modelName);
           await this.updateCard(action, {
             schema: "2.0",
@@ -356,42 +348,6 @@ export class LarkTransport implements FeishuTransport {
     } catch (error) {
       logger.error("[CardAction] 处理卡片回调失败:", error);
     }
-  }
-
-  /**
-   * 构造会话 ID（会话隔离的核心规则）：
-   * - 话题群：同一话题内所有用户共享一个会话；首条消息没有 threadId，
-   *   用该消息的 messageId 作为话题键并持久化——后续消息的 threadId 恰好就是这条根消息的 ID，
-   *   收敛到同一会话；若根未确立前用户追加消息，从持久化中取回话题根，避免裂成新会话。
-   * - 私聊：会话即本人历史；普通群：全群共享一个会话——两者都以 chatId 命名（会话 ID，
-   *   不带用户 ID），/new 清除后从头开始。
-   */
-  private async buildConversationId(chatId: string, chatMode: "p2p" | "group" | "topic", threadId: string | undefined, messageId: string): Promise<string> {
-    if (chatMode !== "topic") {
-      // 私聊 = 本人历史；普通群 = 全群共享：都以会话（chat）命名，不按用户隔离
-      return `${chatMode}-${chatId}`;
-    }
-    // 话题根的"读-判-写"必须按 chatId 串行：并发首消息各自登记自己为根会把同一话题裂成两个会话
-    return this.withTopicRootLock(chatId, async () => {
-      let rootId = threadId;
-      if (rootId) {
-        await this.topicRoots?.clear(chatId); // threadId 出现，话题根已确立
-      } else {
-        const pending = await this.topicRoots?.get(chatId);
-        rootId = pending ?? messageId;
-        if (!pending) await this.topicRoots?.set(chatId, rootId); // 首条消息：登记自己为话题根
-      }
-      return `topic:${chatId}:${rootId}`;
-    });
-  }
-
-  /** 话题根登记锁：同一 chatId 的根判定串行化；前序失败不阻塞后续。 */
-  private readonly topicRootLocks = new Map<string, Promise<void>>();
-  private async withTopicRootLock<T>(chatId: string, fn: () => Promise<T>): Promise<T> {
-    const previous = this.topicRootLocks.get(chatId) ?? Promise.resolve();
-    const task = previous.then(fn, fn);
-    this.topicRootLocks.set(chatId, task.then(() => undefined, () => undefined));
-    return task;
   }
 
   /** 查询会话模式并缓存（话题群与普通群的会话隔离策略不同，模式极少变化）。
@@ -422,10 +378,10 @@ export class LarkTransport implements FeishuTransport {
 
   /** 持久化模型配置并通知运行时热切换（供服务重启与当前进程同时生效）。 */
   private persistModelName(modelName: string): void {
-    this.onModelSwitch?.(modelName);
     const envFile = join(process.cwd(), ".env");
     const updated = upsertEnvLine(readFileSync(envFile, "utf-8"), "FEISHU_PI_MODEL_NAME", modelName);
     writeFileSync(envFile, updated, "utf-8");
+    this.onModelSwitch?.(modelName);
   }
 
   /**
@@ -623,4 +579,9 @@ export function stripBotMentions(text: string, botOpenId: string | undefined): s
     .replace(new RegExp(`<at\\s+user_id="${botOpenId}"[^>]*>.*?</at>`, "gi"), "")
     .replace(new RegExp(`@${botOpenId}\\s*`, "gi"), "")
     .trim();
+}
+
+/** 飞书根消息独立成话题；回复使用 threadId，不猜测群内“待定根”。 */
+export function buildConversationId(chatId: string, chatMode: "p2p" | "group" | "topic", threadId: string | undefined, messageId: string): string {
+  return chatMode === "topic" ? `topic:${chatId}:${threadId ?? messageId}` : `${chatMode}-${chatId}`;
 }

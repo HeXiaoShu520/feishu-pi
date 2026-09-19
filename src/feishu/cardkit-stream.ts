@@ -34,7 +34,6 @@ interface CardKitStreamOptions {
 export class CardKitStream {
   private cardId?: string;
   private sequence = 0;
-  private lastPushAt = 0;
   private accumulator = "";
   private disposed = false;
   private inFlight = false;
@@ -117,39 +116,23 @@ export class CardKitStream {
     await this.enqueueWrite(() => this.pushUpdate(text));
   }
 
-  /**
-   * 收尾时序：推最终全文 + 统计小字（小字紧跟最终帧入队，打字机打尾字时小字同步出现）→
-   * 等 3s 让客户端处理完 → 关流式。
-   */
+  /** 最终全文、小字、关闭流式在一次整卡更新中完成，不等待固定动画时间。 */
   async finalize(fullText: string, statsText?: string): Promise<void> {
     if (this.disposed || !this.cardId) return;
-
+    clearInterval(this.flushTimer);
+    this.dirty = false;
+    this.accumulator = fullText;
     try {
-      this.accumulator = fullText;
-      // 1. 推最终全文 + 统计小字（流式仍开，两笔元素 PUT 背靠背入队，写队列保证先后）
-      await this.enqueueWrite(() => this.pushUpdate(fullText));
-      if (statsText) {
-        await this.enqueueWrite(async () => {
-          // 小字失败不阻断收尾：重试一次，仍失败则记日志放弃（缺小字好过卡片卡在"生成中"）
-          try {
-            await this.putStats(statsText);
-          } catch (err) {
-            this.onError?.(err);
-            await new Promise((resolve) => setTimeout(resolve, 500));
-            await this.putStats(statsText).catch((retryErr) => this.onError?.(retryErr));
-          }
-        });
-      }
-      // 2. 等 3s，给客户端处理小字元素的余量
-      await new Promise((resolve) => setTimeout(resolve, 3_000));
-      // 3. 关流式
-      await this.enqueueWrite(() => this.patchSettings(false));
-      this.disposed = true;
-      clearInterval(this.flushTimer);
-    } catch (err) {
-      this.onError?.(err);
-      throw err;
+      await this.enqueueWrite(() => this.putFinalCard(fullText, statsText));
+    } finally {
+      this.dispose();
     }
+  }
+
+  /** 撤回、初始化失败或正常结束时释放本地定时器。 */
+  dispose(): void {
+    this.disposed = true;
+    clearInterval(this.flushTimer);
   }
 
   /** 当前卡片累积的正文内容（供分卡时切分）。 */
@@ -172,7 +155,6 @@ export class CardKitStream {
     this.inFlight = true;
     try {
       await this.putContent(fullText);
-      this.lastPushAt = Date.now();
     } catch (err) {
       // 官方约 10 分钟会关闭卡片流式模式，PUT 会失败：报错误并重新开启流式后重试一次
       this.onError?.(err);
@@ -181,7 +163,6 @@ export class CardKitStream {
         await this.patchSettings(true);
         await this.putContent(fullText);
         logger.warn(`[CardKit] 已重新开启流式模式，恢复更新成功`);
-        this.lastPushAt = Date.now();
       } catch (retryErr) {
         this.onError?.(retryErr);
         logger.error(`[CardKit] 重新开启流式后仍更新失败，内容继续累积: ${retryErr instanceof Error ? retryErr.message : retryErr}`);

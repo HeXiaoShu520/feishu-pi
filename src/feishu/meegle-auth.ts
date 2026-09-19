@@ -1,5 +1,4 @@
 /**
-/**
  * 静态凭证服务（Meegle）：用户经 Device Flow 授权、无刷新链路的 token 存取。
  * 与 lark 不同：token 失效后需要用户重新 /login meegle，因此不做后台保鲜。
  * 存储走加密凭证库（CredentialVault），键空间 meegle:<openId>，peekToken 供 bash 注入。

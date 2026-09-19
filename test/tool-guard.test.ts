@@ -144,3 +144,12 @@ describe("ToolGuard deny 规则（第 0 层，先于策略/智能体/授权卡�
     expect(await guard.check(allowAllPolicy, { toolName: "write", args: { path: "docs/a.md", content: "x" } })).toBeUndefined();
   });
 });
+
+
+it("高风险工具即使审核模型同意也必须人工批准", async () => {
+  const broker = new FakeBroker();
+  const guard = new ToolGuard(broker, judgeAllow);
+  const result = await guard.check(userPolicy, { toolName: "high-risk", args: {}, risky: true, chatId: "oc" });
+  expect(broker.calls).toHaveLength(1);
+  expect(result?.block).toBe(true);
+});

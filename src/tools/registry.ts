@@ -11,6 +11,7 @@ interface PythonToolMeta {
   name: string;
   description: string;
   parameters?: Record<string, unknown>;
+  risk?: "high";
 }
 
 // ---------- Python 检测与元数据解析 ----------
@@ -73,12 +74,14 @@ function checkReservedName(name: string, file: string): boolean {
 let _lastToolSignature: string | null = null;
 
 /**
- * 加载 .agent/tools/ 下的自定义工具。
- * - .ts / .js 文件：通过 import() 动态加载，导出 name/execute 对
- * - .py 文件：通过第一行 #! {...} 元数据注册，执行时 spawn python 子进程
+ * 加载 .agent/tools/ 下的自定义工具（只扫顶层，子目录不认）。
+ * - .ts / .js 文件：通过 import() 动态加载，取 default 或首个含 name+execute 的导出；
+ *   找不到合法导出时**静默跳过**（不打日志、不报错），写完务必确认启动日志里的 Tools 计数
+ * - .py 文件：通过第一行 #! {...} 元数据注册，执行时 spawn python 子进程（缺元数据会告警）
  *
- * 每个新会话都会重建工具集（支持热更新）；日志只在首次加载或工具集变化时打印，
- * 避免每条消息都重复输出同样的加载明细。
+ * 调用方注意：Runtime 用 customToolsOnce 在进程内缓存本函数结果（见 feishu-pi-runtime.ts），
+ * 因此实际只在启动时加载一次——**改 .agent/tools/ 必须重启进程**，没有热更新。
+ * 下面的签名比对只在重复调用的场景下起作用，避免同一工具集重复刷日志。
  */
 async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
   const toolsDir = join(cwd, ".agent/tools");
@@ -108,6 +111,7 @@ async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
           label: meta.name,
           description: meta.description,
           parameters: meta.parameters ?? { type: "object", properties: {} },
+          ...(meta.risk === "high" ? { risk: "high" as const } : {}),
           execute: async (_id, params, _signal, _onUpdate, _ctx) => {
             return new Promise((resolve) => {
               const child = execFile(
@@ -117,6 +121,8 @@ async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
                   maxBuffer: 10 * 1024 * 1024,
                   timeout: 30_000,
                   windowsHide: true,
+                  cwd,
+                  signal: _signal,
                 },
                 (error, stdout, stderr) => {
                   if (error) {

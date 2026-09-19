@@ -198,7 +198,6 @@ export class FeishuAgentBridge {
             textEvents += 1;
             lastTextLength = event.text.length;
             if (!hasRealContent) await startRealContent();
-            // 回显脱敏：模型偶尔会把凭证原文带进正文——展示前遮蔽
             await replyParts.appendText(event.text);
           }
           // 工具事件：追加工具摘要段（精简模式只留当前一个），小字位置同步显示动画。
@@ -310,37 +309,11 @@ export class FeishuAgentBridge {
         : message.text;
       logger.info(`[${message.context.userName}] 执行指令: ${logText}`);
 
-      // 特殊处理 /new 指令：换一代会话（新会话 id + 新目录）；话题内共享会话，禁止换代。
-      // 动作完成后直接 return——registry 里的 NewCommand 会重复执行 reset，
-      // 两次 reset 之间若并发消息刚重建会话，会被二次 reset 错杀成孤儿。
-      if (message.text.trim() === "/new") {
-        if (message.context.conversationId.startsWith("topic:")) {
-          logger.info(`[Command] 话题内禁止 /new: ${message.context.conversationId}`);
-          await this.sendCommandCard(message, {
-            schema: "2.0",
-            body: { elements: [{ tag: "markdown", content: "❌ 话题内禁止使用 /new（话题会话为所有人共享），请在群聊或私聊中使用。" }] },
-          });
-          await this.messages?.complete(message.messageId);
-          return;
-        }
-        await this.conversations.reset(message.context.conversationId, message.context.userOpenId);
-        logger.info(`[Command] 已开启新会话: ${message.context.conversationId}`);
-        await this.sendCommandCard(message, markdownCard("✅ 已开启新会话（历史已归档，新对话从新会话目录开始）。"));
-        await this.messages?.complete(message.messageId);
-        return;
-      }
-
-      // 特殊处理 /stop 指令：中断当前响应（同理，registry 里的 StopCommand 会重复 abort）
-      if (message.text.trim() === "/stop") {
-        await this.conversations.abort(message.context.conversationId);
-        logger.info(`[Command] 已中断会话: ${message.context.conversationId}`);
-        await this.sendCommandCard(message, markdownCard("⏸️ 已停止当前响应。"));
-        await this.messages?.complete(message.messageId);
-        return;
-      }
-
       const result = await handler.execute(message, this.client);
-      if (!result) return;
+      if (!result) {
+        await this.messages?.complete(message.messageId);
+        return;
+      }
 
       // 发送卡片回复；message_id 回传给 afterSend（如 /login 轮询完成后原地更新卡片）
       const sentMessageId = await this.sendCommandCard(message, result.card);

@@ -7,7 +7,8 @@
  * 响应形态差异（Buffer/流/落盘 shim）统一交给 resource-buffer.toBuffer。
  */
 import type { Client } from "@larksuiteoapi/node-sdk";
-import { writeFileSync } from "node:fs";
+import { mkdir, writeFile } from "node:fs/promises";
+import { sanitizeFileName } from "../utils/session-paths.ts";
 import { join } from "node:path";
 import { toBuffer } from "./resource-buffer.ts";
 import { logger } from "../utils/logger.ts";
@@ -48,8 +49,9 @@ export class LarkImageProcessor implements FeishuImageProcessor {
       let savedPath: string | undefined;
       if (cacheDir) {
         try {
-          savedPath = join(cacheDir, `${imageKey}.jpg`);
-          writeFileSync(savedPath, imageData);
+          await mkdir(cacheDir, { recursive: true });
+          savedPath = join(cacheDir, `${sanitizeFileName(imageKey)}.jpg`);
+          await writeFile(savedPath, imageData);
         } catch (err) {
           savedPath = undefined;
           logger.warn("[LarkImageProcessor] 保存图片缓存失败", err);

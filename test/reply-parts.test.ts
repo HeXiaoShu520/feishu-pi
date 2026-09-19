@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatStatsLine, formatToolCall, ReplyParts, type ReplyPartsSink } from "../src/feishu/reply-parts.ts";
+import { formatToolCall, ReplyParts, type ReplyPartsSink } from "../src/feishu/reply-parts.ts";
 
 /** 记录型 sink：render 收全量，append 收增量 */
 function makeSink() {

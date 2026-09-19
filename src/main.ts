@@ -1,4 +1,3 @@
-import { getModel } from "@earendil-works/pi-ai/compat";
 import "./bootstrap-env.ts"; // 最早执行：.env 缺失自动拷贝（必须在 dotenv 之前）
 import "dotenv/config";
 import { ConversationManager } from "./runtime/conversation-manager.ts";
@@ -9,10 +8,9 @@ import { loadConfig } from "./config.ts";
 import { SessionStore } from "./runtime/session-store.ts";
 import { MessageStore } from "./feishu/message-store.ts";
 import { DataCleaner } from "./runtime/data-cleaner.ts";
-import { resolveAdminOpenId, persistUserProfile, resolveAdminFromLogins } from "./feishu/admin-resolver.ts";
+import { resolveAdminOpenId, resolveAdminFromLogins } from "./feishu/admin-resolver.ts";
 import { ScheduleService } from "./schedule/service.ts";
 import { PermissionPolicy } from "./permission/policy.ts";
-import { markdownCard } from "./feishu/commands.ts";
 import { LogoutCommand, StatusCommand, UserAuthService } from "./feishu/user-auth.ts";
 import { MeegleDeviceLogin, MEEGLE_DEFAULT_HOST, StaticCredentialService } from "./feishu/meegle-auth.ts";
 import { PeopleRoster } from "./feishu/people-roster.ts";
@@ -78,7 +76,7 @@ export async function main(): Promise<void> {
   // 整个目录超过保留期就整体删除（历史 jsonl、图片、附件同属一个会话，不拆开删）
   const cleaner = new DataCleaner({
     sessionsRoot: config.sessionsRoot,
-    messagesFile: config.messagesFile,
+    messages,
     retentionDays: 7,
   });
 
@@ -92,11 +90,13 @@ export async function main(): Promise<void> {
   await logCleanupStats(cleaner.cleanup());
 
   // 定期清理（每天一次）；conversations 在下方声明，回调首次触发时早已初始化
-  const cleanupTimer = setInterval(async () => {
+  const cleanupTimer = setInterval(() => {
+    void (async () => {
     logger.info("[DataCleaner] 执行定期清理...");
     await logCleanupStats(cleaner.cleanup());
     // 空闲超过 24 小时的会话驱逐出内存（历史在磁盘，下次消息自动恢复），防长驻内存增长
     await conversations.evictIdle(24 * 60 * 60 * 1000);
+    })().catch((error) => logger.error("[DataCleaner] 定期清理失败:", error));
   }, 24 * 60 * 60 * 1000); // 24 小时
 
   // ---------- 飞书基础通道：Client（所有 API 调用）与 Bot 身份 ----------
@@ -198,8 +198,8 @@ export async function main(): Promise<void> {
   );
 
   // 存量会话清洗（后台）：用凭证库已知密钥值扫描历史会话 jsonl，命中的明文替换为 ***
-  void (async () => {
-    const secrets = [...(await userAuth.exportSecretValues())];
+  await (async () => {
+    const secrets = [...(await userAuth.exportSecretValues()), ...(await meegleAuth.exportSecretValues())];
     const replaced = await scrubSecretsInDir(config.sessionsRoot, secrets);
     if (replaced > 0) logger.info(`[Main] 已清洗历史会话文件中的明文凭证（处理 ${replaced} 个文件）`);
   })().catch((error) => logger.warn("[Main] 会话清洗失败:", error));
@@ -308,7 +308,6 @@ export async function main(): Promise<void> {
     sessions,
 
     adminOpenId,
-    topicRootsFile: config.topicRootsFile,
     // lark-cli 用户态搜索通道（contact +search-user）：部门信息的主要来源，不依赖需审核权限；
     // 优先用查询目标本人的 token（查自己必然可见），其次管理员的
     searchUserProfile: createCliSearchUser({
@@ -318,7 +317,10 @@ export async function main(): Promise<void> {
       peekToken: (openId) => userAuth?.peekUserAccessToken(openId),
     }),
     // /model 切换时通知运行时热切换（持久化到 .env 仍在 transport 内完成）
-    onModelSwitch: (name) => runtime?.setModelName(name),
+    onModelSwitch: (name) => {
+      config.modelName = name;
+      runtime?.setModelName(name);
+    },
   });
 
   /** /login 绑定完成时：① 身份 API 给出的姓名是权威资料，直接写入用户缓存
@@ -336,11 +338,7 @@ export async function main(): Promise<void> {
       info.en_name === identifier ||
       (Boolean(info.email) && info.email === identifier);
     if (!matched) return;
-    void persistUserProfile(usersFile, info.openId, { name: info.name, en_name: info.en_name })
-      .then(() => {
-        logger.info(`[Main] 管理员已通过 /login 识别（${info.name ?? info.openId}），资料已入用户缓存——重启服务后管理员权限自动生效，建议现在重启一次`);
-      })
-      .catch((error) => logger.warn("[Main] 管理员资料写入用户缓存失败:", error));
+    logger.info(`[Main] 管理员已通过登录识别（${info.name ?? info.openId}），重启服务后管理员权限生效`);
   };
   // 处理器就绪：回放装配期间积压的登录事件
   handleLoginBoundImpl = handleLoginBound;
@@ -500,7 +498,7 @@ ${trimmed}` }] },
     toolGuard: (groupPolicy, params, signal) => toolGuard.check(groupPolicy, params, signal),
     scheduleService,
     // 会话级带身份 bash：按发起人（含管理员）注入 lark-cli 凭证 env；
-    // 同步读内存缓存，未登录时不注入（lark-cli 走默认身份，调用方提示 /login）。
+    // 同步读内存缓存，未登录时拒绝执行并推送授权链接。
     // 工厂调用即异步预热该用户的内存缓存（快路径命中时零开销），保证首条 bash 前缓存就绪。
     identityBash: (userId, context) => {
       void userAuth?.getUserAccessToken(userId).catch(() => undefined);
@@ -512,7 +510,7 @@ ${trimmed}` }] },
         getLarkToken: () => userAuth?.peekUserAccessToken(userId),
         // lark-cli 用户态命令缺 scope 时：发起增量 Device Flow（授权卡发到当前会话），
         // 同意后 token 自动入库并刷新，重试即生效——用户无需手动 /login
-        onMissingScopes: (uid, chatId, scopes) => {
+        onMissingScopes: (uid, _chatId, scopes) => {
           void userAuth?.ensureScopes(uid, scopes).catch((error) => {
             logger.warn(`[Main] 增量授权发起失败（${scopes.join(", ")}）:`, error);
           });
@@ -577,7 +575,17 @@ ${trimmed}` }] },
             return [`身份组：${groups.join("、") || "（无）"}`];
           },
         ),
-        new LogoutCommand(userAuth),
+        {
+          match: (text) => /^\/login(?:\s+(?:lark|meegle))?$/.test(text.trim()),
+          execute: async (message) => {
+            if (message.context.chatMode !== "p2p" || !message.text.trim().endsWith("meegle")) {
+              return userAuth.startLogin(message);
+            }
+            meegleDeviceLogin.beginFor(message.context.userOpenId);
+            return null;
+          },
+        },
+        new LogoutCommand(userAuth, { meegle: (openId) => meegleAuth.logout(openId) }),
       ],
       // 回复末尾的模型统计小字开关（工具过程状态不受影响）
       showModelStats: config.showModelStats,
@@ -618,6 +626,7 @@ ${trimmed}` }] },
     logger.info(`[Main] 收到 ${signal} 信号，正在关闭服务...`);
 
     clearInterval(cleanupTimer);
+    clearInterval(tokenRefresher);
     scheduleService.stop();
 
     // 断开在后台进行，不 await——挂住也不影响退出

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdir, mkdtemp, readdir, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { MessageStore } from "../src/feishu/message-store.ts";
 import { DataCleaner } from "../src/runtime/data-cleaner.ts";
 
 /** 把路径（文件或目录）的 mtime 拨到 10 天前（保留期默认 7 天，即视为过期） */
@@ -79,7 +80,7 @@ describe("DataCleaner 以会话目录为清理单位", () => {
       }),
     );
 
-    const stats = await new DataCleaner({ sessionsRoot: join(root, "sessions"), messagesFile, retentionDays: 7 }).cleanup();
+    const stats = await new DataCleaner({ sessionsRoot: join(root, "sessions"), messages: new MessageStore(messagesFile), retentionDays: 7 }).cleanup();
 
     expect(stats.messagesChecked).toBe(2);
     expect(stats.messagesCleaned).toBe(1);

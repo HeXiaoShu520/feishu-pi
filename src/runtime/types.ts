@@ -46,7 +46,7 @@ export interface FeishuPiConfig {
    *  risky = 自定义工具标记了 risk: "high"，需要走授权卡。
    *  requesterOpenId = 发起者 openId（用户身份 CLI 命令弹"用户卡"由本人确认）。 */
   toolGuard?: (policy: GroupPolicy, params: { toolName: string; args: unknown; chatId?: string; risky?: boolean; requesterOpenId?: string }, signal?: AbortSignal) => Promise<{ block: true; reason: string } | undefined>;
-  /** 定时任务服务（可选）；提供时为负责人会话注入定时任务管理工具 */
+  /** 定时任务服务（可选）；提供时注册定时任务工具，执行权限由策略控制 */
   scheduleService?: ScheduleService;
   /**
    * 会话级"带身份"bash 工厂（可选）；提供时以同名自定义工具覆盖内置 bash，

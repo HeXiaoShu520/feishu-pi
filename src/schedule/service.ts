@@ -75,14 +75,15 @@ export interface ScheduleServiceOptions {
 
 /**
  * 定时任务调度器：启动时恢复全部在期任务的 cron，触发时执行注入的 runTask。
- * - 同一任务触发时若上一轮未结束，由会话队列串行，不并发；
+ * - 同一任务触发时若上一轮未结束，跳过本次触发；
  * - 执行结果（成功/失败）记入任务档案，供查询指令展示。
  */
 export class ScheduleService {
   private readonly store: ScheduleStore;
   /** 运行中的 cron 任务（任务 id → croner 实例） */
   private readonly jobs = new Map<string, Cron>();
-  private runTask?: (task: ScheduleTask) => Promise<void>;
+  private readonly runTask: (task: ScheduleTask) => Promise<void>;
+  private readonly running = new Set<string>();
   private started = false;
 
   constructor(options: ScheduleServiceOptions) {
@@ -101,6 +102,7 @@ export class ScheduleService {
 
   /** 停止全部调度（优雅退出时调用）。 */
   stop(): void {
+    this.started = false;
     for (const job of this.jobs.values()) job.stop();
     this.jobs.clear();
   }
@@ -112,7 +114,7 @@ export class ScheduleService {
     if (!input.prompt.trim()) return { error: "任务指令不能为空" };
 
     const task: ScheduleTask = {
-      id: randomUUID().slice(0, 8),
+      id: randomUUID(),
       name: input.name?.trim() || input.prompt.trim().slice(0, 20),
       cron,
       prompt: input.prompt.trim(),
@@ -154,6 +156,7 @@ export class ScheduleService {
   async fireNow(id: string): Promise<string> {
     const task = await this.store.get(id);
     if (!task) return `任务 ${id} 不存在`;
+    if (this.running.has(id)) return `任务 ${id} 正在执行，请等待本轮完成`;
     void this.execute(task).catch((error) => {
       logger.warn(`[Schedule] 手动触发执行失败 ${task.name}: ${error instanceof Error ? error.message : String(error)}`);
     });
@@ -162,6 +165,7 @@ export class ScheduleService {
 
   /** 借 croner 校验表达式合法性（构造成功即合法，立即释放）。 */
   private isValidCron(expr: string): boolean {
+    if (expr.split(/\s+/).length !== 5) return false;
     try {
       new Cron(expr, () => {}).stop();
       return true;
@@ -174,7 +178,9 @@ export class ScheduleService {
   private scheduleJob(task: ScheduleTask): void {
     if (this.jobs.has(task.id)) return;
     try {
-      const job = new Cron(task.cron, () => void this.fire(task.id));
+      const job = new Cron(task.cron, () => {
+        void this.fire(task.id).catch((error) => logger.error(`[Schedule] 调度失败 ${task.id}:`, error));
+      });
       this.jobs.set(task.id, job);
     } catch (error) {
       logger.warn(`[Schedule] 任务 ${task.id} cron 无效，跳过调度: ${error instanceof Error ? error.message : String(error)}`);
@@ -195,10 +201,11 @@ export class ScheduleService {
 
   /** 执行一次任务：跑智能体、推结果卡片、记录执行状态（成败都不抛出，不影响调度器）。 */
   private async execute(task: ScheduleTask): Promise<void> {
+    if (this.running.has(task.id)) return;
+    this.running.add(task.id);
     const startedAt = Date.now();
     logger.info(`[Schedule] 触发任务 ${task.id}（${task.name}）`);
     try {
-      if (!this.runTask) throw new Error("执行器未注入");
       await this.runTask(task);
       await this.markResult(task, "ok");
       logger.info(`[Schedule] 任务 ${task.id} 执行完成（${Date.now() - startedAt}ms）`);
@@ -206,6 +213,8 @@ export class ScheduleService {
       const detail = error instanceof Error ? error.message : String(error);
       await this.markResult(task, "error", detail);
       logger.warn(`[Schedule] 任务 ${task.id} 执行失败: ${detail}`);
+    } finally {
+      this.running.delete(task.id);
     }
   }
 

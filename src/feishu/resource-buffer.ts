@@ -5,7 +5,7 @@
  * `getReadableStream()`、以及需要落地临时文件的 `writeFile(path)` shim——
  * 这里按能力逐级探测，调用方无需关心差异。无法识别的结构抛错（含响应片段便于排查）。
  */
-import { readFile, unlink, writeFile } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -22,8 +22,8 @@ function collectStream(stream: NodeJS.ReadableStream): Promise<Buffer> {
 /** 借助临时文件消费 writeFile 落地型响应：写入临时目录 → 读回 → 清理。 */
 async function viaWriteFileShim(writeFileFn: (path: string) => Promise<void>): Promise<Buffer> {
   const tempPath = join(tmpdir(), `feishu-res-${Date.now()}-${Math.random().toString(36).slice(2)}`);
-  await writeFileFn(tempPath);
   try {
+    await writeFileFn(tempPath);
     return await readFile(tempPath);
   } finally {
     await unlink(tempPath).catch(() => undefined);

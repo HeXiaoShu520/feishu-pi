@@ -16,7 +16,8 @@ interface ConversationState {
   sessionId: string;
   queue: Promise<void>;
   /** 当前是否有在途/排队中的请求（新消息到达时据此打断；evictIdle 据此跳过） */
-  busy?: boolean;
+  pending: number;
+  userId: string;
   /** 已从会话表移除（/new 换代或空闲驱逐）：孤儿任务不得再把 sessionFile 写回注册表 */
   detached?: boolean;
   /** 最近一次活跃时刻（epoch 毫秒）：空闲驱逐的依据 */
@@ -57,7 +58,7 @@ export class ConversationManager {
     let evicted = 0;
     for (const [id, statePromise] of this.conversations) {
       const state = await statePromise.catch(() => undefined);
-      if (!state || state.busy || state.detached) continue;
+      if (!state || state.pending || state.detached || this.conversations.get(id) !== statePromise) continue;
       if (now - state.lastActiveAt < maxIdleMs) continue;
       state.detached = true;
       this.conversations.delete(id);
@@ -75,7 +76,10 @@ export class ConversationManager {
 
     const existing = this.conversations.get(conversationId);
     if (existing) return existing;
-    const initialization = this.initializeState(conversationId, context);
+    const initialization = this.initializeState(conversationId, context).catch((error) => {
+      if (this.conversations.get(conversationId) === initialization) this.conversations.delete(conversationId);
+      throw error;
+    });
     this.conversations.set(conversationId, initialization);
     return initialization;
   }
@@ -91,7 +95,7 @@ export class ConversationManager {
       ? await this.runtime.createSession(record.sessionFile, userId, context).catch(() => undefined)
       : undefined;
     if (!session) session = await this.runtime.createSession(undefined, userId, context);
-    const state: ConversationState = { session, sessionId: record.sessionId, queue: Promise.resolve(), lastActiveAt: Date.now() };
+    const state: ConversationState = { session, sessionId: record.sessionId, userId, pending: 0, queue: Promise.resolve(), lastActiveAt: Date.now() };
     await this.persistSessionFile(conversationId, state);
     return state;
   }
@@ -102,8 +106,8 @@ export class ConversationManager {
     if (state.detached) return;
     const file = state.session.sessionFile;
     if (file && file !== state.persistedSessionFile) {
-      state.persistedSessionFile = file;
       await this.sessions.setSessionFile(conversationId, file, state.sessionId);
+      state.persistedSessionFile = file;
     }
   }
 
@@ -116,38 +120,52 @@ export class ConversationManager {
     const state = await this.getState(message.conversationId, message.context);
 
     // 新消息打断：当前还在思考/执行时，先中断在途请求，本条消息排队后立即开始
-    if (state.busy) {
+    if (state.pending) {
       logger.info(`[Conversation] 新消息打断在途响应: ${message.conversationId}`);
       state.onInterrupted?.();
       state.session.abort();
     }
     // 立即标记占用：覆盖"getState 返回到 task 启动"之间的窗口——
     // 该窗口内 evictIdle 会把空闲会话驱逐成孤儿（跑完却不写回映射，下一条消息另建新会话）
-    state.busy = true;
-    state.onInterrupted = onInterrupted;
+    state.pending++;
 
     const task = state.queue.then(async () => {
-      // 事件到达时同步检查 sessionFile：Pi 在首个 message_end 落盘，此时立刻持久化映射，
-      // 即使随后被中断，下次也能恢复到同一会话
-      const unsubscribe = state.session.subscribe(async (event) => {
-        await this.persistSessionFile(message.conversationId, state);
-        await onEvent(event);
-      });
+      let unsubscribe = () => {};
+      let events = Promise.resolve();
       try {
+        if (state.detached) throw new Error("会话已重置，请重新发送消息");
+        const userId = message.context?.userOpenId ?? message.conversationId.split("-")[0];
+        // 话题共享历史，但工具闭包绑定用户。换人时在队列内重建运行时，避免借用前一人的凭证。
+        if (state.userId !== userId) {
+          state.session = await this.runtime.createSession(state.session.sessionFile, userId, message.context);
+          state.userId = userId;
+        }
+        state.onInterrupted = onInterrupted;
+        unsubscribe = state.session.subscribe((event) => {
+          // Pi 不等待订阅回调；串行消费并在本轮结束前排空，防终态卡片早于正文。
+          events = events.then(async () => {
+            await this.persistSessionFile(message.conversationId, state);
+            await onEvent(event);
+          });
+          void events.catch(() => {}); // 由下面的 await events 向调用方报告错误
+        });
         await state.session.prompt(message.prompt);
         await state.session.waitForIdle();
+        return state.session;
       } finally {
-        state.busy = false;
-        state.lastActiveAt = Date.now();
-        state.onInterrupted = undefined;
         unsubscribe();
-        // 兜底：响应结束后再检查一次
-        await this.persistSessionFile(message.conversationId, state);
+        try {
+          await events;
+          await this.persistSessionFile(message.conversationId, state);
+        } finally {
+          state.pending--;
+          state.lastActiveAt = Date.now();
+          state.onInterrupted = undefined;
+        }
       }
     });
-    state.queue = task.catch(() => undefined);
-    await task;
-    return state.session;
+    state.queue = task.then(() => undefined, () => undefined);
+    return task;
   }
 
   /** 获取指定会话当前的真实 Session 统计（不存在会创建会话）。 */
@@ -164,16 +182,18 @@ export class ConversationManager {
     const statePromise = this.conversations.get(conversationId);
     this.conversations.delete(conversationId);
 
-    const task = (async () => {
-      await this.sessions.rotate(conversationId, callerOpenId);
+    const previous = this.rotating.get(conversationId) ?? Promise.resolve();
+    const task = previous.then(async () => {
       if (statePromise) {
         const state = await statePromise.catch(() => undefined);
         if (state) {
           state.detached = true;
+          state.onInterrupted?.();
           state.session.abort();
         }
       }
-    })();
+      await this.sessions.rotate(conversationId, callerOpenId);
+    });
     this.rotating.set(conversationId, task);
     try {
       await task;

@@ -24,7 +24,9 @@ export class MessageStore extends JsonMapStore<MessageRecord> {
     await this.ensureLoaded();
     const existing = this.records.get(messageId);
     if (existing && (existing.status === "completed" || (existing.status === "processing" && Date.now() - existing.updatedAt < PROCESSING_TTL_MS))) return false;
-    await this.setStatus(messageId, "processing");
+    // 检查与占位之间不能 await，否则并发投递都可能认领成功。
+    this.records.set(messageId, { status: "processing", updatedAt: Date.now() });
+    await this.persist();
     return true;
   }
 
@@ -33,9 +35,24 @@ export class MessageStore extends JsonMapStore<MessageRecord> {
     await this.setStatus(messageId, "completed");
   }
 
-  /** 标记消息处理失败，避免重复投递立即再次执行。 */
+  /** 标记处理失败，允许后续重复投递重试。 */
   async fail(messageId: string): Promise<void> {
     await this.setStatus(messageId, "failed");
+  }
+
+  /** 清理与正常写入共用内存和写队列，避免清理器直接改文件造成状态回退。 */
+  async cleanup(cutoff: number, stuckBefore?: number): Promise<{ checked: number; cleaned: number }> {
+    await this.ensureLoaded();
+    const checked = this.records.size;
+    let cleaned = 0;
+    for (const [id, record] of this.records) {
+      if (record.updatedAt < cutoff || (record.status === "processing" && stuckBefore !== undefined && record.updatedAt < stuckBefore)) {
+        this.records.delete(id);
+        cleaned++;
+      }
+    }
+    if (cleaned) await this.persist();
+    return { checked, cleaned };
   }
 
   /** 写入状态并落盘。 */

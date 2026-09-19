@@ -57,7 +57,7 @@ export function findBlockBoundary(text: string): number {
  * CardKit 流式回复包装器
  * - 启用时使用 CardKit 流式卡片
  * - 正文过长自动分卡（完整块边界切分）
- * - 失败时自动降级为普通文本消息
+ * - 失败上报，不自动降级为普通文本消息
  */
 export class CardKitReply implements FeishuReply {
   private readonly client: Client;
@@ -184,6 +184,8 @@ export class CardKitReply implements FeishuReply {
     try {
       await this.initialization;
     } catch (error) {
+      this.stream?.dispose();
+      this.stream = undefined;
       this.initialization = undefined;
       throw error;
     }
@@ -216,6 +218,8 @@ export class CardKitReply implements FeishuReply {
 
   /** 撤回本条卡片消息（本轮被打断时调用；未发出过消息则无操作）。 */
   async recall(): Promise<void> {
+    this.closed = true;
+    this.stream?.dispose();
     if (!this.sentMessageId) return;
     await this.client.im.v1.message.delete({ path: { message_id: this.sentMessageId } });
     this.sentMessageId = undefined;
@@ -245,6 +249,7 @@ export class CardKitReply implements FeishuReply {
       // 新卡承载剩余内容
       const newStream = new CardKitStream({ client: this.client, onError: this.onError });
       const newCardId = await newStream.create(tail);
+      await newStream.replace(tail);
       this.stream = newStream;
       this.offset += split;
       await this.sendCardReference(newCardId, this.messageId);

@@ -36,7 +36,7 @@ export function splitShellSegments(command: string): string[] {
 }
 
 /** 段落里出现即不可白名单放行的构造：命令替换 / 子 shell（内容会被执行，前缀匹配失去意义） */
-const COMPOSITE_VETO = /\$\(|`|<\(/;
+const COMPOSITE_VETO = /[`$<>\\()]/;
 
 /**
  * 组合命令的确定性白名单：每一段都必须单独命中白名单前缀；
@@ -120,6 +120,7 @@ export class ToolGuard {
 
   async check(policy: GroupPolicy, params: ToolGuardCheckParams, signal?: AbortSignal): Promise<{ block: true; reason: string } | undefined> {
     const { toolName, args, risky } = params;
+    if (signal?.aborted) return { block: true, reason: "会话已中断" };
 
     // ⓪ deny 规则（第 0 层）：先于组策略、智能体审核与授权卡，对所有人（含管理员）生效。
     // bash 按命令 token 匹配；read 在 runtime 分支先行拦截；这里补 write/edit 的路径拦截。
@@ -143,6 +144,8 @@ export class ToolGuard {
         return { block: true, reason: `⛔ 该路径已被权限策略禁止读写（命中 deny 规则 ${denyHit}）` };
       }
     }
+
+    if (risky) return this.requireApproval(params, "该工具要求人工授权", signal);
 
     // ① 组策略命中 → 免审放行（确定性判定，不打日志）；未命中由 Judge 单行记录（命令+结论）
     if (toolName === "bash") {
@@ -175,11 +178,11 @@ export class ToolGuard {
     }
 
     // ③ 智能体未配置 → 名单外调用直接授权卡
-    return this.requireApproval(params, this.defaultReason(policy, toolName, args), signal);
+    return this.requireApproval(params, this.defaultReason(toolName, args), signal);
   }
 
   /** 未启用智能体时的兜底理由。 */
-  private defaultReason(policy: GroupPolicy, toolName: string, args?: unknown): string {
+  private defaultReason(toolName: string, args?: unknown): string {
     if (toolName === "bash") {
       const command = extractCommand(args);
       if (command !== undefined && SHELL_META.test(command)) return "命令含拼接符（; | && $( 换行等），为防逃逸需人工确认";
@@ -240,8 +243,3 @@ function extractCommand(args: unknown): string | undefined {
   return typeof command === "string" ? command : undefined;
 }
 
-/** 日志用单行化：压平换行并截断，避免多行命令刷屏。 */
-function singleLine(text: string, maxLength: number): string {
-  const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length > maxLength ? `${flat.slice(0, maxLength)}…` : flat;
-}

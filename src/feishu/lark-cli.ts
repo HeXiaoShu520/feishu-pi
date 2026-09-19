@@ -1,5 +1,5 @@
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
-import { constants } from "node:fs";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { logger } from "../utils/logger.ts";
 
@@ -45,7 +45,8 @@ interface UserProfileCache {
 export class LarkCli {
   private readonly cacheFilePath: string;
   private cache: UserProfileCache = {};
-  private cacheLoaded = false;
+  private loadPromise?: Promise<void>;
+  private writeQueue: Promise<void> = Promise.resolve();
   private readonly searchUser?: (openId: string) => Promise<ProfileName | undefined>;
   /** 同一用户的并发查询合并（如多条消息同时 @ 同一新人）：共享同一条查询链路 */
   private readonly inflight = new Map<string, Promise<LarkUserProfile>>();
@@ -61,7 +62,7 @@ export class LarkCli {
    * createCliSearchUser）。未命中也落盘冷却档案（1 天后自动重试），避免重复打 CLI；
    * 消费方自行判断空字段并做兜底展示（如 openId 直显）。
    */
-  async getUserProfile(openId: string, queryOptions?: { prefetch?: boolean }): Promise<LarkUserProfile> {
+  async getUserProfile(openId: string): Promise<LarkUserProfile> {
     await this.loadCache();
 
     // 检查缓存是否过期：成功档案 3 天；空档案按 1 天重查
@@ -119,24 +120,27 @@ export class LarkCli {
     return profile;
   }
 
-  /** 加载缓存文件 */
   private async loadCache(): Promise<void> {
-    if (this.cacheLoaded) return;
-    try {
-      await access(this.cacheFilePath, constants.R_OK);
-      const content = await readFile(this.cacheFilePath, "utf8");
-      this.cache = JSON.parse(content) as UserProfileCache;
-    } catch {
-      // 文件不存在或读取失败，使用空缓存
-      this.cache = {};
-    }
-    this.cacheLoaded = true;
+    this.loadPromise ??= (async () => {
+      try {
+        this.cache = JSON.parse(await readFile(this.cacheFilePath, "utf8")) as UserProfileCache;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ENOENT") logger.warn("[LarkCli] 用户缓存不可读，将重新查询:", error);
+        this.cache = {};
+      }
+    })();
+    await this.loadPromise;
   }
 
-  /** 保存缓存到文件 */
   private async saveCache(): Promise<void> {
-    await mkdir(dirname(this.cacheFilePath), { recursive: true });
-    await writeFile(this.cacheFilePath, `${JSON.stringify(this.cache, null, 2)}\n`, "utf8");
+    const task = this.writeQueue.then(async () => {
+      await mkdir(dirname(this.cacheFilePath), { recursive: true });
+      const temp = `${this.cacheFilePath}.${randomUUID()}.tmp`;
+      await writeFile(temp, `${JSON.stringify(this.cache, null, 2)}\n`, "utf8");
+      await rename(temp, this.cacheFilePath);
+    });
+    this.writeQueue = task.catch(() => {});
+    await task;
   }
 
   /**
@@ -155,7 +159,7 @@ export class LarkCli {
         name: entry.name,
         en_name: prev?.en_name ?? "",
         department_name: prev?.department_name ?? [],
-        updatedAt: new Date().toISOString(),
+        updatedAt: prev?.updatedAt ?? new Date(0).toISOString(),
       };
       added++;
     }

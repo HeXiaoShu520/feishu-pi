@@ -438,7 +438,10 @@ export class UserAuthService {
     const token = await this.store.get(openId);
     const current = token?.scope.split(/\s+/).filter(Boolean) ?? [];
     const missing = needed.filter((s) => !current.includes(s));
-    if (token && missing.length === 0) return this.getUserAccessToken(openId);
+    if (token && missing.length === 0) {
+      const accessToken = await this.getUserAccessToken(openId);
+      if (accessToken) return accessToken;
+    }
 
     // 增量申请范围 = 现有 scope ∪ 新增 scope（避免已同意的权限被缩水）
     const scopes = Array.from(new Set([...current, ...needed]));
@@ -516,7 +519,11 @@ export class UserAuthService {
         // 核实实际授权者：谁点同意，token 就绑定谁的 open_id——
         // 每个人 /login 得到的都是"操作自己飞书"的能力；链接被代点也各归各账，不会冒记
         const identity = await this.getIdentity(accessToken).catch(() => undefined);
-        const owner = identity?.openId || openId;
+        if (!identity?.openId) {
+          await this.finishCard(messageId, markdownCard("❌ 无法核实授权账号，本次凭证未保存，请重新 /login lark。"));
+          return;
+        }
+        const owner = identity.openId;
         if (owner !== openId) {
           logger.warn(`[UserAuth] 本次授权实际完成者为 ${identity?.name || owner}（${owner}），与发起人 ${openId} 不同，按实际账号绑定`);
         }
@@ -647,9 +654,11 @@ export class StatusCommand implements CommandHandler {
 /** /logout：清除本人的飞书登录记录。 */
 export class LogoutCommand implements CommandHandler {
   private readonly auth: UserAuthService;
+  private readonly providers: Record<string, (openId: string) => Promise<boolean>>;
 
-  constructor(auth: UserAuthService) {
+  constructor(auth: UserAuthService, providers: Record<string, (openId: string) => Promise<boolean>> = {}) {
     this.auth = auth;
+    this.providers = providers;
   }
 
   match(text: string): boolean {
@@ -658,12 +667,10 @@ export class LogoutCommand implements CommandHandler {
 
   async execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
     const provider = message.text.trim().split(/\s+/)[1]?.toLowerCase() ?? "all";
-    const removed = await this.auth.logout(message.context.userOpenId);
-    if (provider === "all") {
-      return { card: markdownCard(removed ? "✅ 已退出登录，用户授权已清除。" : "你当前没有登录记录。") };
-    }
-    return {
-      card: markdownCard(removed ? "✅ 已退出登录，用户授权已清除。使用 lark-cli 时会自动弹出重新授权。" : "你当前没有登录记录。"),
-    };
+    const handlers: Record<string, (openId: string) => Promise<boolean>> = { lark: (openId) => this.auth.logout(openId), ...this.providers };
+    const selected = provider === "all" ? Object.values(handlers) : [handlers[provider]];
+    if (!selected[0]) return { card: markdownCard(`❌ 不支持的登录类型：${provider}`) };
+    const removed = (await Promise.all(selected.map((logout) => logout(message.context.userOpenId)))).some(Boolean);
+    return { card: markdownCard(removed ? "✅ 已退出登录，本地用户凭证已清除。" : "你当前没有登录记录。") };
   }
 }

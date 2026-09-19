@@ -15,7 +15,7 @@ function sanitizeValue(value: string): string {
 export function upsertEnvLine(content: string, key: string, value: string): string {
   const line = `${key}=${sanitizeValue(value)}`;
   const pattern = new RegExp(`^${key}=.*$`, "m");
-  if (pattern.test(content)) return content.replace(pattern, line);
+  if (pattern.test(content)) return content.replace(pattern, () => line);
   const base = content.trimEnd();
   return base ? `${base}\n${line}\n` : `${line}\n`;
 }

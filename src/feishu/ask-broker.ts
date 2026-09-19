@@ -104,6 +104,7 @@ interface PendingAsk {
   qid: string;
   token: string;
   openId: string;
+  options: string[];
   messageId: string;
   resolve: (outcome: AskOutcome) => void;
 }
@@ -124,42 +125,38 @@ export class AskBroker {
    * qid/token 与提问对象 openId 绑定：仅本人点击有效。
    * pending 先注册再发卡：回调不可能早于卡片到达，但注册不能晚于任何一次结算尝试。
    */
-  async ask(openId: string, chatId: string, question: string, options: string[]): Promise<AskOutcome> {
+  async ask(openId: string, chatId: string, question: string, options: string[], signal?: AbortSignal): Promise<AskOutcome> {
+    if (signal?.aborted) return { status: "cancelled" };
     const qid = randomUUID();
     const token = randomUUID();
-    const card = buildChoiceCard({ question, options, qid, token });
-
-    return await new Promise<AskOutcome>((resolve) => {
-      const pending: PendingAsk = { qid, token, openId, messageId: "", resolve: (outcome) => resolve(outcome) };
-      this.pending.set(qid, pending);
-      const timer = setTimeout(() => {
-        if (this.pending.get(qid) !== pending) return;
-        this.pending.delete(qid);
-        void this.options
-          .updateCard(pending.messageId, buildAskResultCard("⏱ 已超时跳过本次选择。如需回答请重新提问。"))
-          .catch(() => undefined)
-          .finally(() => pending.resolve({ status: "timeout" }));
-      }, this.askTimeoutMs);
-      pending.resolve = (outcome) => {
+    return new Promise<AskOutcome>((resolve) => {
+      const finish = (outcome: AskOutcome) => {
+        if (!this.pending.delete(qid)) return;
         clearTimeout(timer);
+        signal?.removeEventListener("abort", onAbort);
         resolve(outcome);
+        if (outcome.status !== "answered" && pending.messageId) {
+          void this.options.updateCard(pending.messageId, buildAskResultCard(
+            outcome.status === "timeout" ? "⏱ 已超时跳过本次选择。" : "本次询问已取消。",
+          )).catch(() => undefined);
+        }
       };
-
-      const settleCancelled = () => {
-        if (this.pending.get(qid) !== pending) return; // 已被点选/超时结算
-        clearTimeout(timer);
-        this.pending.delete(qid);
-        pending.resolve({ status: "cancelled" });
-      };
-      this.options
-        .sendCard(chatId, card)
+      const pending: PendingAsk = { qid, token, openId, options, messageId: "", resolve: finish };
+      const onAbort = () => finish({ status: "cancelled" });
+      const timer = setTimeout(() => finish({ status: "timeout" }), this.askTimeoutMs);
+      this.pending.set(qid, pending);
+      signal?.addEventListener("abort", onAbort, { once: true });
+      void this.options.sendCard(chatId, buildChoiceCard({ question, options, qid, token }))
         .then((messageId) => {
-          if (!messageId) return settleCancelled();
+          if (!messageId) return finish({ status: "cancelled" });
           pending.messageId = messageId;
+          if (!this.pending.has(qid)) {
+            void this.options.updateCard(messageId, buildAskResultCard("本次询问已结束。" )).catch(() => undefined);
+          }
         })
         .catch((error) => {
-          logger.error(`[AskBroker] 发送提问卡失败: ${error instanceof Error ? error.message : String(error)}`);
-          settleCancelled();
+          logger.error("[AskBroker] 发送提问卡失败:", error);
+          finish({ status: "cancelled" });
         });
     });
   }
@@ -175,7 +172,8 @@ export class AskBroker {
       logger.warn(`[AskBroker] 非提问对象点击被忽略：提问对象 ${pending.openId}，点击者 ${input.operatorOpenId}`);
       return undefined;
     }
-    this.pending.delete(input.qid ?? "");
+    if (!input.choice || !pending.options.includes(input.choice)) return undefined;
+    if (pending.messageId && input.messageId !== pending.messageId) return undefined;
     const choice = input.choice ?? "";
     const messageId = input.messageId ?? pending.messageId ?? "";
     void this.options
@@ -206,7 +204,7 @@ export function createAskUserTool(broker: AskBroker): FeishuPiTool {
       },
       required: ["question", "options"],
     },
-    execute: async (_toolCallId, params) => {
+    execute: async (_toolCallId, params, signal) => {
       const record = (typeof params === "object" && params !== null ? params : {}) as {
         question?: string;
         options?: string[];
@@ -221,7 +219,7 @@ export function createAskUserTool(broker: AskBroker): FeishuPiTool {
       if (!question || options.length < 2) {
         return { content: [{ type: "text" as const, text: "❌ 参数不完整：需要 question 与至少 2 个 options" }], details: {} };
       }
-      const outcome = await broker.ask(openId, chatId, question, options);
+      const outcome = await broker.ask(openId, chatId, question, options, signal);
       if (outcome.status === "answered" && outcome.choice) {
         return { content: [{ type: "text" as const, text: `用户选择了：${outcome.choice}` }], details: {} };
       }

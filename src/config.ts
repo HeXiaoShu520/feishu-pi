@@ -12,10 +12,7 @@ export interface FeishuPiAppConfig {
   sessionsFile: string;
   /** 消息去重表 */
   messagesFile: string;
-  /** 话题根表（话题群会话收敛用） */
-  topicRootsFile: string;
-  /** 共享资源缓存目录，会话目录按需从它播种 */
-  /** Per-user 授权（Device Flow，/login）申请的用户身份 scope；留空 = 禁用 /login */
+  /** Per-user 授权（Device Flow，/login）申请的用户身份 scope */
   userAuthScopes: string[];
   modelProvider: string;
   modelName: string;
@@ -129,7 +126,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     sessionsRoot: `${process.cwd()}/work_space`,
     sessionsFile: `${process.cwd()}/data/sessions.json`,
     messagesFile: `${process.cwd()}/data/messages.json`,
-    topicRootsFile: `${process.cwd()}/data/topic-roots.json`,
     // 非会话数据（用户资料、凭证、记忆、共享缓存）统一在 data/ 下
     dataDir: `${process.cwd()}/data`,
     // 用户身份授权 scope（Device Flow）：默认内置"用户资料查询"所需最小集合；FEISHU_USER_AUTH_SCOPES 可覆盖。

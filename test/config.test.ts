@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { loadConfig, parseGroupMembership } from "../src/config.ts";
 
 const baseEnv = {
@@ -29,7 +29,6 @@ describe("loadConfig 模型统计小字开关", () => {
 });
 
 describe("parseGroupMembership（FEISHU_PI_GROUP 配置语义）", () => {
-  const warn = vi.fn();
   it("FEISHU_PI_GROUP（无后缀）映射到主团队组 group；FEISHU_PI_GROUP_1 映射到 group_1（两者是不同组）", () => {
     const groups = parseGroupMembership({ FEISHU_PI_GROUP: "李雷, 韩梅梅", FEISHU_PI_GROUP_1: "王强" });
     expect(groups["group"]).toEqual(["李雷", "韩梅梅"]);

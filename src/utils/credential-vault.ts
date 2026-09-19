@@ -1,7 +1,7 @@
-import { createCipheriv, createDecipheriv, randomBytes, scryptSync } from "node:crypto";
-import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { createCipheriv, createDecipheriv, randomBytes, randomUUID, scryptSync } from "node:crypto";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { logger } from "./logger.ts";
 
 /**
@@ -41,13 +41,11 @@ export class CredentialVault {
   private writeQueue: Promise<void> = Promise.resolve();
   private readonly filePath: string;
   private readonly key: Buffer;
-  private readonly keySource: string;
   private readonly keyFilePath: string;
 
   private constructor(filePath: string, keyFilePath: string) {
     this.filePath = filePath;
     this.keyFilePath = keyFilePath;
-    this.keySource = `file:${keyFilePath}`;
     this.key = this.loadOrCreateKeyFile();
   }
 
@@ -58,6 +56,7 @@ export class CredentialVault {
     filePath: string,
     opts: { keyFile?: string } = {},
   ): Promise<CredentialVault> {
+    filePath = resolve(filePath);
     const cached = CredentialVault.instances.get(filePath);
     if (cached) return cached;
     const keyFilePath = opts.keyFile ?? join(dirname(filePath), ".vault-key");
@@ -112,9 +111,9 @@ export class CredentialVault {
     try {
       const hex = readFileSync(this.keyFilePath, "utf8").trim();
       if (isHex64(hex)) return Buffer.from(hex, "hex");
-      logger.warn(`[Vault] 密钥文件 ${this.keyFilePath} 内容不合法，将重新生成（旧密文将无法解密！）`);
-    } catch {
-      /* 首次运行：文件不存在 */
+      throw new Error(`[Vault] 密钥文件 ${this.keyFilePath} 内容不合法，请恢复原密钥`);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
     }
     const fresh = randomBytes(32).toString("hex");
     mkdirSync(dirname(this.keyFilePath), { recursive: true });
@@ -148,7 +147,7 @@ export class CredentialVault {
 
   /** 串行原子写：整表加密 → 临时文件 → rename 替换。 */
   private persist(): Promise<void> {
-    this.writeQueue = this.writeQueue.then(async () => {
+    const task = this.writeQueue.then(async () => {
       const salt = randomBytes(16);
       const iv = randomBytes(12);
       const key = scryptSync(this.key, salt, 32);
@@ -163,10 +162,11 @@ export class CredentialVault {
         data: b64(data),
       };
       await mkdir(dirname(this.filePath), { recursive: true });
-      const temporaryPath = join(dirname(this.filePath), `.${Date.now()}-${process.pid}.tmp`);
+      const temporaryPath = join(dirname(this.filePath), `.${randomUUID()}.tmp`);
       await writeFile(temporaryPath, `${JSON.stringify(envelope, null, 2)}\n`, "utf8");
       await rename(temporaryPath, this.filePath);
     });
-    return this.writeQueue;
+    this.writeQueue = task.catch((error) => logger.error("[Vault] 持久化失败:", error));
+    return task;
   }
 }

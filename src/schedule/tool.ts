@@ -2,10 +2,9 @@
  * schedule_manager 工具：定时任务的管理入口（查看/创建/删除/启停/立即执行）。
  * 直连 ScheduleService 进程内调用——不直接读写 data/schedules.json，
  * 避免与调度器的内存状态产生文件竞态。
- * 仅注入管理员会话（创建者身份随任务存档，执行时按其权限闸门走）。
+ * 由 Tools(schedule_manager) 授权；任务按创建者隔离。
  */
 import { logger } from "../utils/logger.ts";
-import type { ScheduleService } from "./service.ts";
 
 /** 管理所需的服务最小接口（ScheduleService 满足；结构化类型便于测试注入） */
 export interface ScheduleManagerService {
@@ -79,9 +78,14 @@ async function run(
 ): Promise<string> {
   const str = (v: unknown): string => (typeof v === "string" ? v.trim() : "");
   const id = str(params.id);
+  if (["remove", "toggle", "run"].includes(action)) {
+    if (!id) return "❌ 请提供任务 ID";
+    const task = (await service.listTasks()).find((task) => task.id === id && task.createdBy === defaults.createdBy);
+    if (!task) return "❌ 任务不存在或不属于你";
+  }
   switch (action) {
     case "list": {
-      const tasks = await service.listTasks();
+      const tasks = (await service.listTasks()).filter((task) => task.createdBy === defaults.createdBy);
       if (tasks.length === 0) return "📋 暂无定时任务";
       return [
         `📋 定时任务（共 ${tasks.length} 个）：`,
@@ -106,7 +110,8 @@ async function run(
         chatId: defaults.chatId,
         createdBy: defaults.createdBy,
         name: str(params.name) || undefined,
-      });      if (error || !task) return `❌ 创建失败：${error ?? "未知原因"}`;
+      });
+      if (error || !task) return `❌ 创建失败：${error ?? "未知原因"}`;
       return `✅ 已创建定时任务 [${task.id}] ${task.name}（cron: ${cron}），到点自动执行并将结果推送到本会话。`;
     }
     case "remove":

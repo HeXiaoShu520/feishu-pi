@@ -1,5 +1,6 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import { randomUUID } from "node:crypto";
 import { logger } from "./logger.ts";
 
 /**
@@ -51,7 +52,10 @@ export abstract class JsonMapStore<V> {
         if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
       }
       this.loaded = true;
-    })();
+    })().catch((error) => {
+      this.loadPromise = undefined;
+      throw error;
+    });
     await this.loadPromise;
   }
 
@@ -61,7 +65,7 @@ export abstract class JsonMapStore<V> {
   protected async persist(): Promise<void> {
     const task = this.writeQueue.then(async () => {
       await mkdir(dirname(this.filePath), { recursive: true });
-      const temporaryPath = join(dirname(this.filePath), `.${Date.now()}-${process.pid}.tmp`);
+      const temporaryPath = join(dirname(this.filePath), `.${randomUUID()}.tmp`);
       await writeFile(temporaryPath, `${JSON.stringify(Object.fromEntries(this.records), null, 2)}\n`, "utf8");
       await rename(temporaryPath, this.filePath);
     });

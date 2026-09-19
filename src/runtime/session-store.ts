@@ -7,6 +7,7 @@
  * 这里是"会话目录在哪"的唯一事实来源：传输层下载图片/附件、运行时落 Pi 会话文件，
  * 都从同一个记录取目录，二者永远落在同一个会话目录里。
  */
+import { randomUUID } from "node:crypto";
 import { mkdir, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { JsonMapStore } from "../utils/json-store.ts";
@@ -78,13 +79,18 @@ export class SessionStore extends JsonMapStore<SessionRecord> {
 
   /** `/new`：为该会话开一代新会话（新 id + 新目录 + 空历史），旧目录留在磁盘等过期清理。 */
   async rotate(conversationId: string, callerOpenId?: string): Promise<SessionRecord> {
-    // 等价于 getOrCreate 的首次创建：先等在建的那一代落定，避免换代被它覆盖
-    await this.pending.get(conversationId)?.catch(() => undefined);
-    await this.ensureLoaded();
-    const previous = this.records.get(conversationId);
-    const record = await this.createRecord(conversationId, callerOpenId);
-    if (previous) logger.info(`[Session] 会话已换代: ${conversationId} → ${record.sessionId}（旧目录 ${previous.sessionId} 留待过期清理）`);
-    return record;
+    const previous = this.pending.get(conversationId);
+    const task = (async () => {
+      await previous?.catch(() => undefined);
+      await this.ensureLoaded();
+      const record = await this.createRecord(conversationId, callerOpenId);
+      logger.info(`[Session] 会话已换代: ${conversationId} → ${record.sessionId}`);
+      return record;
+    })().finally(() => {
+      if (this.pending.get(conversationId) === task) this.pending.delete(conversationId);
+    });
+    this.pending.set(conversationId, task);
+    return task;
   }
 
   private async getOrCreateInner(conversationId: string, callerOpenId?: string): Promise<SessionRecord> {
@@ -98,44 +104,18 @@ export class SessionStore extends JsonMapStore<SessionRecord> {
 
   /** 新建一代会话：分配不重名的会话 id、建目录、写自述文件、登记路由。 */
   private async createRecord(conversationId: string, callerOpenId?: string): Promise<SessionRecord> {
-    // mkdir 非递归 = 文件系统级原子创建：即便并发拿到同一 id（查盘与建目录之间的竞态窗口），
-    // 也只有一个成功，另一个 EEXIST 后换 id 重试——构造上排除两代会话共用一个目录
+    // UUID 直接分配唯一目录，mkdir 非递归保证不覆盖已有目录。
     await mkdir(this.root, { recursive: true });
-    // 目录尾段 = 发起人 openId 后 6 位（一眼可见归属）；无身份时退回随机
-    const tail = callerOpenId ? callerOpenId.slice(-6).replace(/[^A-Za-z0-9]/g, "") || undefined : undefined;
-    for (let attempt = 0; attempt < 50; attempt++) {
-      const sessionId = attempt < 5 ? await this.allocateSessionId(tail) : `${newSessionId()}-${Math.random().toString(36).slice(2, 8)}`;
-      const dir = join(this.root, sessionId);
-      try {
-        await mkdir(dir);
-      } catch (err) {
-        if ((err as NodeJS.ErrnoException).code === "EEXIST") {
-          logger.warn(`[Session] 会话目录撞名（${sessionId}），已自动重新分配`);
-          continue;
-        }
-        throw err;
-      }
-
-      const now = Date.now();
-      const record: SessionRecord = { sessionId, dir, createdAt: now, updatedAt: now };
-      this.records.set(conversationId, record);
-      await this.writeMeta(dir, conversationId, sessionId, now).catch((error) => {
-        logger.warn(`[Session] 写入会话自述文件失败（不影响会话）: ${dir}`, error);
-      });
-      await this.persist();
-      return record;
-    }
-    throw new Error("[Session] 会话 id 连续 50 次撞名（理论上不可能），放弃创建");
-  }
-
-  /** 分配一个磁盘上尚不存在的会话 id（同一秒内多次调用也不会撞名）。 */
-  private async allocateSessionId(tail?: string): Promise<string> {
-    for (let attempt = 0; attempt < 5; attempt++) {
-      const candidate = newSessionId(undefined, tail);
-      if (!(await dirExists(join(this.root, candidate)))) return candidate;
-    }
-    // 极端情况下（时间被冻结）退化为随机名，保证不覆盖已存在的会话目录
-    return `${newSessionId()}-${Math.random().toString(36).slice(2, 8)}`;
+    const owner = callerOpenId?.slice(-6).replace(/[^A-Za-z0-9]/g, "");
+    const sessionId = newSessionId(undefined, `${owner ? `${owner}-` : ""}${randomUUID().slice(0, 6)}`);
+    const dir = join(this.root, sessionId);
+    await mkdir(dir);
+    const now = Date.now();
+    const record: SessionRecord = { sessionId, dir, createdAt: now, updatedAt: now };
+    await this.writeMeta(dir, conversationId, sessionId, now);
+    this.records.set(conversationId, record);
+    await this.persist();
+    return record;
   }
 
   /** 目录自述文件：让人一眼看出这是哪次会话的目录（也会随目录一起被清理）。 */

@@ -88,6 +88,7 @@ export class PermissionBroker {
    * signal 中止（如 /stop 中断会话）时立即取消等待、撤下卡片并释放队列。
    */
   async requestApproval(request: ApprovalRequest, signal?: AbortSignal): Promise<{ allowed: boolean; detail: string }> {
+    if (signal?.aborted) return { allowed: false, detail: "会话已中断" };
     // 仅管理员卡依赖管理员配置；用户卡由发起者本人确认，无管理员也可用
     if (this.options.adminOpenIds.length === 0 && (request.mode ?? "admin") === "admin") {
       return { allowed: false, detail: "未配置管理员，无法授权" };
@@ -209,14 +210,21 @@ export class PermissionBroker {
       return { accepted: false, detail: "token 或卡片来源不匹配" };
     }
     if (pending.forwarded) return { accepted: false, detail: "该请求已转发过" };
+    if (pending.mode !== "admin" || !this.options.adminOpenIds.length) return { accepted: false, detail: "该请求不能转发管理员" };
 
     const target = this.options.adminOpenIds[0]!;
     const card = buildPermissionCard({ toolName: pending.toolName, args: pending.toolArgs, approvalId, token });
+    pending.forwarded = {}; // 发送前占位，合并并发点击
     try {
       // open_id 私聊投递（receive_id_type=open_id）——管理员的 open_id 不能当 chat_id 用
       const fwdMessageId = await this.options.sendCardToUser(target, card);
       pending.forwarded = { messageId: fwdMessageId };
+      if (!this.pending.has(approvalId)) {
+        this.finalizeCards(pending, "cancelled");
+        return { accepted: false, detail: "该授权请求已处理" };
+      }
     } catch (error) {
+      pending.forwarded = undefined;
       const detail = error instanceof Error ? error.message : String(error);
       logger.error(`[Broker] 转发授权卡到管理员私聊失败: ${detail}`);
       return { accepted: false, detail: `转发失败：${detail}` };

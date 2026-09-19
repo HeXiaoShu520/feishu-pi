@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ScheduleService, ScheduleStore, type ScheduleTask } from "../src/schedule/service.ts";
@@ -57,14 +57,17 @@ describe("ScheduleService", () => {
     await service.fireNow(task.id);
     expect(runner).toHaveBeenCalledTimes(1);
     expect(runner.mock.calls[0]?.[0]?.id).toBe(task.id);
-    expect((await service.listTasks())[0]?.lastStatus).toBe("ok");
+    await vi.waitFor(async () => expect((await service.listTasks())[0]?.lastStatus).toBe("ok"));
 
     // 破坏 runner 后再次触发 → 记录 error
     runner.mockImplementationOnce(async () => { throw new Error("模型超时"); });
-    await service.fireNow(task.id);
-    const [after] = await service.listTasks();
-    expect(after.lastStatus).toBe("error");
-    expect(after.lastError).toContain("模型超时");
+    const failed = await service.addTask({ cron: "0 9 * * *", prompt: "失败任务", chatId: CHAT, createdBy: ADMIN });
+    await service.fireNow(failed.task!.id);
+    await vi.waitFor(async () => {
+      const after = (await service.listTasks()).find((t) => t.id === failed.task!.id)!;
+      expect(after.lastStatus).toBe("error");
+      expect(after.lastError).toContain("模型超时");
+    });
   });
 
   it("setEnabled / removeTask：停用后不触发，删除后消失", async () => {

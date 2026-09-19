@@ -80,20 +80,23 @@ describe("PermissionPolicy deny + allow 两输入", () => {
     expect(p.isAdmin).toBe(false);
   });
 
-  it("admin 缺省全量：未配置 bash 时所有命令放行，所有工具可用", async () => {
+  it("admin 未显式配置权限时同样使用保守缺省", async () => {
     const { file } = await writePolicy({ allow: { admin: [] } });
     const policy = new PermissionPolicy(file, { groupMembership: { admin: ["张三"] } });
     const admin = await policy.forGroups(["admin"]);
     expect(admin.isAdmin).toBe(true);
-    expect(admin.bashAllowed("任意命令")).toBe(true);
-    expect(admin.readAllowed("/etc/hosts")).toBe(true);
-    expect(admin.toolsAllowed("任意工具")).toBe(true);
+    expect(admin.bashAllowed("任意命令")).toBe(false);
+    expect(admin.readAllowed("/etc/hosts")).toBe(false);
+    expect(admin.toolsAllowed("任意工具")).toBe(false);
   });
 
-  it("策略文件缺失：无人是 admin，user 保守缺省", async () => {
+  it("策略文件缺失：admin 与 user 均使用保守缺省", async () => {
     const dir = await mkdtemp(join(tmpdir(), "policy-"));
     const policy = new PermissionPolicy(join(dir, "missing.json"), { adminId: "ou_a" });
     expect(await policy.groupsFor("ou_a")).toEqual(["admin"]);
+    const admin = await policy.forGroups(["admin"]);
+    expect(admin.bashAllowed("anything")).toBe(false);
+    expect(admin.writeAllowed("src/main.ts")).toBe(false);
     const p = await policy.forGroups([]);
     expect(p.readAllowed(".agent/skills/x.md")).toBe(true);
     expect(p.readAllowed("src/main.ts")).toBe(false);
@@ -218,5 +221,25 @@ describe("组成员按组织架构部门名匹配", () => {
     });
     // ou_x 的部门路径包含字符串 ou_member_as_dept，但成员项以 ou_ 开头 → 只按 openId 精确匹配
     expect(await policy.groupsFor("ou_x")).not.toContain("group_1");
+  });
+});
+
+describe("权限边界回归", () => {
+  it("命令前缀必须在参数边界结束，重定向和变量展开不能免审", async () => {
+    const { file } = await writePolicy({ allow: { common: ["Bash(cat:*)", "Bash(git log:*)"] } });
+    const policy = await new PermissionPolicy(file).forGroups([]);
+    expect(policy.bashAllowed("catalog secret")).toBe(false);
+    expect(policy.bashAllowed("git logger")).toBe(false);
+    expect(policy.bashAllowed("cat readme > target")).toBe(false);
+    expect(policy.bashAllowed("cat $SECRET_FILE")).toBe(false);
+    expect(policy.bashAllowed("cat README.md")).toBe(true);
+  });
+  it("损坏策略不会给管理员补全权限", async () => {
+    const { file } = await writePolicy({ allow: { admin: ["Bash(*)"] } });
+    const policy = new PermissionPolicy(file);
+    expect((await policy.forGroups(["admin"])).bashAllowed("anything")).toBe(true);
+    await new Promise((r) => setTimeout(r, 25));
+    await writeFile(file, "broken");
+    expect((await policy.forGroups(["admin"])).bashAllowed("anything")).toBe(false);
   });
 });

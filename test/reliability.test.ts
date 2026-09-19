@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -91,5 +91,86 @@ describe("reliability stores", () => {
     // 驱逐后再来消息：从磁盘映射重建会话（createCount 增加）
     await manager.prompt({ conversationId: "chat:a", prompt: { text: "back" } }, () => undefined);
     expect(runtime.createCount).toBe(2);
+  });
+});
+
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+describe("会话并发与身份回归", () => {
+  it("并发投递同一消息只有一个请求能认领", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "message-race-"));
+    const store = new MessageStore(join(dir, "messages.json"));
+    const results = await Promise.all(Array.from({ length: 20 }, () => store.claim("same")));
+    expect(results.filter(Boolean)).toHaveLength(1);
+  });
+
+  it("初始化失败后下一条消息可以重试", async () => {
+    const createSession = vi.fn().mockRejectedValueOnce(new Error("temporary")).mockResolvedValue(new FakeSession());
+    const manager = new ConversationManager({ createSession } as never, await makeSessions());
+    const message = { conversationId: "chat:retry", prompt: { text: "hi" } };
+    await expect(manager.prompt(message, () => {})).rejects.toThrow("temporary");
+    await manager.prompt(message, () => {});
+    expect(createSession).toHaveBeenCalledTimes(2);
+  });
+
+  it("共享群换人时复用历史，重新绑定当前调用者", async () => {
+    const createSession = vi.fn(async () => new FakeSession());
+    const manager = new ConversationManager({ createSession } as never, await makeSessions());
+    for (const userOpenId of ["ou_admin", "ou_user", "ou_user"]) {
+      await manager.prompt({ conversationId: "group-oc", context: { conversationId: "group-oc", chatId: "oc", userOpenId }, prompt: { text: "hi" } }, () => {});
+    }
+    expect(createSession).toHaveBeenCalledTimes(2);
+    expect(createSession.mock.calls[1]).toEqual(["data/sessions/session.jsonl", "ou_user", expect.objectContaining({ userOpenId: "ou_user" })]);
+  });
+
+  it("异步事件按顺序消费并在 prompt 返回前完成", async () => {
+    const gate = deferred();
+    let listener: (event: FeishuPiEvent) => void = () => {};
+    const session = new FakeSession();
+    session.subscribe = (fn) => { listener = fn; return () => {}; };
+    session.prompt = async () => {
+      listener({ type: "assistant_text", text: "first" });
+      listener({ type: "assistant_text", text: "last" });
+    };
+    const manager = new ConversationManager({ createSession: async () => session } as never, await makeSessions());
+    const seen: string[] = [];
+    let done = false;
+    const task = manager.prompt({ conversationId: "chat:events", prompt: { text: "hi" } }, async (event) => {
+      await gate.promise;
+      if (event.type === "assistant_text") seen.push(event.text);
+    }).then(() => { done = true; });
+    await vi.waitFor(() => expect(manager.size).toBe(1));
+    expect(done).toBe(false);
+    gate.resolve();
+    await task;
+    expect(seen).toEqual(["first", "last"]);
+  });
+
+  it("上一轮结束后，排队的新一轮仍可中断且不会被驱逐", async () => {
+    const gates = [deferred(), deferred(), deferred()];
+    const started: string[] = [];
+    const session = new FakeSession();
+    session.prompt = async (input) => { const i = started.length; started.push(input.text); await gates[i].promise; };
+    const manager = new ConversationManager({ createSession: async () => session } as never, await makeSessions());
+    const interrupted = vi.fn();
+    const send = (text: string, onInterrupted?: () => void) => manager.prompt({ conversationId: "chat:busy", prompt: { text } }, () => {}, onInterrupted);
+    const first = send("first");
+    await vi.waitFor(() => expect(started).toHaveLength(1));
+    const second = send("second", interrupted);
+    gates[0].resolve();
+    await first;
+    await vi.waitFor(() => expect(started).toHaveLength(2));
+    expect(await manager.evictIdle(0)).toBe(0);
+    const third = send("third");
+    await vi.waitFor(() => expect(interrupted).toHaveBeenCalledOnce());
+    gates[1].resolve();
+    await second;
+    gates[2].resolve();
+    await third;
   });
 });

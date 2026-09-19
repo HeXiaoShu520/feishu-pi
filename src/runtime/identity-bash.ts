@@ -10,7 +10,7 @@ import { logger } from "../utils/logger.ts";
  * - 命令显式 `--as bot`（应用级操作，如发消息）→ 不注入 → lark-cli 走自身 bot 身份；
  *   注意 lark-cli 的安全设计：env 注入的用户 token 存在时，该次调用被强制限定为 user
  *   身份（strict mode 自动派生），显式 --as bot 会报错而非静默覆盖——因此必须在此跳过注入；
- * - 用户未登录 / token 过期 → 不注入，lark-cli 走默认身份（调用方以 99991668 等错误提示 /login）。
+ * - 用户未登录 / token 过期 → 拒绝执行并发起授权，不回退到 CLI 默认账号。
  *
  * 进程级隔离：env 只作用于本次 spawn 的子进程，无全局状态，多用户并发互不可见。
  *
@@ -40,7 +40,7 @@ export interface IdentityBashOptions {
   cwd: string;
   /** 应用 ID（注入 envAppId 指定的变量） */
   appId: string;
-  /** 当前会话用户的飞书 user token（同步读内存缓存）；undefined 表示未登录，不注入 */
+  /** 当前会话用户的飞书 user token（同步读内存缓存）；undefined 表示未登录，用户态调用拒绝执行 */
   getLarkToken?: () => string | undefined;
   /**
    * lark-cli 因用户 token 缺少 scope 而失败时的回调：发起增量授权（发授权卡到当前会话），
@@ -72,7 +72,8 @@ const LARK_INJECTION: ProviderInjection = {
  * 用于授权分流：用户身份操作弹"用户卡"由发起者本人确认，其余走管理员卡。
  */
 export function matchesUserIdentityCli(command: string): boolean {
-  if (!/\blark[-_]?cli\b/.test(command)) return false;
+  // 本人授权只能覆盖一条直接 CLI 调用，不能靠字符串里出现 lark-cli 就审批任意 shell。
+  if (!/^\s*lark-cli\s+/.test(command) || /[;&|`$<>\\()\r\n]/.test(command)) return false;
   return !LARK_INJECTION.excludePattern!.test(command);
 }
 
@@ -86,6 +87,7 @@ export function applyCredentialInjections(
   rules: Array<ProviderInjection & { appId?: string }>,
 ): void {
   for (const rule of rules) {
+    if (rule.envToken) delete env[rule.envToken];
     if (!rule.commandPattern.test(command)) continue;
     if (rule.excludePattern?.test(command)) continue;
 
@@ -93,6 +95,7 @@ export function applyCredentialInjections(
     for (const [key, value] of Object.entries(rule.staticEnv ?? {})) env[key] = value;
 
     const token = rule.getToken?.();
+    if (rule.envToken && !token) throw new Error("当前用户未登录或凭证已过期，请完成私聊授权后重试；不会使用 CLI 的默认账号执行。");
     if (token && rule.envToken) {
       env[rule.envToken] = token;
       if (rule.envAppId && rule.appId) env[rule.envAppId] = rule.appId;
@@ -130,7 +133,11 @@ function resultText(content: Array<{ type: string; text?: string }>): string {
 
 export function createIdentityBashTool(options: IdentityBashOptions): ToolDefinition {
   const rules: Array<ProviderInjection & { appId?: string }> = [
-    { ...LARK_INJECTION, getToken: options.getLarkToken, appId: options.appId },
+    { ...LARK_INJECTION, getToken: () => {
+      const token = options.getLarkToken?.();
+      if (!token) options.onNotLoggedIn?.(options.userId ?? "");
+      return token;
+    }, appId: options.appId },
     ...(options.extraInjections ?? []).map((rule) => ({ ...rule, appId: options.appId })),
   ];
 
@@ -166,7 +173,7 @@ export function createIdentityBashTool(options: IdentityBashOptions): ToolDefini
         const output = resultText(result.content ?? []);
         const scopes = extractMissingScopes(output);
         if (scopes.length > 0) {
-          const note = options.onMissingScopes!(options.userId ?? "", options.chatId, scopes);
+          const note = options.onMissingScopes?.(options.userId ?? "", options.chatId, scopes);
           if (note) return { ...result, content: [...(result.content ?? []), { type: "text", text: note }] };
         }
         // 未登录（99991668）：主动发起 Device Flow（卡发用户私聊），完成后重试即生效

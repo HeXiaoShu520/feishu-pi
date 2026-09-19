@@ -1,10 +1,11 @@
 import { createAgentSession, SessionManager, type AgentSession, DefaultResourceLoader, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { findEnvKeys, getModel, type ImageContent } from "@earendil-works/pi-ai/compat";
-import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
+import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
+import { deriveModelProvider } from "../config.ts";
 import type { FeishuPiConfig, FeishuPiEvent, FeishuPiPrompt, FeishuPiSession, FeishuPiTool } from "./types.ts";
 import type { FeishuContext } from "../context/types.ts";
 import { DEFAULT_BUILTIN_TOOLS, createToolRegistryAsync } from "../tools/registry.ts";
-import { join, resolve, sep } from "node:path";
+import { resolve, sep } from "node:path";
 import { logger, colors } from "../utils/logger.ts";
 import { createScheduleManagerTool } from "../schedule/tool.ts";
 import type { GroupPolicy } from "../permission/policy.ts";
@@ -78,8 +79,6 @@ class SessionWrapper implements FeishuPiSession {
       data: Buffer.from(image.data).toString("base64"),
       mimeType: image.mimeType,
     }));
-    // 脱敏后落会话：/login <provider> 体系下用户可能在聊天中提交凭证
-    // （bitbucket app password、user token 等），进入 session jsonl 前统一遮蔽
     const text = input.text;
     await this.raw.prompt(text, images.length ? { images } : undefined);
   }
@@ -152,7 +151,8 @@ export class FeishuPiRuntime {
    * 持久化由调用方负责（transport 写 .env）。
    */
   setModelName(modelName: string): void {
-    (this.config as { modelName: string }).modelName = modelName;
+    this.config.modelName = modelName;
+    this.config.modelProvider = deriveModelProvider(modelName);
     logger.info(`[Runtime] 模型已切换为 ${colors.cyan}${modelName}${colors.reset}（新会话生效）`);
   }
 
@@ -359,7 +359,9 @@ export class FeishuPiRuntime {
     // 判定所属身份组；策略在每次工具调用时按文件 mtime 缓存重编译——
     // 修改 permissions.json 对已驻留会话即时生效，无需 /new 或重启
     const groups = await this.config.permissionPolicy.groupsFor(userId, context?.userName);
-    const groupPolicyFor = (): Promise<GroupPolicy> => this.config.permissionPolicy.forGroups(groups);
+    const groupPolicyFor = async (): Promise<GroupPolicy> => this.config.permissionPolicy.forGroups(
+      await this.config.permissionPolicy.groupsFor(userId, context?.userName),
+    );
     const displayName = context?.userName || userId;
     logger.info(`[Runtime] 用户身份: ${colors.cyan}${displayName}${colors.reset}(${colors.gray}${userId}${colors.reset}) -> ${colors.yellow}${groups.join(", ") || "(无组)"}${colors.reset}`);
 
@@ -430,7 +432,6 @@ export class FeishuPiRuntime {
     //   read → 所属组可读范围判定（范围外拦截不弹卡，范围内放行）
     //   bash / write / edit / 自定义工具 → ToolGuard 按所属组策略判定（名单外交授权卡）
     //   自定义工具另由 tools 字段控制可用性
-    const toolGuard = this.config.toolGuard;
     const chatId = context?.chatId;
     session.agent.beforeToolCall = async (ctx, signal) => {
       // 每次调用重新取已编译策略（内部有 mtime 缓存）：permissions.json 改动即时生效

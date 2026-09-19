@@ -32,7 +32,8 @@ export function sanitizeFileName(name: string): string {
 /**
  * 生成会话 id（同时也是会话目录名）：`{YYYYMMDD}-{HHmmss}-{尾段}`。
  * 时间戳在前便于按时间排序与人工辨识；尾段默认 4 位随机（防同秒撞名），
- * 可传用户 openId 后 6 位，让目录名直接可见归属。
+ * 也可传其他尾段（如用户 openId 后 6 位，让目录名直接可见归属）。
+ * 尾段须为不含分隔符的单段，长度由调用方保证。
  */
 export function newSessionId(now: Date = new Date(), tail = Math.random().toString(36).slice(2, 6).padEnd(4, "0")): string {
   const pad = (n: number) => String(n).padStart(2, "0");

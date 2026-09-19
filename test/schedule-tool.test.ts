@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it } from "vitest";
 import { createScheduleManagerTool } from "../src/schedule/tool.ts";
 import type { ScheduleManagerService } from "../src/schedule/tool.ts";
 
@@ -67,7 +67,7 @@ describe("schedule_manager 工具（直连 ScheduleService）", () => {
   it("remove/toggle 返回服务回执；对不存在的任务给出提示", async () => {
     const { svc } = makeService();
     const tool = makeTool(svc);
-    const { task } = await svc.addTask({ cron: "0 9 * * *", prompt: "p", chatId: "oc", createdBy: "ou", name: "晨报" });
+    const { task } = await svc.addTask({ cron: "0 9 * * *", prompt: "p", chatId: "oc", createdBy: "ou_admin", name: "晨报" });
     expect(await call(tool, { action: "toggle", id: task!.id, enabled: false })).toContain("已停用");
     expect(await call(tool, { action: "remove", id: task!.id })).toContain("已删除");
     expect(await call(tool, { action: "toggle", id: task!.id, enabled: true })).toContain("不存在");
@@ -76,9 +76,24 @@ describe("schedule_manager 工具（直连 ScheduleService）", () => {
   it("run 委托 fireNow（后台执行）；未知操作报错", async () => {
     const { svc, fired } = makeService();
     const tool = makeTool(svc);
-    const { task } = await svc.addTask({ cron: "0 9 * * *", prompt: "p", chatId: "oc", createdBy: "ou" });
+    const { task } = await svc.addTask({ cron: "0 9 * * *", prompt: "p", chatId: "oc", createdBy: "ou_admin" });
     expect(await call(tool, { action: "run", id: task!.id })).toContain("已触发");
     expect(fired).toEqual([`fire:${task!.id}`]);
     expect(await call(tool, { action: "what" })).toContain("未知操作");
+  });
+});
+
+
+describe("定时任务归属", () => {
+  it("不能查看、触发、删除或停用其他人的任务", async () => {
+    const { svc, fired, tasks } = makeService();
+    const { task } = await svc.addTask({ cron: "0 9 * * *", prompt: "private", chatId: "oc", createdBy: "ou_other" });
+    const tool = makeTool(svc);
+    expect(await call(tool, { action: "list" })).not.toContain("private");
+    for (const action of ["run", "remove", "toggle"]) {
+      expect(await call(tool, { action, id: task!.id, enabled: false })).toContain("不属于你");
+    }
+    expect(fired).toEqual([]);
+    expect(tasks.get(task!.id)?.enabled).toBe(true);
   });
 });

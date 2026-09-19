@@ -8,7 +8,7 @@ import { isAbsolute, relative, resolve } from "node:path";
  */
 
 /** 把路径 glob 编译为正则。 */
-export function globToRegExp(glob: string): RegExp {
+function globToRegExp(glob: string): RegExp {
   const normalized = normalizeGlob(glob);
   const escaped = normalized.replace(/[.+^${}()|[\]\\]/g, "\\$&");
   // 单遍替换：多步字符串 replace 会污染前一步插入的 `*`/`?` 字面量
