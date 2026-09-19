@@ -23,8 +23,8 @@
   - `skills/` 技能（pi 原生约定）
   - `permissions.json` 权限策略（本工程自研）
   - `tools/` 自定义工具（本工程自研）
-- `data/` — 运行时数据（会话、用户、团队记忆），已被 `.gitignore` 排除
-- `work_space/` — 会话工作区（jsonl、图片、附件）
+- `data/` — 非会话运行时数据（记忆、用户、凭证、会话索引、共享缓存），已被 `.gitignore` 排除
+- `work_space/` — 会话目录根：一次会话一个目录（`{sessionId}/`），jsonl、图片、附件、OCR 过程文件全在里面
 - `docs/` — 架构与命令文档：`architecture.md`、`commands.md`
 
 ## 约定与已知坑

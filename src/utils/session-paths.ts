@@ -1,25 +1,46 @@
+/**
+ * 会话磁盘布局的公共定义：一次会话 = 磁盘上一个目录，会话期间产生的一切文件都在里面。
+ *
+ *   {sessionsRoot}/{sessionId}/          ← 会话目录（/new 后换新的 id 与新目录）
+ *   ├── session.json                     ← 目录自述：会话 id / 所属会话 / 创建时间
+ *   ├── *.jsonl                          ← Pi 会话历史
+ *   ├── images/                          ← 用户发来的图片
+ *   ├── files/                           ← 用户发来的文件/语音/视频附件
+ *   └── ocr/                             ← OCR 过程文件（语言包工作副本等）
+ *
+ * 会话目录之外只有"特殊"长期数据（data/ 下的记忆、用户、凭证、索引、共享缓存）。
+ */
+
 import { join } from "node:path";
 
-/** 会话文件夹内附件的子目录名 */
+/** 会话目录内的附件子目录（file/audio/video/media） */
 export const ATTACHMENTS_SUBDIR = "files";
+/** 会话目录内的图片子目录（用户发来的图片） */
+export const IMAGES_SUBDIR = "images";
+/** 会话目录内的 OCR 过程目录（tesseract 语言包工作副本等） */
+export const OCR_SUBDIR = "ocr";
+/** 会话目录自述文件名 */
+export const SESSION_META_FILE = "session.json";
 
-/**
- * 会话在磁盘上的专属文件夹：`{sessionRoot}/{消毒后的 conversationId}/`。
- *
- * 一个会话一个文件夹：Pi 会话历史（jsonl）与附件（files/ 子目录）都落在里面，
- * 会话身份与磁盘布局一一对应。conversationId 含冒号等文件系统非法字符（Windows 尤其），
- * 统一替换为 _；实际长度 ≤77，远低于 120 截断线，不会出现两个会话截断后撞名。
- */
-export function conversationDir(sessionRoot: string, conversationId: string): string {
-  return join(sessionRoot, sanitizeFileName(conversationId));
-}
-
-/** 会话文件夹内附件目录：`{sessionRoot}/{消毒后的 conversationId}/files/`。 */
-export function attachmentsDir(sessionRoot: string, conversationId: string): string {
-  return join(conversationDir(sessionRoot, conversationId), ATTACHMENTS_SUBDIR);
-}
+/** 会话目录内的附件目录：`{会话目录}/files/` */
+export const attachmentsDirOfSession = (sessionDir: string): string => join(sessionDir, ATTACHMENTS_SUBDIR);
+/** 会话目录内的图片目录：`{会话目录}/images/` */
+export const imagesDirOfSession = (sessionDir: string): string => join(sessionDir, IMAGES_SUBDIR);
+/** 会话目录内的 OCR 过程目录：`{会话目录}/ocr/` */
+export const ocrDirOfSession = (sessionDir: string): string => join(sessionDir, OCR_SUBDIR);
 
 /** 文件/目录名消毒：把路径分隔符等文件系统保留字符替换为 _，防路径逃逸；空名兜底 unnamed。 */
 export function sanitizeFileName(name: string): string {
   return name.replace(/[\\/:*?"<>|]/g, "_").slice(0, 120) || "unnamed";
+}
+
+/**
+ * 生成会话 id（同时也是会话目录名）：`{YYYYMMDD}-{HHmmss}-{随机 4 位}`。
+ * 时间戳在前便于按时间排序与人工辨识，随机尾避免同一秒内撞车。
+ */
+export function newSessionId(now: Date = new Date()): string {
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
+  const tail = Math.random().toString(36).slice(2, 6).padEnd(4, "0");
+  return `${stamp}-${tail}`;
 }

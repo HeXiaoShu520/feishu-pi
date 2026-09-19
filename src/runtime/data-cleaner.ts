@@ -1,185 +1,89 @@
 /**
- * 数据清理工具
- * - 清理过期的会话文件（会话文件夹内与根目录下的 .jsonl）
- * - 清理会话文件夹里过期的附件（{会话}/files/），并收尾空目录
- * - 清理过期的图片缓存
- * - 清理过期的消息状态
+ * 数据清理：**以会话目录为最小单位**——一次会话一个目录，整个目录过期（默认 7 天）就整体删除。
+ *
+ * 为什么不按文件删：会话目录是不可分割的整体（历史 jsonl、图片、附件、OCR 过程文件都在里面），
+ * 按文件删只会留下"历史没了、附件还在"的半截会话。过期判定用目录树内最新的 mtime，
+ * 也就是这个会话最后一次活动的时间；只要还在用，目录就不会被判过期。
+ *
+ * 会话目录之外的长期数据不在这里清理：记忆、用户资料、凭证、会话索引等属于"特殊"数据，
+ * 有各自的过期策略（如消息去重表按 updatedAt 随同一保留期清理）。
  */
 
-import { readdir, stat, unlink, readFile, writeFile, rmdir } from "node:fs/promises";
+import { readdir, readFile, stat, unlink, rm, writeFile } from "node:fs/promises";
 import type { Dirent } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../utils/logger.ts";
-import { ATTACHMENTS_SUBDIR } from "../utils/session-paths.ts";
 
 export interface CleanupOptions {
-  /** 会话数据根目录 */
-  sessionDir: string;
-  /** 图片缓存目录（可选，默认 {sessionDir}/images） */
-  imagesDir?: string;
+  /** 会话目录根（一次会话一个目录） */
+  sessionsRoot: string;
   /** 保留天数，默认 7 天 */
   retentionDays?: number;
-  /** 是否执行清理（false 只返回统计） */
+  /** 消息去重表路径（可选；按 updatedAt 用同一保留期清理） */
+  messagesFile?: string;
 }
 
 export interface CleanupStats {
+  /** 检查过的会话目录（含根目录下的散落文件）数 */
   sessionsChecked: number;
+  /** 整目录删除的会话数 */
   sessionsDeleted: number;
-  attachmentsChecked: number;
-  attachmentsDeleted: number;
-  imagesChecked: number;
-  imagesDeleted: number;
   messagesChecked: number;
   messagesCleaned: number;
 }
 
 export class DataCleaner {
-  private readonly sessionDir: string;
-  private readonly imagesDir: string;
-  /** 保留天数（默认 7 天） */
-  private readonly retentionDays: number;
+  private readonly sessionsRoot: string;
+  private readonly messagesFile?: string;
   private readonly retentionMs: number;
 
   constructor(options: CleanupOptions) {
-    this.sessionDir = options.sessionDir;
-    this.imagesDir = options.imagesDir ?? join(options.sessionDir, "images");
-    this.retentionDays = options.retentionDays ?? 7;
-    this.retentionMs = this.retentionDays * 24 * 60 * 60 * 1000;
+    this.sessionsRoot = options.sessionsRoot;
+    this.messagesFile = options.messagesFile;
+    this.retentionMs = (options.retentionDays ?? 7) * 24 * 60 * 60 * 1000;
   }
 
   async cleanup(): Promise<CleanupStats> {
-    const stats: CleanupStats = {
-      sessionsChecked: 0,
-      sessionsDeleted: 0,
-      attachmentsChecked: 0,
-      attachmentsDeleted: 0,
-      imagesChecked: 0,
-      imagesDeleted: 0,
-      messagesChecked: 0,
-      messagesCleaned: 0,
-    };
+    const stats: CleanupStats = { sessionsChecked: 0, sessionsDeleted: 0, messagesChecked: 0, messagesCleaned: 0 };
+    const cutoffTime = Date.now() - this.retentionMs;
 
-    const now = Date.now();
-    const cutoffTime = now - this.retentionMs;
-
-    // 1. 清理过期的会话文件 (.jsonl)
     await this.cleanupSessions(cutoffTime, stats);
-
-    // 2. 清理会话文件夹里过期的附件，收尾空目录
-    await this.cleanupAttachments(cutoffTime, stats);
-
-    // 3. 清理过期的图片缓存
-    await this.cleanupImages(cutoffTime, stats);
-
-    // 4. 清理过期的消息状态
-    await this.cleanupMessages(cutoffTime, stats);
-
+    if (this.messagesFile) await this.cleanupMessages(cutoffTime, stats);
     return stats;
   }
 
-  /** 文件过期则删除。过期计数在删除成功后写入，失败不虚报。 */
-  private async unlinkIfExpired(filePath: string, cutoffTime: number, onDeleted: () => void): Promise<void> {
-    try {
-      const fileStat = await stat(filePath);
-      if (fileStat.mtimeMs >= cutoffTime) return;
-      await unlink(filePath);
-      onDeleted();
-    } catch (err) {
-      logger.warn(`[DataCleaner] 无法处理文件 ${filePath}:`, err);
-    }
-  }
-
   /**
-   * 清理过期的会话文件。会话历史的现行布局是 {会话文件夹}/*.jsonl；
-   * 根目录下直接平铺的 .jsonl（旧布局遗留）同样纳入清理。
+   * 清理过期的会话目录。目录树内最新的 mtime 即该会话的最后活跃时间，
+   * 早于保留期就直接整目录删掉；根目录下散落的文件（旧布局遗留）按 mtime 一并清理。
    */
   private async cleanupSessions(cutoffTime: number, stats: CleanupStats): Promise<void> {
     let entries: Dirent[];
     try {
-      entries = await readdir(this.sessionDir, { withFileTypes: true });
+      entries = await readdir(this.sessionsRoot, { withFileTypes: true });
     } catch (err) {
       // 目录不存在 = 还没有会话数据，无东西可清
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        logger.error("[DataCleaner] 清理会话文件失败:", err);
-      }
+      if ((err as NodeJS.ErrnoException).code !== "ENOENT") logger.error("[DataCleaner] 读取会话目录失败:", err);
       return;
     }
 
     for (const entry of entries) {
-      if (entry.isFile() && entry.name.endsWith(".jsonl")) {
-        stats.sessionsChecked++;
-        const filePath = join(this.sessionDir, entry.name);
-        await this.unlinkIfExpired(filePath, cutoffTime, () => stats.sessionsDeleted++);
-      } else if (entry.isDirectory() && entry.name !== "images") {
-        // 会话文件夹：扫描其中的 .jsonl（文件夹本身可能还有 attachments/files 等）
-        const dirPath = join(this.sessionDir, entry.name);
-        const files = await readdir(dirPath).catch(() => [] as string[]);
-        for (const file of files.filter((f) => f.endsWith(".jsonl"))) {
-          stats.sessionsChecked++;
-          await this.unlinkIfExpired(join(dirPath, file), cutoffTime, () => stats.sessionsDeleted++);
+      const fullPath = join(this.sessionsRoot, entry.name);
+      stats.sessionsChecked++;
+
+      const lastActiveAt = entry.isDirectory() ? await lastActiveAtOf(fullPath) : await mtimeOf(fullPath);
+      if (lastActiveAt === undefined || lastActiveAt >= cutoffTime) continue;
+
+      try {
+        if (entry.isDirectory()) {
+          await rm(fullPath, { recursive: true, force: true });
+          stats.sessionsDeleted++;
+          logger.info(`[DataCleaner] 已清理过期会话目录: ${entry.name}`);
+        } else {
+          await unlink(fullPath);
+          stats.sessionsDeleted++;
         }
-      }
-    }
-  }
-
-  /**
-   * 清理会话文件夹里过期的附件（{会话}/files/ 下的文件，按同一保留期）。
-   * files/ 清空后顺手移除；会话文件夹因此变成空壳时也一并移除（非空目录 rmdir 会失败，静默忽略即可）。
-   */
-  private async cleanupAttachments(cutoffTime: number, stats: CleanupStats): Promise<void> {
-    let entries: Dirent[];
-    try {
-      entries = await readdir(this.sessionDir, { withFileTypes: true });
-    } catch (err) {
-      // 目录不存在 = 还没有会话数据，无东西可清
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        logger.error("[DataCleaner] 清理附件失败:", err);
-      }
-      return;
-    }
-
-    for (const entry of entries) {
-      if (!entry.isDirectory() || entry.name === "images") continue;
-      const convDir = join(this.sessionDir, entry.name);
-      const filesDir = join(convDir, ATTACHMENTS_SUBDIR);
-      const files = await readdir(filesDir).catch(() => [] as string[]);
-
-      for (const file of files) {
-        stats.attachmentsChecked++;
-        await this.unlinkIfExpired(join(filesDir, file), cutoffTime, () => stats.attachmentsDeleted++);
-      }
-
-      // 空目录收尾：rmdir 只能删空目录，非空（还有 jsonl 或未过期附件）时静默失败
-      await rmdir(filesDir).catch(() => undefined);
-      await rmdir(convDir).catch(() => undefined);
-    }
-  }
-
-  /** 清理过期的图片缓存 */
-  private async cleanupImages(cutoffTime: number, stats: CleanupStats): Promise<void> {
-    const imagesDir = this.imagesDir;
-
-    try {
-      const files = await readdir(imagesDir);
-
-      for (const file of files) {
-        stats.imagesChecked++;
-        const filePath = join(imagesDir, file);
-
-        try {
-          const fileStat = await stat(filePath);
-          if (fileStat.mtimeMs < cutoffTime) {
-            await unlink(filePath);
-            stats.imagesDeleted++;
-          }
-        } catch (err) {
-          logger.warn(`[DataCleaner] 无法处理图片 ${file}:`, err);
-        }
-      }
-    } catch (err) {
-      // 图片目录可能不存在，忽略
-      if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
-        logger.error("[DataCleaner] 清理图片缓存失败:", err);
+      } catch (err) {
+        logger.warn(`[DataCleaner] 清理失败 ${fullPath}:`, err);
       }
     }
   }
@@ -192,7 +96,8 @@ export class DataCleaner {
     predicate: (data: { status: string; updatedAt: number }) => boolean,
     label: string,
   ): Promise<number> {
-    const messagesFile = join(this.sessionDir, "messages.json");
+    const messagesFile = this.messagesFile;
+    if (!messagesFile) return 0;
 
     try {
       const content = await readFile(messagesFile, "utf-8");
@@ -239,4 +144,31 @@ export class DataCleaner {
       return stuck;
     }, "清理卡住消息");
   }
+}
+
+/** 单个文件/目录自身的 mtime；读不到返回 undefined。 */
+async function mtimeOf(path: string): Promise<number | undefined> {
+  try {
+    return (await stat(path)).mtimeMs;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * 目录树的最后活跃时间 = 树内最新的 mtime（含目录自身）。
+ * 子项读不到（权限/并发删除）按"无该子项"处理，不影响其余部分的判定。
+ */
+async function lastActiveAtOf(dir: string): Promise<number | undefined> {
+  const own = await mtimeOf(dir);
+  if (own === undefined) return undefined;
+
+  let latest = own;
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => [] as Dirent[]);
+  for (const entry of entries) {
+    const full = join(dir, entry.name);
+    const sub = entry.isDirectory() ? await lastActiveAtOf(full) : await mtimeOf(full);
+    if (sub !== undefined && sub > latest) latest = sub;
+  }
+  return latest;
 }

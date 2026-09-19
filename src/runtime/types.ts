@@ -6,6 +6,7 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { GroupPolicy, PermissionPolicy } from "../permission/policy.ts";
 import type { ThinkingLevelConfig } from "../config.ts";
 import type { ScheduleService } from "../schedule/service.ts";
+import type { SessionStore } from "./session-store.ts";
 import type { FeishuContext } from "../context/types.ts";
 
 /** Pi 会话事件（订阅转发给飞书卡片渲染） */
@@ -31,7 +32,6 @@ export interface SessionStats {
 /** Runtime 配置：工作目录、模型、权限与可选的 Guard 钩子 */
 export interface FeishuPiConfig {
   cwd: string;
-  sessionDir: string;
   modelProvider: string;
   modelName: string;
   modelBaseUrl?: string;
@@ -39,8 +39,8 @@ export interface FeishuPiConfig {
   thinkingLevel: ThinkingLevelConfig;
   /** 系统提示（身份 + 行为规则）由 Pi 自动发现 <agentDir>/SYSTEM.md（即 .agent/SYSTEM.md）注入，此处不再透传 */
   /** 统一权限策略（.agent/permissions.json）：工具注册、调用判定、可读范围全部由它驱动 */
-  /** 会话工作区：返回该会话专属文件夹（jsonl/图片/附件归拢于此）；未配置则用 data/sessions 传统布局 */
-  workspaceFor?: (conversationId: string) => Promise<string>;
+  /** 会话注册表：会话目录（jsonl/图片/附件/OCR 过程文件同居其中）的唯一事实来源 */
+  sessions: SessionStore;
   permissionPolicy: PermissionPolicy;
   /** 工具调用 Guard（beforeToolCall 钩子），可选；signal 中止（/stop）时取消授权等待。
    *  risky = 自定义工具标记了 risk: "high"，需要走授权卡。

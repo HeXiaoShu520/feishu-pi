@@ -221,7 +221,7 @@ export class HelpCommand implements CommandHandler {
 \`/login\` - 登录飞书用户身份（Device Flow 授权，用于"我的视角"能力）
 \`/logout\` - 退出用户身份登录
 \`/help\` - 显示此帮助信息
-\`/new\` - 开始新对话（清空历史）
+\`/new\` - 开始新会话（换新的会话 id 与会话目录）
 \`/stop\` - 停止当前 AI 响应
 \`/detail on\` - 开启详细模式（工具调用保留在正文）
 \`/detail off\` - 开启精简模式（工具调用临时显示后清除，默认）`),
@@ -230,14 +230,14 @@ export class HelpCommand implements CommandHandler {
 }
 
 /**
- * /new - 清空当前会话历史，开始新对话。
- * 清空操作经构造注入（ConversationManager.clear）；话题内共享会话，禁止清空。
+ * /new - 结束当前会话，开始新的一代会话（新会话 id + 新会话目录，旧目录留待过期清理）。
+ * 换代操作经构造注入（ConversationManager.reset）；话题内共享会话，禁止换代。
  */
 export class NewCommand implements CommandHandler {
-  private readonly clear: (conversationId: string) => Promise<void>;
+  private readonly reset: (conversationId: string) => Promise<void>;
 
-  constructor(clear: (conversationId: string) => Promise<void>) {
-    this.clear = clear;
+  constructor(reset: (conversationId: string) => Promise<void>) {
+    this.reset = reset;
   }
 
   match(text: string): boolean {
@@ -246,14 +246,14 @@ export class NewCommand implements CommandHandler {
 
   async execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
     const conversationId = message.context.conversationId;
-    // 话题会话为所有人共享，不允许单人清空
+    // 话题会话为所有人共享，不允许单人换代
     if (conversationId.startsWith("topic:")) {
       logger.info(`[Command] 话题内禁止 /new: ${conversationId}`);
       return { card: markdownCard("❌ 话题内禁止使用 /new（话题会话为所有人共享），请在群聊或私聊中使用。") };
     }
-    await this.clear(conversationId);
-    logger.info(`[Command] 已清空会话: ${conversationId}`);
-    return { card: markdownCard("✅ 已清空对话历史，开始新的对话。") };
+    await this.reset(conversationId);
+    logger.info(`[Command] 已开启新会话: ${conversationId}`);
+    return { card: markdownCard("✅ 已开启新会话（历史已归档，新对话从新会话目录开始）。") };
   }
 }
 

@@ -79,9 +79,9 @@ interface FeishuContext {
 | 话题群的话题 | 话题内共享 | `topic:{chatId}:{话题根消息ID}` |
 | 定时任务 | 按任务隔离 | `{创建人}-schedule:{任务ID}` |
 
-同一会话通过 Promise 队列串行处理，新消息到达时 `abort()` 打断在途请求；不同会话并行。`/new` 在话题内被禁止（共享会话不允许单人清空）。
+同一会话通过 Promise 队列串行处理，新消息到达时 `abort()` 打断在途请求；不同会话并行。`/new` 在话题内被禁止（共享会话不允许单人换代）。
 
-增量持久化：`conversationId → sessionFile` 的映射在 Pi 首个 `message_end` 事件落盘时就写入 `conversations.json`——运行时还会提前调用 `appendSessionInfo` 写入会话头使 sessionFile 立即可用，响应中途被中断或进程退出，下次也能恢复到同一会话。服务重启后按映射重新打开 Pi Session 继续上下文。
+增量持久化：`conversationId → 当前会话（会话目录 + sessionFile）` 的登记在 Pi 首个 `message_end` 事件落盘时就写入 `data/sessions.json`——运行时还会提前调用 `appendSessionInfo` 写入会话头使 sessionFile 立即可用，响应中途被中断或进程退出，下次也能恢复到同一会话。服务重启后按登记重新打开 Pi Session 继续上下文。`/new` 换一代会话（新会话 id + 新会话目录），旧目录留在磁盘上由保留期清理。
 
 ## 权限与 Guard
 
@@ -213,22 +213,21 @@ Agent 处理失败时，Bridge 将卡片更新为失败提示并记录日志；�
 
 服务从环境变量读取全部配置（`.env`，`loadConfig`），`npm run config` 起本地 Web 配置页（仅绑定 127.0.0.1:3456）。配置分组：飞书凭据（`FEISHU_APP_ID/SECRET`）、负责人（`FEISHU_ADMIN`）、模型（`FEISHU_PI_MODEL_*`）、智能体审核（`FEISHU_GUARD_*`，可选）。工具权限规则在 `.agent/permissions.json`，不在 env。
 
-`data/` 目录（统一会话文件夹布局：一个会话一个文件夹，历史与附件同住）：
+`data/` 放非会话数据：记忆、用户资料、凭证、会话索引、共享缓存（会话产物全部在 `work_space/{sessionId}/` 会话目录内）：
 
 | 路径 | 内容 | 清理策略 |
 |------|------|---------|
-| `data/sessions/{会话 ID}/` | 会话专属文件夹：Pi 会话 jsonl（`/new` 后的新一代同目录累积） | jsonl 按 mtime 保留 7 天 |
-| `data/sessions/{会话 ID}/files/` | 该会话收到的文件附件（时间戳-原始文件名） | 按 mtime 保留 7 天；清空后的 files/ 与空壳会话文件夹自动移除 |
-| `data/sessions/conversations.json` | conversationId → sessionFile 映射 | 不主动清理；指向已删除文件时由会话层容错（打开失败即新建会话） |
-| `data/sessions/messages.json` | 消息处理状态（去重） | 保留 7 天；processing 超 1 小时视为卡住清理 |
-| `data/sessions/topic-roots.json` | 话题根消息 ID | — |
-| `data/sessions/images/` | 图片附件缓存（按 imageKey 平铺去重） | 保留 7 天 |
+| `work_space/{sessionId}/` | 会话目录：Pi 会话 jsonl、图片、附件、OCR 过程文件全在里面 | 整个目录树最后活跃时间早于 7 天即整目录删除 |
+| `data/sessions.json` | conversationId → 当前会话（id/目录/sessionFile） | 不主动清理；目录不存在时下次使用重建会话 |
+| `data/messages.json` | 消息处理状态（去重） | 保留 7 天；processing 超 1 小时视为卡住清理 |
+| `data/topic-roots.json` | 话题根消息 ID | — |
+| `data/assets/ocr/` | 共享 OCR 语言包（跨会话复用） | 不清理（可重建） |
 | `data/user-tokens.json` | 用户飞书身份 token（/login） | 不按期清理；refresh 失效时按用户清档 |
 | `data/stats/skill-usage.jsonl` | 技能使用事件流（JSONL，只增不删） | 不清理，长期留存 |
 | `data/schedules.json` | 定时任务表（cron + 指令 + 目标会话） | 不自动清理；删除靠对话管理或手动编辑 |
 | `data/users/{appId}_users.json` | 用户资料缓存 | 空 1 天 / 有档案 3 天过期刷新 |
 
-`DataCleaner` 启动时执行一次，之后每 24 小时清理（扫描会话文件夹内的 jsonl 与附件，并回收空目录；根目录平铺的旧布局 jsonl 同样纳入清理）。`.agent/` 目录存放用户定义的 Skills（Markdown）、Tools（TypeScript）和权限策略 `permissions.json`。
+`DataCleaner` 启动时执行一次，之后每 24 小时清理（**以会话目录为单位整体清理**，不做文件级删减）。详情见 `docs/data-management.md`。`.agent/` 目录存放用户定义的 Skills（Markdown）、Tools（TypeScript）和权限策略 `permissions.json`。
 
 ## 安全边界
 

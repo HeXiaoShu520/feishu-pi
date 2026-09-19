@@ -4,53 +4,92 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DataCleaner } from "../src/runtime/data-cleaner.ts";
 
-/** 把文件 mtime 拨到 10 天前（保留期默认 7 天，即视为过期） */
+/** 把路径（文件或目录）的 mtime 拨到 10 天前（保留期默认 7 天，即视为过期） */
 async function age(path: string): Promise<void> {
   const old = new Date(Date.now() - 10 * 24 * 60 * 60 * 1000);
   await utimes(path, old, old);
 }
 
-describe("DataCleaner 统一会话文件夹布局", () => {
-  it("清理会话文件夹里过期的 jsonl 与过期附件，保留未过期内容并收尾空目录", async () => {
+/** 把整棵目录树（含所有子目录）都拨到 10 天前——模拟整个会话目录长期未使用 */
+async function ageTree(path: string): Promise<void> {
+  const { stat } = await import("node:fs/promises");
+  const entries = (await stat(path)).isDirectory() ? await readdir(path, { withFileTypes: true }) : [];
+  for (const entry of entries) await ageTree(join(path, entry.name));
+  await age(path);
+}
+
+/** 造一个会话目录：历史 jsonl + 附件 + OCR 过程文件都在里面 */
+async function makeSession(root: string, sessionId: string): Promise<string> {
+  const dir = join(root, sessionId);
+  await mkdir(join(dir, "files"), { recursive: true });
+  await mkdir(join(dir, "ocr"), { recursive: true });
+  await writeFile(join(dir, "session.json"), "{}");
+  await writeFile(join(dir, "history.jsonl"), "x");
+  await writeFile(join(dir, "files", "报表.xlsx"), "x");
+  await writeFile(join(dir, "ocr", "chi_sim.traineddata"), "x");
+  return dir;
+}
+
+describe("DataCleaner 以会话目录为清理单位", () => {
+  it("整个会话目录过期就整体删除（历史/附件/OCR 过程文件一起走）", async () => {
     const root = await mkdtemp(join(tmpdir(), "clean-"));
+    const expired = await makeSession(root, "20260901-100000-aaaa");
+    await ageTree(expired); // 目录树整体停在 10 天前
 
-    // 会话 1：旧 jsonl 与旧附件过期应删；新 jsonl 与新附件保留；目录不删
-    const conv1 = join(root, "ou_x-chat_oc_y");
-    await mkdir(join(conv1, "files"), { recursive: true });
-    await writeFile(join(conv1, "old.jsonl"), "x");
-    await writeFile(join(conv1, "fresh.jsonl"), "x");
-    await writeFile(join(conv1, "files", "old.txt"), "x");
-    await writeFile(join(conv1, "files", "new.txt"), "x");
-    await age(join(conv1, "old.jsonl"));
-    await age(join(conv1, "files", "old.txt"));
+    const stats = await new DataCleaner({ sessionsRoot: root, retentionDays: 7 }).cleanup();
 
-    // 会话 2：内容全部过期 → jsonl、附件、乃至整个空壳文件夹都被收尾
-    const conv2 = join(root, "topic_oc_a_om_b");
-    await mkdir(join(conv2, "files"), { recursive: true });
-    await writeFile(join(conv2, "gone.jsonl"), "x");
-    await writeFile(join(conv2, "files", "gone.txt"), "x");
-    await age(join(conv2, "gone.jsonl"));
-    await age(join(conv2, "files", "gone.txt"));
-
-    const stats = await new DataCleaner({ sessionDir: root, retentionDays: 7 }).cleanup();
-
-    expect(stats.sessionsDeleted).toBe(2);
-    expect(stats.attachmentsDeleted).toBe(2);
-    // 会话 1：未过期内容原样保留
-    expect(await readdir(conv1)).toEqual(expect.arrayContaining(["fresh.jsonl", "files"]));
-    expect(await readdir(join(conv1, "files"))).toEqual(["new.txt"]);
-    // 会话 2：整个文件夹（含空了的 files/）被移除
-    expect(await readdir(root)).toEqual(["ou_x-chat_oc_y"]);
+    expect(stats.sessionsChecked).toBe(1);
+    expect(stats.sessionsDeleted).toBe(1);
+    expect(await readdir(root)).toEqual([]);
   });
 
-  it("根目录平铺的 .jsonl（旧布局遗留）同样纳入清理", async () => {
+  it("会话目录还在用（树内有新文件）就整体保留，不做文件级删减", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clean-"));
+    const active = await makeSession(root, "20260901-100000-bbbb");
+    await age(join(active, "history.jsonl")); // 老历史
+    await age(join(active, "files", "报表.xlsx")); // 老附件
+    // 目录本身与其余文件是刚写的 → 最后活跃时间在保留期内
+
+    const stats = await new DataCleaner({ sessionsRoot: root, retentionDays: 7 }).cleanup();
+
+    expect(stats.sessionsDeleted).toBe(0);
+    // 目录原样保留：既没有半截会话，也没有被拆散的附件
+    expect(await readdir(active)).toEqual(expect.arrayContaining(["history.jsonl", "files", "ocr"]));
+    expect(await readdir(join(active, "files"))).toEqual(["报表.xlsx"]);
+  });
+
+  it("根目录下散落的文件（旧布局遗留）按 mtime 清理", async () => {
     const root = await mkdtemp(join(tmpdir(), "clean-"));
     await writeFile(join(root, "legacy.jsonl"), "x");
     await age(join(root, "legacy.jsonl"));
+    await writeFile(join(root, "fresh.jsonl"), "x");
 
-    const stats = await new DataCleaner({ sessionDir: root, retentionDays: 7 }).cleanup();
+    const stats = await new DataCleaner({ sessionsRoot: root, retentionDays: 7 }).cleanup();
 
     expect(stats.sessionsDeleted).toBe(1);
-    expect(await readdir(root)).toEqual([]);
+    expect(await readdir(root)).toEqual(["fresh.jsonl"]);
+  });
+
+  it("消息去重表按 updatedAt 随同一保留期清理，不碰会话之外的其他数据", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clean-"));
+    const messagesFile = join(root, "messages.json");
+    await writeFile(
+      messagesFile,
+      JSON.stringify({
+        old: { status: "completed", updatedAt: Date.now() - 10 * 24 * 60 * 60 * 1000 },
+        fresh: { status: "completed", updatedAt: Date.now() },
+      }),
+    );
+
+    const stats = await new DataCleaner({ sessionsRoot: join(root, "sessions"), messagesFile, retentionDays: 7 }).cleanup();
+
+    expect(stats.messagesChecked).toBe(2);
+    expect(stats.messagesCleaned).toBe(1);
+  });
+
+  it("会话目录不存在时静默返回（首次运行）", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clean-"));
+    const stats = await new DataCleaner({ sessionsRoot: join(root, "nope"), retentionDays: 7 }).cleanup();
+    expect(stats.sessionsDeleted).toBe(0);
   });
 });

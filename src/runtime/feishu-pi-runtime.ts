@@ -6,7 +6,6 @@ import type { FeishuContext } from "../context/types.ts";
 import { DEFAULT_BUILTIN_TOOLS, createToolRegistryAsync } from "../tools/registry.ts";
 import { join, resolve, sep } from "node:path";
 import { logger, colors } from "../utils/logger.ts";
-import { conversationDir } from "../utils/session-paths.ts";
 import { createScheduleManagerTool } from "../schedule/tool.ts";
 import type { GroupPolicy } from "../permission/policy.ts";
 
@@ -366,10 +365,9 @@ export class FeishuPiRuntime {
 
     // 一个会话一个文件夹：新会话的 jsonl 落在会话专属目录；续聊传入同目录，
     // 供 Pi 内部 /new、分支等操作在正确位置建新文件
-    // 会话目录：优先用 workspaceFor 提供的会话工作区（jsonl 与图片/附件同处）；未配置回退传统布局
-    const convDir = this.config.workspaceFor
-      ? await this.config.workspaceFor(context?.conversationId ?? "default")
-      : conversationDir(this.config.sessionDir, context?.conversationId ?? "default");
+    // 会话目录：由会话注册表给出——一次会话一个目录，Pi 会话文件（jsonl）
+    // 与用户图片/附件/OCR 过程文件同居其中；/new 换代后这里自然拿到新目录
+    const convDir = await this.config.sessions.dirFor(context?.conversationId ?? "default");
     const sessionManager = sessionFile
       ? SessionManager.open(sessionFile, convDir, this.config.cwd)
       : SessionManager.create(this.config.cwd, convDir);

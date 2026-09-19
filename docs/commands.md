@@ -65,8 +65,8 @@ src/feishu/
 └── types.ts
 
 src/runtime/
-├── conversation-manager.ts  # 添加 clear() 方法
-└── conversation-store.ts    # 添加 delete() 方法
+├── conversation-manager.ts  # 添加 reset() 方法
+└── session-store.ts         # 会话注册表：getOrCreate() / rotate() / setSessionFile()
 ```
 
 ### 核心组件
@@ -206,7 +206,7 @@ export class HelpCommand implements CommandHandler {
 
 \`/model\` - 查看并切换 AI 模型
 \`/help\` - 显示此帮助信息
-\`/new\` - 开始新对话（清空历史）`,
+\`/new\` - 开始新会话（换新的会话 id 与会话目录）`,
             },
           ],
         },
@@ -254,10 +254,10 @@ export class NewCommand implements CommandHandler {
 
 ```typescript
 private async handleCommand(message: FeishuInboundMessage, handler: CommandHandler): Promise<void> {
-  // 特殊处理 /new 指令：清空会话
+  // 特殊处理 /new 指令：换一代会话（新会话 id + 新会话目录）
   if (message.text.trim() === "/new") {
-    await this.conversations.clear(message.context.conversationId);
-    logger.info(`[Command] 已清空会话: ${message.context.conversationId}`);
+    await this.conversations.reset(message.context.conversationId);
+    logger.info(`[Command] 已开启新会话: ${message.context.conversationId}`);
   }
 
   const result = await handler.execute(message, this.client);
@@ -265,26 +265,24 @@ private async handleCommand(message: FeishuInboundMessage, handler: CommandHandl
 }
 ```
 
-**ConversationManager.clear() 实现：**
+**ConversationManager.reset() 实现：**
 
 ```typescript
-/** 清空指定会话的历史记录 */
-async clear(conversationId: string): Promise<void> {
-  // 删除映射和持久化
+/** /new：换一代会话（新会话 id + 新会话目录），旧目录留在磁盘上等过期清理 */
+async reset(conversationId: string): Promise<void> {
+  // 从内存移除旧状态并中断在途任务；注册表换新（旧记录被覆盖，代次校验挡住旧会话文件写回）
   this.conversations.delete(conversationId);
-  await this.store?.delete(conversationId);
+  await this.sessions.rotate(conversationId);
 }
 ```
 
-**ConversationStore.delete() 实现：**
+**SessionStore.rotate() 实现：**
 
 ```typescript
-/** 删除会话映射。 */
-async delete(conversationId: string): Promise<void> {
-  await this.load();
-  this.records.delete(conversationId);
-  this.writeQueue = this.writeQueue.then(() => this.writeAtomically());
-  await this.writeQueue;
+/** 分配新会话 id、建新目录、写目录自述并登记；旧目录不动 */
+async rotate(conversationId: string): Promise<SessionRecord> {
+  const record = await this.createRecord(conversationId);
+  return record;
 }
 ```
 
@@ -435,11 +433,11 @@ async handle(message: FeishuInboundMessage): Promise<void> {
 }
 ```
 
-### 3. 会话清空机制
+### 3. 会话换代机制
 
-- `ConversationManager.clear()` 删除内存映射
-- `ConversationStore.delete()` 删除持久化文件
-- 下次对话时会创建全新的 Pi Session
+- `ConversationManager.reset()` 从内存移除旧状态并中断在途任务
+- `SessionStore.rotate()` 分配新会话 id 并建新会话目录，旧目录留在磁盘上
+- 下次对话时会创建全新的 Pi Session，落在新的会话目录里
 
 ## 参考资料
 

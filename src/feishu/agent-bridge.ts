@@ -68,8 +68,8 @@ export class FeishuAgentBridge {
       (chatId: string, enabled: boolean) => this.detailMode.set(chatId, enabled),
       (chatId: string) => this.detailMode.get(chatId) === true,
     ));
-    // /new /stop 操作会话（清空/中断），实际逻辑由指令自身完成（见 commands.ts）
-    this.commandRegistry.register(new NewCommand((id) => this.conversations.clear(id)));
+    // /new /stop 操作会话（换代/中断），实际逻辑由指令自身完成（见 commands.ts）
+    this.commandRegistry.register(new NewCommand((id) => this.conversations.reset(id)));
     this.commandRegistry.register(new StopCommand((id) => this.conversations.abort(id)));
     for (const command of options?.extraCommands ?? []) {
       this.commandRegistry.register(command);
@@ -309,9 +309,9 @@ export class FeishuAgentBridge {
         : message.text;
       logger.info(`[${message.context.userName}] 执行指令: ${logText}`);
 
-      // 特殊处理 /new 指令：清空会话；话题内共享会话，禁止清空。
-      // 动作完成后直接 return——registry 里的 NewCommand 会重复执行 clear，
-      // 两次 clear 之间若并发消息刚重建会话，会被二次 clear 错杀成孤儿。
+      // 特殊处理 /new 指令：换一代会话（新会话 id + 新目录）；话题内共享会话，禁止换代。
+      // 动作完成后直接 return——registry 里的 NewCommand 会重复执行 reset，
+      // 两次 reset 之间若并发消息刚重建会话，会被二次 reset 错杀成孤儿。
       if (message.text.trim() === "/new") {
         if (message.context.conversationId.startsWith("topic:")) {
           logger.info(`[Command] 话题内禁止 /new: ${message.context.conversationId}`);
@@ -322,9 +322,9 @@ export class FeishuAgentBridge {
           await this.messages?.complete(message.messageId);
           return;
         }
-        await this.conversations.clear(message.context.conversationId);
-        logger.info(`[Command] 已清空会话: ${message.context.conversationId}`);
-        await this.sendCommandCard(message, markdownCard("✅ 已清空对话历史，开始新的对话。"));
+        await this.conversations.reset(message.context.conversationId);
+        logger.info(`[Command] 已开启新会话: ${message.context.conversationId}`);
+        await this.sendCommandCard(message, markdownCard("✅ 已开启新会话（历史已归档，新对话从新会话目录开始）。"));
         await this.messages?.complete(message.messageId);
         return;
       }

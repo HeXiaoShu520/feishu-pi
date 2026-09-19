@@ -1,242 +1,156 @@
 # 数据管理说明
 
-## 目录结构
+## 一句话模型
 
-会话工作区：**会话的第一句话就建立专属文件夹**（先于任何响应与图片/附件下载），
-Pi 会话 jsonl、图片、文件附件全部归拢其中（ID 中的 `:` 等文件系统非法字符替换为 `_`；
-跨重启按"文件夹名以会话 ID 消毒后 6 位结尾"找回同一文件夹）。
+**一次会话 = 磁盘上一个目录**（会话目录）。会话期间产生的所有文件——Pi 历史（jsonl）、用户发来的图片、文件附件、OCR 过程文件——全部落在该目录里；会话目录之外的 `data/` 只放"特殊"长期数据（记忆、用户、凭证、索引、共享缓存）。
 
-```
-work_space/
-├── session-20260919-142530-c34b02/     # 会话专属工作区（session-<日期时间>-<会话ID尾6位>）
-│   ├── 2026-09-12T….jsonl              #   Pi Agent 会话文件（/new 后的新一代同目录累积）
-│   ├── images/                         #   该会话收到的图片（按 imageKey 命名）
-│   │   └── img_v3_….jpg
-│   └── files/                          #   该会话收到的文件附件
-│       └── 1757…-报表.xlsx
-└── session-20260918-091500-63ac77/     # 另一个会话的工作区
-```
-
-运行数据仍集中在 `data/`：
+清理也以**会话目录**为单位：整个目录超过保留期（7 天）就整体删除，不做文件级删减。
 
 ```
-data/
-├── sessions/
-│   ├── conversations.json          # 会话路由表
-│   ├── messages.json               # 消息去重表
-│   └── topic-roots.json            # 话题根消息表
-├── credentials/                    # 加密凭证库（lark.vault.json / .vault-key）
-├── user-tokens.json                # 用户飞书身份 token（/login，按 openId 一条）
-├── schedules.json                  # 定时任务表（唯一 id + cron + 指令 + 目标会话，不自动清理）
-├── stats/
-│   └── skill-usage.jsonl           # 技能使用事件流（长期留存，不清理）
-└── users/
-    └── {appId}_users.json          # 用户资料缓存（3 天过期）
+work_space/                              # 会话目录根（一次会话一个目录）
+└── 20260919-145252-a1b2c3/              # 会话目录，名字就是会话 id
+    ├── session.json                     # 目录自述：会话 id / 所属会话 / 创建时间
+    ├── 2026-09-19T11-11-58-272Z_….jsonl # Pi 会话历史
+    ├── images/                          # 该会话收到的图片（按 imageKey 命名）
+    │   └── img_v3_….jpg
+    ├── files/                           # 该会话收到的文件附件
+    │   └── 1757…-报表.xlsx
+    └── ocr/                             # OCR 过程文件（tesseract 语言包工作副本）
+
+data/                                    # 非会话数据（长期）
+├── sessions.json                        # 会话索引：conversationId → 当前会话
+├── messages.json                        # 消息去重表
+├── topic-roots.json                     # 话题根消息表
+├── memory/MEMORY.md                     # 团队记忆
+├── credentials/                         # 加密凭证库（lark.vault.json / .vault-key / meegle.vault.json）
+├── users/{appId}_users.json             # 用户资料缓存（3 天过期）
+├── assets/ocr/                          # 共享 OCR 语言包（可重建的共享缓存）
+├── schedules.json                       # 定时任务表
+└── stats/skill-usage.jsonl              # 技能使用事件流（长期留存）
 ```
 
-## 文件说明
+## 会话身份与目录分配
 
-### conversations.json - 会话路由表
+| 概念 | 含义 |
+|------|------|
+| `conversationId` | 飞书会话归属：私聊 / 群聊 / 话题（见下表），长期稳定 |
+| `sessionId` | 一"代"会话，形如 `20260919-145252-a1b2c3`，同时就是会话目录名 |
+| 会话记录 | `{ sessionId, dir, sessionFile?, createdAt, updatedAt }`，存在 `data/sessions.json` |
 
-**作用：** 映射飞书 conversationId 到对应的 Pi session 文件
+**一个 conversationId 任一时刻只对应一个会话**；`/new` 换一代（新会话 id + 新会话目录 + 空历史），**旧目录留在磁盘上**，由保留期清理统一收走——所以历史不会当场消失，翻得到但不再参与对话。
 
-**格式：**
-```json
-{
-  "ou_xxx-chat:oc_xxx": {
-    "sessionFile": "/path/to/2026-08-30T09-39-04-975Z_xxx.jsonl",
-    "updatedAt": "2026-08-30T09:39:05.070Z"
-  }
-}
-```
+分配与落点由 `SessionStore`（`src/runtime/session-store.ts`）统一负责，它是"会话目录在哪"的唯一事实来源：
 
-键的格式由消息所在会话类型决定：
+- 传输层下载图片/附件时向它要目录（`dirFor`），运行时落 Pi 会话文件时也向它要目录 → 二者必然在同一个会话目录里；
+- 会话目录被清理掉后再来消息，`getOrCreate` 发现目录不在了就重建一代会话（不会把一个不存在的目录当成有效会话）；
+- 记录 Pi 落盘文件时带**代次校验**：`/new` 之后仍在跑的上一条消息不会把旧会话文件写回新记录。
+
+`conversationId` 的取值规则（由消息所在飞书会话类型决定）：
 
 | 场景 | conversationId | 会话归属 |
 |------|----------------|---------|
-| 私聊 / 普通群 | `{openId}-chat:{chatId}` | 同一群内每个人独立上下文 |
-| 群内话题 | `{openId}-{chatId}:thread:{threadId}` | 按用户隔离 |
+| 私聊 / 普通群 | `{chatMode}-{chatId}` | 私聊 = 本人历史；普通群 = 全群共享 |
 | 话题群的话题 | `topic:{chatId}:{话题根消息ID}` | 话题内所有人共享 |
+| 定时任务 | `{创建人}-schedule:{任务ID}` | 按任务隔离 |
 
-**为什么需要：**
-- 不同用户/会话需要独立的对话上下文
-- 重启后能找到对应的历史会话文件
-- 实现会话隔离（A 的历史不会泄露给 B）
+## 文件说明
 
-**注意：** 本文件不参与过期清理。session 文件被 DataCleaner 删除后，残留的映射在下次使用时由会话层容错处理（打开失败即新建会话）。
+### `session.json` - 会话目录自述
 
-### messages.json - 消息去重表
+```json
+{ "sessionId": "20260919-145252-a1b2c3", "conversationId": "p2p-oc_2f6b…", "createdAt": "2026-09-19T14:52:52.000Z" }
+```
 
-**作用：** 跨所有群聊的全局消息去重
+人工排查时一眼看出"这是哪个会话的目录"，随目录一起被清理，不参与任何逻辑判断。
 
-**格式：**
+### `*.jsonl` - Pi 会话历史
+
+- 文件名 `{ISO8601时间}_{随机ID}.jsonl`，由 Pi SDK 生成（不可自定义），会话归属靠所在目录表达；
+- `/new` 之后新一代 jsonl 落在**新的会话目录**，旧目录保留至过期清理；
+- 会话索引（`data/sessions.json`）只记录**最新一代**的文件；同目录内的旧代 jsonl 属历史留档。
+
+### `images/` - 会话收到的图片
+
+按 `{imageKey}.jpg` 命名。图片本体不写入会话记录（易失内容不落盘），消息文本里带上本地路径，需要时模型可用 read 工具取回原图。
+
+### `files/` - 会话收到的文件附件
+
+文件名 `{毫秒时间戳}-{消毒后的原始文件名}`（同名文件先后上传不互相覆盖），单条消息最多下载 5 个，Agent 可通过消息文本里的路径直接读取。
+
+### `ocr/` - OCR 过程文件
+
+只有模型没有视觉能力且开启 `FEISHU_USE_EXTRA_OCR` 时才会出现：tesseract.js 的语言包工作副本放这里（`chi_sim.traineddata` + `eng.traineddata`，约 7.4MB）。语言包是"输入资源"而不是会话产物，因此：
+
+- 用前从共享目录 `data/assets/ocr/` **播种**到本会话目录，用后把新下载的语言包**回存**到共享目录；
+- 首次在某台机器上跑 OCR 才会联网下载，之后跨会话都是本地复制，且语言包随会话目录被清理。
+
+### `data/sessions.json` - 会话索引
+
 ```json
 {
-  "om_messageId1": {
-    "status": "completed",
-    "updatedAt": 1788084142478
-  },
-  "om_messageId2": {
-    "status": "processing",
-    "updatedAt": 1788082075682
+  "p2p-oc_2f6b…": {
+    "sessionId": "20260919-145252-a1b2c3",
+    "dir": "E:/…/work_space/20260919-145252-a1b2c3",
+    "sessionFile": "E:/…/work_space/20260919-145252-a1b2c3/2026-09-19T11-11-58-272Z_….jsonl",
+    "createdAt": 1789000000000,
+    "updatedAt": 1789000000000
   }
 }
 ```
 
-**状态流转：**
-- `processing` - 正在处理
-- `completed` - 处理完成
-- `failed` - 处理失败
+**作用：** conversationId → 当前会话（目录与 Pi 会话文件），重启后据此恢复到同一会话。
+**清理：** 索引本身不按期清理；指向的目录被清理后，下次使用时按"目录不存在 → 重建会话"处理（残留条目被就地覆盖）。
+**为什么不合并进别的表：** 它天然是 1→1 的当前态映射，与消息去重表（全局、只增）、话题根表（群 → 待定根）语义不同。
 
-**为什么需要：**
-- 飞书 WebSocket 重连时可能重发历史消息
-- 防止重复处理导致用户看到多次回复
-- 追踪消息处理状态
+### `data/messages.json` - 消息去重表
 
-### topic-roots.json - 话题根消息表
-
-**作用：** 记录 chatId → 话题根消息 ID。话题群的首条消息没有 threadId，用它自己的 messageId 作为话题键；后续消息的 threadId 恰为该根消息 ID，借此收敛到同一会话，避免话题裂成多个会话。
-
-### ../stats/skill-usage.jsonl - 技能使用事件流
-
-**作用：** 记录每次技能文件读取事件（Agent 通过 read 工具读取技能目录下的 .md 时写入），供飞书内查询和本地 `/stats` 统计页面使用
-
-**格式：** JSONL（一行一条事件，只增不删）
 ```json
-{"ts": 1757000000000, "user": "ou_xxx", "skill": "code-review", "chatId": "oc_xxx"}
+{ "om_messageId1": { "status": "completed", "updatedAt": 1788084142478 } }
 ```
 
-**为什么独立于 session：** session 文件是 Pi 内部格式、7 天清理、话题群多人共享无法按人归因；统计需要长期留存并按「人 × 技能 × 时间」聚合，故使用独立事件流。
+飞书 WebSocket 重连可能重发历史消息，用 `claim()` 保证同一条消息只处理一次。状态 `processing → completed/failed`；`processing` 卡住超过 1 小时视为异常并清理。
 
-**展示名解析：** 事件只存 Open ID；展示时从 `data/users/{appId}_users.json` 按 英文名 > 中文名 > Open ID 解析。
+### `data/topic-roots.json` - 话题根消息表
 
-**实现位置：** `src/stats/skill-usage-store.ts`
+记录 `chatId → 待定话题根 messageId`。话题群首条消息没有 threadId，用它自己的 messageId 当话题键，后续消息的 threadId 恰为该根消息 ID，借此收敛到同一会话，避免话题裂成多个会话。
 
-### xxx.jsonl - Pi Agent 会话文件
+### `data/users/{appId}_users.json` - 用户资料缓存
 
-**作用：** 存储单个会话的完整对话历史，位于该会话的专属文件夹内
+键为用户 openId，条目含 `updatedAt`；成功档案 3 天内命中缓存；所有通道都失败时写冷却档案（仅 openId + 旧资料），1 天冷却后自动重试。文件名带 `appId` 前缀，多机器人不混用。
 
-**格式：** JSONL（每行一个 JSON 对象）
-```jsonl
-{"type":"user","content":"你好"}
-{"type":"assistant","content":"你好！有什么可以帮你的？"}
-{"type":"tool_call","name":"read","args":{}}
-```
+### `data/stats/skill-usage.jsonl` - 技能使用事件流
 
-**为什么需要：**
-- Pi Agent SDK 需要历史消息来维持对话连贯性
-- 重启后能继续上次的话题
-- 记录完整的工具调用历史
-
-**命名规则：**
-- 格式：`{ISO8601时间}_{随机ID}.jsonl`
-- 示例：`2026-08-30T09-39-04-975Z_abc123.jsonl`
-- 文件名由 Pi SDK 生成（不可自定义）；会话归属靠所在文件夹与 conversations.json 表达
-- `/new` 后的新一代 jsonl 落在同一会话文件夹，旧文件保留至过期清理
-
-### files/ - 会话文件附件目录
-
-**作用：** 存放该会话收到的 file/audio/video 附件
-
-**位置：** `{会话文件夹}/files/`，与该会话的历史 jsonl 同住
-
-**内容：**
-- 文件名格式：`{毫秒时间戳}-{消毒后的原始文件名}`（同名文件先后上传不互相覆盖）
-- Agent 可通过消息文本中的本地路径直接读取附件
-- ✅ 已纳入 DataCleaner 清理（按 mtime 保留 7 天）；清空后 files/ 与空壳会话文件夹自动移除
-
-### user-tokens.json - 用户飞书身份 token
-
-**作用：** 存储 `/login`（Device Flow）授权得到的用户 token，按 openId 一条
-
-**内容：**
-- 每条含 `accessToken` / `refreshToken` / 双过期时间 / `scope` / `updatedAt`
-- access token 临期由 `getUserAccessToken(openId)` 用 refresh token 静默换新；refresh 也失效则清档并引导重新 `/login`
-- 文件在 `data/` 下（已 gitignore）；实际可访问数据 = 应用 scope ∩ 用户本人可见范围
-
-### images/ - 图片缓存目录
-
-**作用：** 缓存用户发送的图片
-
-**内容：**
-- 文件名格式：`{imageKey}.{ext}`
-- 图片从飞书下载后保存在此（按 imageKey 平铺去重，天然不按会话分）
-- 便于调试和事后查看
-
-### ../users/{appId}_users.json - 用户资料缓存
-
-**作用：** 缓存用户中文名、英文名、部门名，避免每条消息都调用飞书 API
-
-**内容：**
-- 键为用户 Open ID，条目含 `updatedAt`；成功档案 3 天内命中缓存；全部通道失败写冷却档案（仅 openId + 旧资料），1 天冷却后自动重试
-- 文件名带 `appId` 前缀，避免多机器人混用
+记录 `read` 工具读取技能文件的每次事件，JSONL 只增不删。之所以独立于会话：session jsonl 是 Pi 内部格式、7 天清理、话题群多人共享无法按人归因；统计需要长期留存并按「人 × 技能 × 时间」聚合。展示名从 `data/users/{appId}_users.json` 按「英文名 > 中文名 > Open ID」解析。
 
 ## 自动清理策略
 
-**清理规则：**
-- **保留期限：** 7 天
-- **清理对象：**
-  - ✅ 会话文件（`{会话文件夹}/*.jsonl`，含根目录平铺的旧布局遗留）- 按文件修改时间
-  - ✅ 会话附件（`{会话文件夹}/files/`）- 按文件修改时间；清空后 files/ 与空壳会话文件夹自动移除
-  - ✅ 图片缓存 - 按文件修改时间
-  - ✅ 消息状态 - 按 updatedAt 时间戳
-  - ✅ 卡住的消息（processing 状态超过 1 小时）
-- **不清理：**
-  - ❌ conversations.json（残留映射由会话层容错兜底）
-  - ❌ topic-roots.json
-  - ❌ stats/skill-usage.jsonl（统计事件长期留存）
-  - ❌ user-tokens.json（不按期清理；refresh 失效时按用户清档）
+**规则：以会话目录为单位，整个目录过期即整体删除。**
 
-**触发时机：**
-- 启动时执行一次
-- 之后每 24 小时自动执行
+| 对象 | 判定 | 处理 |
+|------|------|------|
+| 会话目录 `work_space/{sessionId}/` | 目录树内最新 mtime（= 该会话最后一次活动）早于 7 天前 | `rm -rf` 整目录 |
+| 会话根下散落的文件（旧布局遗留） | 文件 mtime 早于 7 天前 | 删除文件 |
+| 消息去重表条目 | `updatedAt` 早于 7 天前 | 删条目 |
+| 卡住的消息 | `processing` 状态超过 1 小时 | 删条目 |
 
-**实现位置：** `src/runtime/data-cleaner.ts`
+**为什么不按文件清理：** 会话目录是不可分割的整体，按文件删只会留下"历史没了、附件还在"的半截会话——既无法使用，也无法解释。目录树内最新 mtime 作为"最后活跃时间"，保证还在使用的会话不会被误删（老文件待在新会话目录里也不会被单独清掉）。
+
+**不清理：** `data/` 下的记忆、用户资料、凭证、会话索引、话题根表、技能统计、定时任务表——它们要么是长期资产，要么有各自的过期策略。
+
+**触发时机：** 启动时执行一次，之后每 24 小时一次。
+**实现位置：** `src/runtime/data-cleaner.ts`。
 
 ## 注意事项
 
-### ✅ 会自动创建的文件
+### ✅ 会自动创建
 
-- `conversations.json` - 首次运行时创建
-- `messages.json` - 首次运行时创建
-- `topic-roots.json` - 首次收到话题群消息时创建
-- `{会话文件夹}/xxx.jsonl` - 每个新会话创建一个（/new 后同文件夹再建新文件）
-- `{会话文件夹}/files/` - 首次收到文件附件时创建
-- `images/` - 首次收到图片时创建
-- `user-tokens.json` - 首次 /login 成功时创建
-- `data/users/{appId}_users.json` - 首次查询用户资料时创建
+- `work_space/{sessionId}/`（含 `session.json`）— 会话第一句话时创建
+- `{会话目录}/images|files|ocr/` — 首次收到图片/附件/需要 OCR 时创建
+- `data/sessions.json` / `data/messages.json` — 首次运行时创建
+- `data/topic-roots.json` — 首次收到话题群消息时创建
+- `data/assets/ocr/` — 首次跑本地 OCR 时创建
+- `data/users/{appId}_users.json` — 首次查询用户资料时创建
 
-### ❌ 不应该手动放入的文件
+### ❌ 不要手工往会话目录外扔东西
 
-- 其他格式的文件
-- 临时文件
-- 日志文件
-
-### ⚠️ 不能合并这些文件
-
-三个 JSON 文件不能合并，因为：
-1. `conversations.json` 是 1→N 映射（每个 conversationId 对应一个 session 文件）
-2. `messages.json` 是跨所有会话的全局去重
-3. `xxx.jsonl` 是 Pi SDK 管理的标准格式，不能修改
-
-## 磁盘占用预估
-
-**典型场景（单个群聊）：**
-- conversations.json: ~200 bytes（固定开销）
-- messages.json: ~100 bytes × 消息数
-- 单个 session.jsonl: ~1-10 KB（取决于对话轮数）
-- 单张图片缓存: 50-500 KB
-
-**7 天保留期预估：**
-- 10 个活跃群聊 × 每天 50 条消息 = 3500 条消息
-- messages.json: ~350 KB
-- session 文件: 10 × 50 KB = 500 KB
-- 图片缓存（假设每天 10 张）: 70 × 200 KB = 14 MB
-- **总计：** ~15 MB
-
-## SDK 依赖
-
-**Pi Agent SDK：**
-- session.jsonl 文件由 SDK 自动管理
-- 我们只负责提供文件路径和清理策略
-- 具体格式规范参考 Pi Agent SDK 文档
+会话产物一律进会话目录；`work_space/` 下除会话目录外不应出现其他文件（出现了会被当作过期遗留清掉）。需要长期保留的东西放 `data/` 下，并且要有明确的归属与过期策略。

@@ -4,9 +4,18 @@ export interface FeishuPiAppConfig {
   feishuAppSecret: string;
   feishuAdmin: string;
   cwd: string;
-  sessionDir: string;
-  /** 数据根目录（data/，已被 .gitignore 排除），存放用户 token 等非会话数据 */
+  /** 数据根目录（data/，已被 .gitignore 排除）：非会话数据（记忆/用户/凭证/会话索引/共享缓存） */
   dataDir: string;
+  /** 会话目录根（work_space/）：一次会话一个目录，会话产物全部在其中，按目录整目录过期清理 */
+  sessionsRoot: string;
+  /** 会话索引：conversationId → 当前会话（id/目录/Pi 会话文件） */
+  sessionsFile: string;
+  /** 消息去重表 */
+  messagesFile: string;
+  /** 话题根表（话题群会话收敛用） */
+  topicRootsFile: string;
+  /** 共享资源缓存目录（OCR 语言包等），会话目录按需从它播种 */
+  assetsDir: string;
   /** Per-user 授权（Device Flow，/login）申请的用户身份 scope；留空 = 禁用 /login */
   userAuthScopes: string[];
   modelProvider: string;
@@ -14,8 +23,6 @@ export interface FeishuPiAppConfig {
   modelBaseUrl?: string;
   /** 思考档位：off=关闭思考，low/high/max 各模型自动适配等效等级（FEISHU_PI_THINKING_LEVEL，默认 high） */
   thinkingLevel: ThinkingLevelConfig;
-  /** 会话工作区根目录：每个会话一个子文件夹（jsonl/图片/附件都归拢于此） */
-  workspaceRoot: string;
   /** 本地 OCR 兜底：模型无视觉能力时，把下载图片 OCR 成文字一并交给模型（FEISHU_USE_EXTRA_OCR） */
   useExtraOcr: boolean;
   /** 智能体审核接口（OpenAI 兼容）；未配置则策略外调用直接弹卡 */
@@ -121,9 +128,13 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     feishuAppSecret: required("FEISHU_APP_SECRET"),
     feishuAdmin: env.FEISHU_PI_ADMIN || "", // 可选：支持中文名、英文名、open_id、邮箱
     cwd: process.cwd(),
-    sessionDir: `${process.cwd()}/data/sessions`,
-    // 会话工作区：第一句话就为会话建立专属文件夹，图片/附件等一切产物归拢于此
-    workspaceRoot: `${process.cwd()}/work_space`,
+    // 会话目录根：会话的第一句话就为它建立一个专属目录，jsonl/图片/附件/OCR 过程文件全在里面
+    sessionsRoot: `${process.cwd()}/work_space`,
+    sessionsFile: `${process.cwd()}/data/sessions.json`,
+    messagesFile: `${process.cwd()}/data/messages.json`,
+    topicRootsFile: `${process.cwd()}/data/topic-roots.json`,
+    assetsDir: `${process.cwd()}/data/assets`,
+    // 非会话数据（用户资料、凭证、记忆、共享缓存）统一在 data/ 下
     dataDir: `${process.cwd()}/data`,
     // 用户身份授权 scope（Device Flow）：默认内置"用户资料查询"所需最小集合；FEISHU_USER_AUTH_SCOPES 可覆盖。
     // 部门路径类 scope 需要管理员审核，默认不申请：部门信息走 lark-cli 用户态搜索通道获得
