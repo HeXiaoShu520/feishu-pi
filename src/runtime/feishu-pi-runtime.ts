@@ -143,6 +143,30 @@ const MEMORY_RULE = [
   "记忆要经常维护：条目重复、过时或 read 时提示超限时，用 rewrite 用去重合并后的精简版整体覆盖（拒绝空内容）。记忆对团队全员可见，禁止写入密码等敏感信息。",
 ].join(NL);
 
+/**
+ * 思考过程不落盘：包一层 SessionManager.appendMessage，写入会话文件前剔除 assistant 消息的
+ * thinking 块与 reasoning_content/reasoningContent 字段。只影响持久化 jsonl（防膨胀、防内部推理外泄），
+ * 内存中的对话上下文不受影响；回放时 DeepSeek 按 compat 用空 reasoning_content 兜底，不会 400。
+ */
+function disableThinkingPersistence(sessionManager: {
+  appendMessage: (message: Parameters<SessionManager["appendMessage"]>[0]) => string;
+}): void {
+  const original = sessionManager.appendMessage.bind(sessionManager);
+  sessionManager.appendMessage = (message: Parameters<typeof original>[0]) => original(stripThinkingContent(message));
+}
+
+/** 深拷贝消息并剔除思考内容：content 数组里的 thinking 块、顶层的 reasoning 字段。 */
+function stripThinkingContent<T>(message: T): T {
+  if (message === null || message === undefined) return message;
+  const clone = JSON.parse(JSON.stringify(message)) as Record<string, unknown>;
+  if (Array.isArray(clone.content)) {
+    clone.content = (clone.content as Array<{ type?: string }>).filter((block) => block.type !== "thinking");
+  }
+  delete clone.reasoning_content;
+  delete clone.reasoningContent;
+  return clone as T;
+}
+
 export class FeishuPiRuntime {
   private readonly config: FeishuPiConfig;
   private readonly tools: FeishuPiTool[];
@@ -346,6 +370,9 @@ export class FeishuPiRuntime {
     const sessionManager = sessionFile
       ? SessionManager.open(sessionFile, convDir, this.config.cwd)
       : SessionManager.create(this.config.cwd, convDir);
+    // 思考过程不落盘：写入会话文件前剔除 assistant 消息的 thinking 块与 reasoning_content 字段。
+    // 内存中的对话上下文不受影响；回放时 DeepSeek 按 compat 用空 reasoning_content 兜底，不会 400
+    disableThinkingPersistence(sessionManager);
     const model = this.resolveModel();
 
     // 技能/自定义工具均上电加载一次（进程内缓存复用，修改后需重启生效）
