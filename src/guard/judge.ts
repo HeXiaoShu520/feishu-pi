@@ -28,6 +28,12 @@ export interface JudgeVerdict {
   reason: string;
 }
 
+/** 审核日志用单行化：压平换行并截断，避免刷屏。 */
+function singleLine(text: string, maxLength: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > maxLength ? `${flat.slice(0, maxLength)}…` : flat;
+}
+
 /**
  * 审核模型的系统提示：二级门禁的放行标准刻意从宽——
  * 工作范围在本工程内且非恶意即放行；deny 层已在上游拦截，不会到这里。
@@ -84,6 +90,19 @@ export class PolicyJudge {
     const { baseUrl, apiKey, timeoutMs } = this.options;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
+    // 审核指令 = 固定系统提示（见 SYSTEM_PROMPT）+ 本次调用的完整上下文，全量打印供审计
+    const instruction = JSON.stringify({
+      权限配置: input.overview ?? null,
+      调用者身份组: input.group,
+      该组生效范围: {
+        可执行命令: input.fields.bash ?? [],
+        可读路径: input.fields.read ?? [],
+        可写路径: input.fields.write ?? [],
+        可用工具: input.fields.tools ?? [],
+      },
+      本次调用: { 工具: input.toolName, 参数: input.args },
+    });
+    logger.info(`[Judge] → ${model} 审核指令: ${singleLine(instruction, 1200)}`);
     try {
       const response = await fetch(`${baseUrl!.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",
@@ -96,20 +115,7 @@ export class PolicyJudge {
           model,
           messages: [
             { role: "system", content: SYSTEM_PROMPT },
-            {
-              role: "user",
-              content: JSON.stringify({
-                权限配置: input.overview ?? null,
-                调用者身份组: input.group,
-                该组生效范围: {
-                  可执行命令: input.fields.bash ?? [],
-                  可读路径: input.fields.read ?? [],
-                  可写路径: input.fields.write ?? [],
-                  可用工具: input.fields.tools ?? [],
-                },
-                本次调用: { 工具: input.toolName, 参数: input.args },
-              }),
-            },
+            { role: "user", content: instruction },
           ],
           temperature: 0,
         }),
@@ -119,6 +125,7 @@ export class PolicyJudge {
       }
       const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
       const content = data.choices?.[0]?.message?.content ?? "";
+      logger.info(`[Judge] ← ${model} 审核结果: ${singleLine(content, 600)}`);
       const match = content.match(/\{[\s\S]*\}/);
       if (!match) return { decision: "ask", reason: "审核模型输出无法解析" };
       const parsed = JSON.parse(match[0]) as { decision?: string; reason?: string };
