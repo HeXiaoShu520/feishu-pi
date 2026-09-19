@@ -383,7 +383,7 @@ export async function main(): Promise<void> {
     models: config.guardModels,
     apiKey: config.guardApiKey,
     timeoutMs: config.guardTimeoutMs,
-  }), () => policy.describe());
+  }), () => policy.describe(), config.cwd);
 
   // 授权卡回调 → PermissionBroker 服务端校验（token / 卡片来源 / 管理员身份）
   transport.onApproval(async ({ value, action }) => {

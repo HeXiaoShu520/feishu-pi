@@ -17,7 +17,13 @@
       "Bash(git diff:*)",
       "Bash(git log:*)",
       "Bash(npm run test:*)",
-      "Bash(npm run check:*)"
+      "Bash(npm run check:*)",
+      "bash(grep:*)",
+      "bash(cat:*)",
+      "bash(head:*)",
+      "bash(tail:*)",
+      "bash(find:*)",
+      "bash(wc:*)"
     ],
     "admin": [
       "Read(**)",
@@ -51,6 +57,16 @@
       "Bash(lark-cli okr:*)",
       "Bash(lark-cli meeting:*)",
       "Bash(meegle:*)",
+      "bash(grep:*)",
+      "bash(sed:*)",
+      "bash(cat:*)",
+      "bash(head:*)",
+      "bash(tail:*)",
+      "bash(find:*)",
+      "bash(wc:*)",
+      "bash(echo:*)",
+      "bash(diff:*)",
+      "bash(sort:*)",
       "Bash(lark-cli --help)"
     ],
     "group": [

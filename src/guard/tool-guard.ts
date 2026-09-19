@@ -4,6 +4,71 @@ import type { PermissionBroker } from "./broker.ts";
 import type { PolicyJudge, PermissionOverview } from "./judge.ts";
 import { matchesUserIdentityCli } from "../runtime/identity-bash.ts";
 import { logger } from "../utils/logger.ts";
+import { isAbsolute, join, resolve, sep } from "node:path";
+
+/** 把命令按"未处于引号内"的 shell 链接符（&& || ; | 换行）拆成段落。
+ *  引号内的同名符号不拆（`grep "a && b"` 是一段）——拆错只会让段落不认识而落入审核，
+ *  不会误放行，方向安全。 */
+export function splitShellSegments(command: string): string[] {
+  const segments: string[] = [];
+  let current = "";
+  let quote: string | undefined;
+  for (const ch of command) {
+    if (quote) {
+      current += ch;
+      if (ch === quote) quote = undefined;
+      continue;
+    }
+    if (ch === '"' || ch === "'") {
+      quote = ch;
+      current += ch;
+      continue;
+    }
+    if (ch === "&" || ch === "|" || ch === ";" || ch === "\n" || ch === "\r") {
+      segments.push(current);
+      current = "";
+      continue;
+    }
+    current += ch;
+  }
+  segments.push(current);
+  return segments.map((s) => s.trim()).filter(Boolean);
+}
+
+/** 段落里出现即不可白名单放行的构造：命令替换 / 子 shell（内容会被执行，前缀匹配失去意义） */
+const COMPOSITE_VETO = /\$\(|`|<\(/;
+
+/**
+ * 组合命令的确定性白名单：每一段都必须单独命中白名单前缀；
+ * `cd` 段特殊处理——只允许解析后仍落在工作目录（cwd）之内，防"cd 出去再读外面"。
+ * 全部段落通过 → 免审放行；任何一段不认识 → false（照旧交智能体/授权卡）。
+ */
+export function allowCompositeCommand(
+  command: string,
+  cwd: string,
+  segmentAllowed: (segment: string) => boolean,
+): boolean {
+  const segments = splitShellSegments(command);
+  if (segments.length === 0) return false;
+  const normalizedCwd = resolve(cwd);
+
+  for (const segment of segments) {
+    if (COMPOSITE_VETO.test(segment)) return false;
+
+    // cd 段：允许在工作目录内跳转（含 cd / cd -），出目录就不放
+    const cdMatch = segment.match(/^cd\s+(.*)$/);
+    if (cdMatch) {
+      const raw = cdMatch[1].trim().replace(/^["']|["']$/g, "");
+      if (!raw || raw === "-" || raw === "..") return false;
+      const target = resolve(cwd, isAbsolute(raw) ? raw : join(cwd, raw));
+      if (target !== normalizedCwd && !target.startsWith(normalizedCwd + sep)) return false;
+      continue;
+    }
+
+    if (!segmentAllowed(segment)) return false;
+  }
+  return true;
+}
 
 export interface ToolGuardCheckParams {
   toolName: string;
@@ -38,15 +103,19 @@ export class ToolGuard {
   private readonly judge?: PolicyJudge;
   /** 全量权限配置提供器（供智能体审核时把整份 permission 交给审核模型） */
   private readonly getOverview?: () => Promise<PermissionOverview | undefined>;
+  /** 工作目录：组合命令（cd X && ...）的 cd 段只允许在该目录内跳转 */
+  private readonly cwd: string;
 
   constructor(
     broker: PermissionBroker,
     judge?: PolicyJudge,
     getOverview?: () => Promise<PermissionOverview | undefined>,
+    cwd?: string,
   ) {
     this.broker = broker;
     this.judge = judge;
     this.getOverview = getOverview;
+    this.cwd = cwd ?? process.cwd();
   }
 
   async check(policy: GroupPolicy, params: ToolGuardCheckParams, signal?: AbortSignal): Promise<{ block: true; reason: string } | undefined> {
@@ -78,8 +147,11 @@ export class ToolGuard {
     // ① 组策略命中 → 免审放行（确定性判定，不打日志）；未命中由 Judge 单行记录（命令+结论）
     if (toolName === "bash") {
       const command = extractCommand(args);
-      if (command !== undefined && policy.bashAllowed(command)) {
-        return undefined;
+      if (command !== undefined) {
+        // 先试整命令，再试组合拆解（cd 工程内 && 各段都命中白名单）——都不中才走审核
+        if (policy.bashAllowed(command) || allowCompositeCommand(command, this.cwd, (seg) => policy.bashAllowed(seg))) {
+          return undefined;
+        }
       }
     } else if (toolName === "write" || toolName === "edit") {
       const path = extractPath(args);
