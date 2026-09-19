@@ -101,10 +101,12 @@ export class PolicyJudge {
    * 无论结果如何，命令+结论只打一行日志。
    */
   private async judgeWithSingleModel(model: string, input: JudgeInput): Promise<JudgeVerdict> {
+    const startedAt = Date.now();
     const verdict = await this.callJudgeModel(model, input);
+    const elapsedSec = ((Date.now() - startedAt) / 1000).toFixed(1);
     const label = verdict.decision === "allow" ? "通过" : verdict.reason.includes("超时") ? "超时" : "不通过";
     logger.info(
-      `[Judge] 审核: ${label} 内容: ${input.toolName}: ${singleLine(JSON.stringify(input.args) ?? "", 600)}`,
+      `[Judge] 审核: ${label}(${elapsedSec}s) 内容: ${input.toolName}: ${singleLine(JSON.stringify(input.args) ?? "", 600)}`,
     );
     return verdict;
   }
