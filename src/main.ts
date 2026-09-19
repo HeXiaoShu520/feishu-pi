@@ -12,7 +12,7 @@ import { DataCleaner } from "./runtime/data-cleaner.ts";
 import { resolveAdminOpenId, persistUserProfile, resolveAdminFromLogins } from "./feishu/admin-resolver.ts";
 import { ScheduleService } from "./schedule/service.ts";
 import { PermissionPolicy } from "./permission/policy.ts";
-import { PermCommand, markdownCard } from "./feishu/commands.ts";
+import { markdownCard } from "./feishu/commands.ts";
 import { LogoutCommand, StatusCommand, UserAuthService } from "./feishu/user-auth.ts";
 import { MeegleDeviceLogin, MEEGLE_DEFAULT_HOST, StaticCredentialService } from "./feishu/meegle-auth.ts";
 import { PeopleRoster } from "./feishu/people-roster.ts";
@@ -569,9 +569,8 @@ ${trimmed}` }] },
     {
       messages,
       client,
-      // /perm 查看身份、双组策略与工具档位（仅管理员）；/login /logout 用户飞书身份授权（Device Flow）
+      // /status 查看用户与 CLI 凭证状态；/logout 清除飞书用户授权
       extraCommands: [
-        new PermCommand(() => policy.describe()),
         new StatusCommand(
           userAuth,
           [

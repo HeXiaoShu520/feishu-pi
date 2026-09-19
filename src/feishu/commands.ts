@@ -1,13 +1,12 @@
 /**
- * 机器人指令（/model /help /new /stop /detail /perm）。
+ * 机器人指令（/model /help /new /stop /detail）。
  *
  * 设计：每个指令一个 CommandHandler 实现，依赖一律构造注入（会话操作、策略查询、
  * 模型信息提供器），指令本身不读全局配置、不持有可变状态——便于单测与复用。
- * 注册表按注册顺序匹配，bridge 在此基础上追加 /detail /perm /login 等注入式指令。
+ * 注册表按注册顺序匹配，bridge 在此基础上追加 /detail /status /logout 等注入式指令。
  */
 import type { Client } from "@larksuiteoapi/node-sdk";
 import type { FeishuInboundMessage } from "./types.ts";
-import type { PermissionPolicy } from "../permission/policy.ts";
 import { logger } from "../utils/logger.ts";
 
 /** 指令处理器接口：match 判定是否命中，execute 返回要发送的卡片 */
@@ -315,64 +314,6 @@ export class DetailCommand implements CommandHandler {
     }
 
     return { card: markdownCard(statusLine) };
-  }
-}
-
-/** /perm 展示用的策略概览：各组配置与生效范围（PermissionPolicy.describe 的返回） */
-type PolicyOverview = Awaited<ReturnType<PermissionPolicy["describe"]>>;
-
-/**
- * /perm - 查看权限配置（仅管理员）
- */
-export class PermCommand implements CommandHandler {
-  private readonly listPolicy: () => Promise<PolicyOverview>;
-
-  constructor(listPolicy: () => Promise<PolicyOverview>) {
-    this.listPolicy = listPolicy;
-  }
-
-  match(text: string): boolean {
-    return text.trim() === "/perm";
-  }
-
-  async execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
-    if (!message.context.isAdmin) {
-      return { card: markdownCard("⚠️ 仅管理员可查看权限配置") };
-    }
-
-    const policy = await this.listPolicy();
-    const fmtAllow = (e: { bash?: string[]; read?: string[]; write?: string[]; tools?: string[] }): string[] => {
-      const groups: [string, string[]][] = [
-        ["Read", e.read ?? []],
-        ["Write", e.write ?? []],
-        ["Tools", e.tools ?? []],
-        ["Bash", e.bash ?? []],
-      ];
-      const out: string[] = [];
-      for (const [tag, items] of groups) {
-        if (items.length === 0) continue;
-        if (out.length) out.push("");
-        for (const p of items) out.push(`${tag}(${p})`);
-      }
-      return out;
-    };
-
-    const lines: string[] = [];
-
-    for (const [name, g] of Object.entries(policy.groups)) {
-      const entries = fmtAllow(g.effective);
-      lines.push(`**${name}**`, entries.length ? entries.join("\n") : "（空）", "");
-    }
-
-    lines.push(
-      "**deny**（第 0 层：禁止读写，对所有人含管理员生效）",
-      policy.deny.map((pattern) => `Deny(${pattern})`).join("\n"),
-      "",
-    );
-
-    lines.push("ℹ️ 名单外的调用由智能体参考本策略综合判断，仍不放行则弹授权卡。");
-
-    return { card: markdownCard(lines.join("\n")) };
   }
 }
 
