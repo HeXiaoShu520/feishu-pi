@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import { matchGlobs } from "../utils/path-glob.ts";
-import { colors, logger } from "../utils/logger.ts";
+import { logger } from "../utils/logger.ts";
 
 /**
  * 统一权限策略：一个文件（.agent/permissions.json）只有两个输入——
@@ -62,6 +62,11 @@ export interface GroupPolicy {
 
 /** 不在任何组时的保守缺省：仅技能目录可读（零配置行为） */
 const UNGROUPED_READ = [".agent/skills/**"];
+
+/** 统计一组的规则总数（read/write/tools/bash 之和，日志汇总用）。 */
+function countRules(fields: GroupFields): number {
+  return (Object.keys(fields) as (keyof GroupFields)[]).reduce((sum, kind) => sum + (fields[kind]?.length ?? 0), 0);
+}
 
 /** bash 命令里的 shell 链接符：命中即不参与前缀/精确匹配（防 `npm run test; rm -rf /` 逃逸）。
  *  换行符必须包含：多行命令的第二行不被前缀规则覆盖（`git status\nrm -rf /` 会整段放行）。 */
@@ -242,24 +247,13 @@ export class PermissionPolicy {
         this.groups[name] = sanitizeGroup(fields);
       }
       this.loadedMtimeMs = mtimeMs;
-      logger.info(`[Policy] 已加载权限策略（${this.filePath}），deny 保护 ${this.denyPatterns.length} 条模式`);
-      // 打印全部规则明细（按规则类型着色）：让"为什么没命中/为什么弹卡"在控制台可直接自查
-      const kindStyle: Record<keyof GroupFields | "deny" | "name", (s: string) => string> = {
-        name: (s) => `${colors.bright}${colors.magenta}${s}${colors.reset}`,
-        read: (s) => `${colors.green}${s}${colors.reset}`,
-        write: (s) => `${colors.yellow}${s}${colors.reset}`,
-        bash: (s) => `${colors.cyan}${s}${colors.reset}`,
-        tools: (s) => `${colors.magenta}${s}${colors.reset}`,
-        deny: (s) => `${colors.red}${s}${colors.reset}`,
-      };
-      const dump = (name: string, fields: GroupFields): void => {
-        const entries = (Object.keys(fields) as (keyof GroupFields)[])
-          .flatMap((kind) => (fields[kind] ?? []).map((pattern) => kindStyle[kind](`${kind}(${pattern})`)));
-        logger.info(`[Policy]   ${kindStyle.name(name)}: ${entries.length > 0 ? entries.join("  ") : "(空)"}`);
-      };
-      dump("common", this.common);
-      for (const [name, fields] of Object.entries(this.groups)) dump(name, fields);
-      logger.info(`[Policy]   ${kindStyle.name("deny")}: ${this.denyPatterns.map((p) => kindStyle.deny(p)).join("  ")}`);
+      // 一行汇总各组的规则数量（明细看 .agent/permissions.json，那才是唯一事实源）
+      const groupSummary = Object.entries(this.groups)
+        .map(([name, fields]) => `${name}(${countRules(fields)})`)
+        .join(" ");
+      logger.info(
+        `[Policy] 已加载权限策略: common(${countRules(this.common)}) ${groupSummary} deny(${this.denyPatterns.length})`,
+      );
     } catch (error) {
       if (!this.warned) {
         this.warned = true;
