@@ -314,8 +314,11 @@ export async function main(): Promise<void> {
     workspace,
 
     // 本地 OCR 兜底（模型无视觉能力时启用）：下载图片 → tesseract.js 识别 → 文字并入消息
+    // 语言包缓存（首次联网下载，约 7.4MB，全局共用）放工作区的 tmp/ 下：
+    // 它只是可重建的缓存，不该混进 data/（会话、用户、凭证、团队记忆所在处）；
+    // work_space/ 已被 .gitignore 排除，且 DataCleaner 不会删掉非空的 tmp/ 目录
     useExtraOcr: config.useExtraOcr,
-    ocrImage: createLocalOcrRunner({ cacheDir: join(config.dataDir, "ocr") }),
+    ocrImage: createLocalOcrRunner({ cacheDir: join(config.workspaceRoot, "tmp", "ocr") }),
     modelHasVision: () => getModel(config.modelProvider as never, config.modelName as never)?.input?.includes("image") === true,
     // 图片下载缓存：纯排查用途（只写不读），放 cache/ 与会话数据分家
     sessionDataDir: config.sessionDir,

@@ -16,7 +16,7 @@ export type LocalOcrRunner = (image: Buffer) => Promise<string | undefined>;
  * worker 在首次识别时才初始化，创建本执行器本身零开销。
  */
 export function createLocalOcrRunner(options: {
-  /** 语言包缓存目录（如 data/ocr） */
+  /** 语言包缓存目录（如 work_space/tmp/ocr） */
   cacheDir: string;
   /** 识别语言（tesseract 格式，默认 简体中文+英文） */
   languages?: string;

@@ -106,24 +106,33 @@ class SessionWrapper implements FeishuPiSession {
  * 加载结果由 printAvailableResources 打印，缺失会显式告警；改动该文件后需重启进程生效。
  */
 
+/** 图片块被剔除后留在会话记录里的占位文本（原图另存于会话工作区的 images/，路径已写在消息文本里） */
+export const IMAGE_OMITTED_PLACEHOLDER = "[图片已省略：base64 不写入会话文件，原图见消息中的 [图片] 路径]";
+
 /**
- * 思考过程不落盘：包一层 SessionManager.appendMessage，写入会话文件前剔除 assistant 消息的
- * thinking 块与 reasoning_content/reasoningContent 字段。只影响持久化 jsonl（防膨胀、防内部推理外泄），
- * 内存中的对话上下文不受影响；回放时 DeepSeek 按 compat 用空 reasoning_content 兜底，不会 400。
+ * 易失内容不落盘：包一层 SessionManager.appendMessage，写入会话文件前剔除两类内容——
+ *   1) assistant 的思考过程：thinking 块与 reasoning_content/reasoningContent 字段（防膨胀、防内部推理外泄）；
+ *   2) 图片：image 块（base64 内联，单张可达数百 KB）换成一行占位文本（防会话文件被图片撑爆）。
+ *
+ * 只影响持久化 jsonl，内存中的对话上下文不受影响（当前这轮模型仍按原样看到图片）；
+ * 图片本体由传输层另存到会话工作区 images/ 并把路径写进消息文本，需要时可再用 read 工具取回。
+ * 回放时 DeepSeek 按 compat 用空 reasoning_content 兜底，不会 400。
  */
-function disableThinkingPersistence(sessionManager: {
+function disableVolatilePersistence(sessionManager: {
   appendMessage: (message: Parameters<SessionManager["appendMessage"]>[0]) => string;
 }): void {
   const original = sessionManager.appendMessage.bind(sessionManager);
-  sessionManager.appendMessage = (message: Parameters<typeof original>[0]) => original(stripThinkingContent(message));
+  sessionManager.appendMessage = (message: Parameters<typeof original>[0]) => original(stripVolatileContent(message));
 }
 
-/** 深拷贝消息并剔除思考内容：content 数组里的 thinking 块、顶层的 reasoning 字段。 */
-function stripThinkingContent<T>(message: T): T {
+/** 深拷贝消息并剔除易失内容：content 里的 thinking 块（丢弃）与 image 块（换成占位文本）、顶层的 reasoning 字段。 */
+export function stripVolatileContent<T>(message: T): T {
   if (message === null || message === undefined) return message;
   const clone = JSON.parse(JSON.stringify(message)) as Record<string, unknown>;
   if (Array.isArray(clone.content)) {
-    clone.content = (clone.content as Array<{ type?: string }>).filter((block) => block.type !== "thinking");
+    clone.content = (clone.content as Array<Record<string, unknown>>)
+      .filter((block) => block.type !== "thinking")
+      .map((block) => (block.type === "image" ? { type: "text", text: IMAGE_OMITTED_PLACEHOLDER } : block));
   }
   delete clone.reasoning_content;
   delete clone.reasoningContent;
@@ -364,9 +373,9 @@ export class FeishuPiRuntime {
     const sessionManager = sessionFile
       ? SessionManager.open(sessionFile, convDir, this.config.cwd)
       : SessionManager.create(this.config.cwd, convDir);
-    // 思考过程不落盘：写入会话文件前剔除 assistant 消息的 thinking 块与 reasoning_content 字段。
+    // 易失内容不落盘：写入会话文件前剔除 thinking 块与顶层 reasoning 字段，并把 image 块换成占位文本。
     // 内存中的对话上下文不受影响；回放时 DeepSeek 按 compat 用空 reasoning_content 兜底，不会 400
-    disableThinkingPersistence(sessionManager);
+    disableVolatilePersistence(sessionManager);
     const model = this.resolveModel();
 
     // 技能/自定义工具均上电加载一次（进程内缓存复用，修改后需重启生效）

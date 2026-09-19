@@ -225,6 +225,7 @@ export class LarkTransport implements FeishuTransport {
       let images;
       let imageCount = 0;
       let ocrNotes: string[] = [];
+      let imageNotes: string[] = [];
       const resources = (message as unknown as { resources?: Array<{ type: string; fileKey: string; fileName?: string }> }).resources ?? [];
       if (resources.length > 0) {
         const imageKeys = resources.filter((r) => r.type === "image").map((r) => r.fileKey);
@@ -239,6 +240,9 @@ export class LarkTransport implements FeishuTransport {
             wantOcr ? this.ocrImage : undefined,
           );
           if (processed && processed.length > 0) {
+            // 图片 base64 不写入会话记录（易失内容不落盘，见 runtime 的 disableVolatilePersistence），
+            // 这里把落盘路径写进消息文本，需要时可用 read 工具按路径取回原图
+            imageNotes = processed.map((img) => img.savedPath).filter((p): p is string => !!p);
             if (wantOcr) {
               ocrNotes = processed.map((img) => img.ocrText).filter((t): t is string => !!t);
             } else {
@@ -265,6 +269,11 @@ export class LarkTransport implements FeishuTransport {
       if (ocrNotes.length > 0) {
         // 无视觉模型：OCR 结果并入消息文本，让模型以文字方式"看图"
         cleanedText += `\n[图片文字识别]\n${ocrNotes.join("\n---\n")}`;
+      }
+
+      if (imageNotes.length > 0) {
+        // 图片本体不入会话记录，只留路径（与文件类附件的 [附件] 说明同格式）
+        cleanedText += imageNotes.map((p) => `\n[图片] 已保存到: ${p}`).join("");
       }
 
       // 记录收到的消息

@@ -18,6 +18,8 @@ export interface ProcessedImage {
   mimeType: string;
   /** 本地 OCR 识别出的文字（useExtraOcr 开启时存在；供无视觉模型以文本方式"看图"） */
   ocrText?: string;
+  /** 落盘位置（传 cacheDir 时存在）。图片 base64 不再写入会话记录，消息文本靠它指回原图 */
+  savedPath?: string;
 }
 
 /** 本地 OCR 执行器：图片 Buffer → 识别文本（失败抛错/返回 undefined 均可，调用方降级） */
@@ -52,15 +54,19 @@ export class LarkImageProcessor implements FeishuImageProcessor {
       const imageData = await toBuffer(response);
 
       // 可选：落盘到指定目录（会话工作区/images；供排查，失败不影响返回）
+      // 落盘路径回填 savedPath：图片 base64 不再写入会话记录，靠消息文本里的路径指回原图
+      let savedPath: string | undefined;
       if (cacheDir) {
         try {
-          writeFileSync(join(cacheDir, `${imageKey}.jpg`), imageData);
+          savedPath = join(cacheDir, `${imageKey}.jpg`);
+          writeFileSync(savedPath, imageData);
         } catch (err) {
+          savedPath = undefined;
           logger.warn("[LarkImageProcessor] 保存图片缓存失败", err);
         }
       }
 
-      const processed: ProcessedImage = { data: new Uint8Array(imageData), mimeType: this.detectMimeType(imageData) };
+      const processed: ProcessedImage = { data: new Uint8Array(imageData), mimeType: this.detectMimeType(imageData), savedPath };
 
       // 本地 OCR（useExtraOcr 开启时由传输层注入）：把图片文字提取出来，供无视觉模型以文本方式获取
       if (ocr) {
