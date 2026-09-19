@@ -132,6 +132,8 @@ export class FeishuAgentBridge {
 
       // 立即显示首帧（0ms 延迟）——动画帧走 replaceVisual：只改展示、不污染内容累积器
       await reply.replaceVisual(spinner.next());
+      // 本轮是否被新消息 /stop 打断：结算时据此撤回复卡（而不是渲染半截内容+统计）
+      let interruptedByNewMessage = false;
 
       // 启动动画定时器（真实内容到来前用 replaceVisual 循环刷新动画帧）
       let animationUpdating = false;
@@ -228,6 +230,9 @@ export class FeishuAgentBridge {
             }
           }
         },
+        () => {
+          interruptedByNewMessage = true;
+        },
       );
 
       // 确保停止动画（在途帧先落定：避免迟到的动画帧盖过 close 写入的最终统计小字）
@@ -235,6 +240,14 @@ export class FeishuAgentBridge {
       clearInterval(toolTimer);
       await pendingAnimWrite;
       await pendingToolFrameWrite;
+
+      // 本轮被新消息 /stop 打断：直接撤回这张回复卡（半截内容没有展示价值，留着只会误导）
+      if (interruptedByNewMessage) {
+        await reply.recall().catch((error) => logger.warn("[Bridge] 撤回被打断的回复卡失败:", error));
+        await this.messages?.complete(message.messageId);
+        logger.info(`[Bridge] 本轮被打断，回复卡已撤回: ${conversationId}`);
+        return;
+      }
 
       // 终态统计小字在 close 内部（正文渲染完成后）才写入；配置关闭时不生成，
       // 工具过程状态（工具段 + 小字动画）不经过这里，照常显示

@@ -63,6 +63,8 @@ export class CardKitReply implements FeishuReply {
   private readonly client: Client;
   private readonly chatId: string;
   private readonly messageId?: string;
+  /** 本轮卡片消息的 message_id（sendCardReference 时记录），撤回用 */
+  private sentMessageId?: string;
   private readonly replyInThread: boolean;
   private readonly onError?: (err: unknown) => void;
   private readonly maxCardChars: number;
@@ -187,10 +189,10 @@ export class CardKitReply implements FeishuReply {
     }
   }
 
-  /** 发送引用 card_id 的卡片消息（回复原消息或直接发送）。 */
+  /** 发送引用 card_id 的卡片消息（回复原消息或直接发送）。记录发出的消息 id 供撤回用。 */
   private async sendCardReference(cardId: string, replyToMessageId?: string): Promise<void> {
     if (replyToMessageId) {
-      await this.client.im.message.reply({
+      const res = await this.client.im.message.reply({
         path: { message_id: replyToMessageId },
         data: {
           msg_type: "interactive",
@@ -198,8 +200,9 @@ export class CardKitReply implements FeishuReply {
           reply_in_thread: this.replyInThread,
         },
       });
+      this.sentMessageId = res?.data?.message_id;
     } else {
-      await this.client.im.message.create({
+      const res = await this.client.im.message.create({
         params: { receive_id_type: "chat_id" },
         data: {
           receive_id: this.chatId,
@@ -207,7 +210,15 @@ export class CardKitReply implements FeishuReply {
           content: JSON.stringify({ type: "card", data: { card_id: cardId } }),
         },
       });
+      this.sentMessageId = res?.data?.message_id;
     }
+  }
+
+  /** 撤回本条卡片消息（本轮被打断时调用；未发出过消息则无操作）。 */
+  async recall(): Promise<void> {
+    if (!this.sentMessageId) return;
+    await this.client.im.v1.message.delete({ path: { message_id: this.sentMessageId } });
+    this.sentMessageId = undefined;
   }
 
   /** 正文超过单卡上限时，在完整块边界分出新卡。 */

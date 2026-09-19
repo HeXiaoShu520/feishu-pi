@@ -21,6 +21,8 @@ interface ConversationState {
   lastActiveAt: number;
   /** 已持久化到 store 的 sessionFile，避免重复写入 */
   persistedSessionFile?: string;
+  /** 本轮 prompt 的打断回调：会话被打断（新消息/stop）时通知 bridge 撤回复卡 */
+  onInterrupted?: () => void;
 }
 
 /** 管理聊天会话复用，并保证同一会话内的消息按顺序执行。 */
@@ -92,18 +94,24 @@ export class ConversationManager {
     }
   }
 
-  /** 排队执行一次消息，并将 Session 事件交给调用方。新消息到达时会打断在途请求。 */
-  async prompt(message: ConversationMessage, onEvent: Parameters<FeishuPiSession["subscribe"]>[0]): Promise<FeishuPiSession> {
+  /** 排队执行一次消息，并将 Session 事件交给调用方。新消息打断在途请求时回调 onInterrupted。 */
+  async prompt(
+    message: ConversationMessage,
+    onEvent: Parameters<FeishuPiSession["subscribe"]>[0],
+    onInterrupted?: () => void,
+  ): Promise<FeishuPiSession> {
     const state = await this.getState(message.conversationId, message.context);
 
     // 新消息打断：当前还在思考/执行时，先中断在途请求，本条消息排队后立即开始
     if (state.busy) {
       logger.info(`[Conversation] 新消息打断在途响应: ${message.conversationId}`);
+      state.onInterrupted?.();
       state.session.abort();
     }
     // 立即标记占用：覆盖"getState 返回到 task 启动"之间的窗口——
     // 该窗口内 evictIdle 会把空闲会话驱逐成孤儿（跑完却不写回映射，下一条消息另建新会话）
     state.busy = true;
+    state.onInterrupted = onInterrupted;
 
     const task = state.queue.then(async () => {
       // 事件到达时同步检查 sessionFile：Pi 在首个 message_end 落盘，此时立刻持久化映射，
@@ -118,6 +126,7 @@ export class ConversationManager {
       } finally {
         state.busy = false;
         state.lastActiveAt = Date.now();
+        state.onInterrupted = undefined;
         unsubscribe();
         // 兜底：响应结束后再检查一次
         await this.persistSessionFile(message.conversationId, state);
@@ -149,11 +158,12 @@ export class ConversationManager {
     }
   }
 
-  /** 中断指定会话的当前响应 */
+  /** 中断指定会话的当前响应（/stop）：通知 bridge 撤回复卡后再 abort */
   async abort(conversationId: string): Promise<void> {
     const statePromise = this.conversations.get(conversationId);
     if (!statePromise) return;
     const state = await statePromise;
+    state.onInterrupted?.();
     state.session.abort();
   }
 }
