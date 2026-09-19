@@ -75,35 +75,30 @@ export class ToolGuard {
       }
     }
 
-    // ① 组策略命中 → 免审放行（确定性判定）；未命中的日志由 Judge 单行记录（命令+结论），此处不再重复
+    // ① 组策略命中 → 免审放行（确定性判定，不打日志）；未命中由 Judge 单行记录（命令+结论）
     if (toolName === "bash") {
       const command = extractCommand(args);
       if (command !== undefined && policy.bashAllowed(command)) {
-        logger.info(`[ToolGuard] bash 命中策略名单，放行: ${command}`);
         return undefined;
       }
     } else if (toolName === "write" || toolName === "edit") {
       const path = extractPath(args);
       if (path !== undefined && policy.writeAllowed(path)) {
-        logger.info(`[ToolGuard] 写入命中策略范围，放行: ${path}`);
         return undefined;
       }
     } else if (!risky) {
       // 自定义工具（非内置 bash/write/edit）：toolsAllowed 已在之前验证通过，免审放行；标记 risky 的走授权卡
-      logger.info(`[ToolGuard] 自定义工具放行: ${toolName}`);
       return undefined;
     }
 
-    // ② 策略未命中 → 智能体综合判断（把整份权限配置交给审核模型参考）
+    // ② 策略未命中 → 智能体综合判断（把整份权限配置交给审核模型参考；结论由 Judge 单行日志记录）
     if (this.judge?.enabled) {
       const fields = policy.describe();
       const overview = this.getOverview ? await this.getOverview().catch(() => undefined) : undefined;
       const verdict = await this.judge.judge({ group: policy.groups.join(","), fields, toolName, args, overview });
       if (verdict.decision === "allow") {
-        logger.info(`[ToolGuard] 策略外调用，智能体综合判断放行: ${toolName}（${verdict.reason}）`);
         return undefined;
       }
-      logger.info(`[ToolGuard] 策略外调用，智能体判断需确认: ${toolName}（${verdict.reason}）`);
       return this.requireApproval(params, verdict.reason, signal);
     }
 
