@@ -37,6 +37,9 @@ export class CardKitStream {
   private disposed = false;
   private inFlight = false;
   private writeChain: Promise<void> = Promise.resolve();
+  /** 周期刷新定时器：每 tick 把累积器里没上屏的内容推给卡片（简化节流：不存在丢帧/饿死问题） */
+  private flushTimer?: NodeJS.Timeout;
+  private dirty = false;
 
   private readonly client: Client;
   private readonly minInterval: number;
@@ -74,6 +77,8 @@ export class CardKitStream {
 
       this.cardId = cardId;
       this.sequence = 1;
+      // 周期刷新：每 minInterval 把未上屏的累积内容推一次（在途时跳过本 tick，下个 tick 补上）
+      this.flushTimer = setInterval(() => this.flushTick(), this.minInterval);
       return cardId;
     } catch (err) {
       this.onError?.(err);
@@ -81,41 +86,26 @@ export class CardKitStream {
     }
   }
 
-  /** 累积增量文本并推送 */
-  async patch(delta: string): Promise<void> {
+  /** 累积增量文本：只标脏，由周期刷新定时器统一定时推给卡片 */
+  patch(delta: string): void {
     if (this.disposed || !this.cardId) return;
-
     this.accumulator += delta;
-    const now = Date.now();
-
-    // 节流：距离上次推送未超过最小间隔（或上一笔在途）时不立即推，
-    // 但必须安排一次兜底补推——否则模型连续爆发吐字时增量全部被丢弃，
-    // 卡片会停在几個字符上直到某个增量恰好撞出窗口（长时间空窗）
-    if (this.inFlight || now - this.lastPushAt < this.minInterval) {
-      this.scheduleFlush();
-      return;
-    }
-
-    await this.enqueueWrite(() => this.pushUpdate(this.accumulator));
+    this.dirty = true;
   }
 
-  /** 兜底补推定时器：节流窗口关闭后把累积器最新内容推上去（单例，重复 schedule 不叠加） */
-  private flushTimer?: NodeJS.Timeout;
-  private scheduleFlush(): void {
-    if (this.flushTimer) return;
-    const wait = Math.max(this.minInterval - (Date.now() - this.lastPushAt), 50);
-    this.flushTimer = setTimeout(() => {
-      this.flushTimer = undefined;
-      if (this.disposed || !this.cardId) return;
-      void this.enqueueWrite(() => this.pushUpdate(this.accumulator));
-    }, wait);
+  /** 周期刷新 tick：有未上屏的新内容就推（在途时跳过本 tick，下个 tick 自然补上） */
+  private flushTick(): void {
+    if (this.disposed || !this.cardId || !this.dirty || this.inFlight) return;
+    this.dirty = false;
+    void this.enqueueWrite(() => this.pushUpdate(this.accumulator));
   }
 
-  /** 替换全部内容（用于动画帧，不累加） */
+  /** 替换全部内容（用于正文渲染，立即推送） */
   async replace(text: string): Promise<void> {
     if (this.disposed || !this.cardId) return;
 
     this.accumulator = text;
+    this.dirty = false;
     await this.enqueueWrite(() => this.pushUpdate(text));
   }
 
@@ -153,6 +143,7 @@ export class CardKitStream {
       // 3. 关流式
       await this.enqueueWrite(() => this.patchSettings(false));
       this.disposed = true;
+      clearInterval(this.flushTimer);
     } catch (err) {
       this.onError?.(err);
       throw err;
