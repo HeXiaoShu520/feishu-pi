@@ -206,23 +206,6 @@ export class FeishuPiRuntime {
       logger.info(`[Runtime] 未找到自定义 Tools（.agent/tools/ 为空）`);
     }
 
-    // 内置模型目录：只打印白名单厂商的完整清单（含上下文规模与视觉标注），供选型参考
-    try {
-      const printed = ["anthropic", "deepseek", "openai", "zai", "kimi-coding"];
-      for (const prov of printed) {
-        const models = getBuiltinModels(prov as never);
-        if (!models || models.length === 0) continue;
-        const ids = models.map((m) => {
-          const ctx = (m.contextWindow ?? 0) >= 1_000_000 ? "1M" : Math.round((m.contextWindow ?? 0) / 1000) + "K";
-          const vis = m.input?.includes("image") ? "/视" : "";
-          return `${m.id}[${ctx}${vis}]`;
-        });
-        logger.info(`[Runtime]   ${colors.magenta}${prov}${colors.reset}(${models.length}): ${ids.join(" ")}`);
-      }
-    } catch (error) {
-      logger.warn("[Runtime] 模型目录打印失败（不影响启动）:", error);
-    }
-
     // 当前模型的名字与解析后的使用配置（协议/地址/上下文/视觉/思维链/计价/密钥变量）
     try {
       const model = this.resolveModel();
