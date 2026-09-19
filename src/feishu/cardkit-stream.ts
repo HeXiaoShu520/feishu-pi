@@ -88,12 +88,27 @@ export class CardKitStream {
     this.accumulator += delta;
     const now = Date.now();
 
-    // 节流：距离上次推送未超过最小间隔，跳过
+    // 节流：距离上次推送未超过最小间隔（或上一笔在途）时不立即推，
+    // 但必须安排一次兜底补推——否则模型连续爆发吐字时增量全部被丢弃，
+    // 卡片会停在几個字符上直到某个增量恰好撞出窗口（长时间空窗）
     if (this.inFlight || now - this.lastPushAt < this.minInterval) {
+      this.scheduleFlush();
       return;
     }
 
     await this.enqueueWrite(() => this.pushUpdate(this.accumulator));
+  }
+
+  /** 兜底补推定时器：节流窗口关闭后把累积器最新内容推上去（单例，重复 schedule 不叠加） */
+  private flushTimer?: NodeJS.Timeout;
+  private scheduleFlush(): void {
+    if (this.flushTimer) return;
+    const wait = Math.max(this.minInterval - (Date.now() - this.lastPushAt), 50);
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = undefined;
+      if (this.disposed || !this.cardId) return;
+      void this.enqueueWrite(() => this.pushUpdate(this.accumulator));
+    }, wait);
   }
 
   /** 替换全部内容（用于动画帧，不累加） */
