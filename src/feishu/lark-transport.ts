@@ -104,13 +104,13 @@ export class LarkTransport implements FeishuTransport {
     if (this.wsClient) return; // 已连接（WSClient 自带重连，无需重复 start）
 
     const dispatcher = new EventDispatcher({
-      // dispatcher 自带 tslog 默认 logger（格式与项目不一致，且不受 Client 的 loggerLevel 控制，
-      // 启动时会打一行 "event-dispatch is ready"）：注入静音实现，异常仍经项目日志可见
+      // dispatcher 自带 tslog 默认 logger（格式是 "fo]: [...]" 那种且不受 Client 的 loggerLevel 控制）：
+      // 注入转发实现——SDK 的启动/运行信息（如 "event-dispatch is ready"）用项目格式正常打印
       logger: {
-        info: () => {},
+        info: (data: unknown) => logger.info(`[LarkTransport] ${typeof data === "string" ? data : JSON.stringify(data)}`),
         debug: () => {},
-        warn: (data: unknown) => logger.warn("[LarkTransport] SDK:", data),
-        error: (data: unknown) => logger.error("[LarkTransport] SDK:", data),
+        warn: (data: unknown) => logger.warn(`[LarkTransport] ${typeof data === "string" ? data : JSON.stringify(data)}`),
+        error: (data: unknown) => logger.error(`[LarkTransport] ${typeof data === "string" ? data : JSON.stringify(data)}`),
       } as never,
     });
     dispatcher.register({
