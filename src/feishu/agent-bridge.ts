@@ -135,10 +135,13 @@ export class FeishuAgentBridge {
 
       // 启动动画定时器（真实内容到来前用 replace 循环刷新动画帧）
       let animationUpdating = false;
+      // 在途帧写入句柄：停止动画时先等它落定再写清空，保证清空是最后一笔（否则残帧冻在卡片上）
+      let pendingAnimWrite: Promise<unknown> = Promise.resolve();
       animationTimer = setInterval(() => {
         if (!hasRealContent && !animationUpdating) {
           animationUpdating = true;
-          reply.replace(spinner.next()).catch(() => {}).finally(() => {
+          pendingAnimWrite = reply.replace(spinner.next()).catch(() => {});
+          pendingAnimWrite.finally(() => {
             animationUpdating = false;
           });
         }
@@ -149,10 +152,12 @@ export class FeishuAgentBridge {
       const toolSpinner = new Spinner(" ", randomFrames());
       let activeToolName = "";
       let toolAnimationUpdating = false;
+      let pendingToolFrameWrite: Promise<unknown> = Promise.resolve();
       toolTimer = setInterval(() => {
         if (hasRealContent && activeToolName && !toolAnimationUpdating) {
           toolAnimationUpdating = true;
-          reply.updateStats(toolSpinner.next()).catch(() => {}).finally(() => {
+          pendingToolFrameWrite = reply.updateStats(toolSpinner.next()).catch(() => {});
+          pendingToolFrameWrite.finally(() => {
             toolAnimationUpdating = false;
           });
         }
@@ -166,6 +171,7 @@ export class FeishuAgentBridge {
         startedRealContent = true;
         hasRealContent = true;
         clearInterval(animationTimer);
+        await pendingAnimWrite; // 在途思考帧先落定，清空才不会被迟到的帧覆盖
         await reply.replace("");
       };
 
@@ -208,22 +214,27 @@ export class FeishuAgentBridge {
             }, TOOL_SEGMENT_DELAY_MS);
           }
           if (event.type === "tool_finished") {
+            // 先停动画再清小字：等在途动画帧落定后写入清空，保证清空是最后一笔——
+            // 否则迟到的帧会覆盖清空，把"⚙ bash ◀"冻在卡片上直到收尾
+            activeToolName = "";
             if (pendingToolTimer) {
               // 工具在 1s 内跑完：工具段从未上屏，直接丢弃（连小字动画都没启动过）
               clearTimeout(pendingToolTimer);
               pendingToolTimer = undefined;
             } else {
+              await pendingToolFrameWrite;
               // 清空小字，等待下一次工具调用或最终统计（完成状态不占正文，避免刷屏）
               await reply.updateStats(" ");
             }
-            activeToolName = "";
           }
         },
       );
 
-      // 确保停止动画
+      // 确保停止动画（在途帧先落定：避免迟到的动画帧盖过 close 写入的最终统计小字）
       clearInterval(animationTimer);
       clearInterval(toolTimer);
+      await pendingAnimWrite;
+      await pendingToolFrameWrite;
 
       // 终态统计小字在 close 内部（正文渲染完成后）才写入；配置关闭时不生成，
       // 工具过程状态（工具段 + 小字动画）不经过这里，照常显示
