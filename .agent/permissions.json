@@ -9,7 +9,6 @@
       "Read(README.md)",
       "Read(.env.example)",
       "Read(docs/**)",
-      "Read(data/memory/**)",
       "Read(data/schedules.json)",
       "Tools(memory)",
       "Tools(schedule_manager)",

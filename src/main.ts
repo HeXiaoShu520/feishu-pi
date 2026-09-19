@@ -31,6 +31,7 @@ import { ToolGuard } from "./guard/tool-guard.ts";
 import { PolicyJudge } from "./guard/judge.ts";
 import { buildNoticeCard } from "./guard/card.ts";
 import { AskBroker, createAskUserTool } from "./feishu/ask-broker.ts";
+import { createMemoryTool } from "./feishu/memory-tool.ts";
 import type { CleanupStats } from "./runtime/data-cleaner.ts";
 
 /** 授权请求失效（服务重启/已处理）时就地更新的提示卡文案。 */
@@ -539,7 +540,11 @@ ${trimmed}` }] },
 
       });
     },
-  }, [createAskUserTool(askBroker)]);
+  }, [
+    createAskUserTool(askBroker),
+    // 个人长期记忆：按 openId 一人一份（data/memory/<openId>.md），跨会话保留
+    createMemoryTool({ memoryDir: join(config.dataDir, "memory") }),
+  ]);
 
   // 上电预加载：权限策略 + Skills + 自定义工具在首条消息前全部就绪
   await runtime.preload();
