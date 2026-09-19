@@ -75,7 +75,7 @@ export class ToolGuard {
       }
     }
 
-    // ① 组策略命中 → 免审放行（确定性判定）；未命中把命令与生效名单打进日志，便于自查
+    // ① 组策略命中 → 免审放行（确定性判定）；未命中只记一行原因（命令与结果由 Judge 日志记录，不重复打印）
     if (toolName === "bash") {
       const command = extractCommand(args);
       if (command !== undefined && policy.bashAllowed(command)) {
@@ -84,12 +84,9 @@ export class ToolGuard {
       }
       if (command !== undefined) {
         const why = SHELL_META.test(command)
-          ? "含拼接符（; | && $( 换行等），防逃逸不参与名单匹配"
+          ? "含拼接符防逃逸不参与名单匹配"
           : "不在 bash 允许名单";
-        logger.info(
-          `[ToolGuard] bash 未命中名单（${why}）: ${singleLine(command, 200)}；` +
-            `生效名单: ${policy.describe().bash.join(" / ") || "(空)"}`,
-        );
+        logger.info(`[ToolGuard] bash 未命中名单（${why}），转智能体审核`);
       }
     } else if (toolName === "write" || toolName === "edit") {
       const path = extractPath(args);
