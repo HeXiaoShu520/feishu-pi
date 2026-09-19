@@ -581,20 +581,27 @@ export class UserAuthService {
 export interface StatusProvider {
   /** 展示 id（如 meegle） */
   id: string;
-  /** 展示名（如 飞书项目（meegle-cli）） */
+  /** 展示名（如 飞书项目（meegle-cli)） */
   label: string;
   /** 该 CLI 的用户凭证是否就绪（同步/异步均可） */
   ready(openId: string): boolean | Promise<boolean>;
 }
 
-/** /status：展示当前用户在各 CLI 的凭证状态（仅本人视角，不展示任何凭证内容）。 */
+/** /status：展示当前用户的身份信息与各 CLI 凭证状态（仅本人视角，不展示任何凭证内容）。 */
 export class StatusCommand implements CommandHandler {
   private readonly auth: UserAuthService;
   private readonly providers: StatusProvider[];
+  /** 用户信息扩展位：返回追加在"用户"段的展示行（如身份组），无内容可不实现 */
+  private readonly userLines?: (openId: string, userName?: string) => Promise<string[]>;
 
-  constructor(auth: UserAuthService, providers: StatusProvider[] = []) {
+  constructor(
+    auth: UserAuthService,
+    providers: StatusProvider[] = [],
+    userLines?: (openId: string, userName?: string) => Promise<string[]>,
+  ) {
     this.auth = auth;
     this.providers = providers;
+    this.userLines = userLines;
   }
 
   match(text: string): boolean {
@@ -603,8 +610,18 @@ export class StatusCommand implements CommandHandler {
 
   async execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
     const openId = message.context.userOpenId;
-    const lines = ["📊 **当前状态**", "", "🔑 **CLI 凭证**"];
+    const userName = message.context.userName;
+    const lines = ["📊 **当前状态**", "", "👤 **用户**"];
 
+    lines.push(`- 昵称：${userName || "（未知）"}`);
+    lines.push(`- open_id：${openId}`);
+    if (this.userLines) {
+      for (const line of await this.userLines(openId, userName).catch(() => [] as string[])) {
+        lines.push(`- ${line}`);
+      }
+    }
+
+    lines.push("", "🔑 **CLI 凭证**");
     const status = await this.auth.loginStatus(openId);
     if (status.state === "none") {
       lines.push("- **lark**（飞书 CLI）：⚪ 未登录 —— 首次使用 lark-cli 时会自动弹出授权链接");

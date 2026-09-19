@@ -572,13 +572,21 @@ ${trimmed}` }] },
       // /perm 查看身份、双组策略与工具档位（仅管理员）；/login /logout 用户飞书身份授权（Device Flow）
       extraCommands: [
         new PermCommand(() => policy.describe()),
-        new StatusCommand(userAuth, [
-          {
-            id: "meegle",
-            label: "飞书项目（meegle-cli）",
-            ready: (openId) => meegleAuth.peekToken(openId) !== undefined,
+        new StatusCommand(
+          userAuth,
+          [
+            {
+              id: "meegle",
+              label: "飞书项目（meegle-cli）",
+              ready: (openId) => meegleAuth.peekToken(openId) !== undefined,
+            },
+          ],
+          // 用户段扩展：所属身份组（权限策略实时判定，permissions.json 改动即时反映）
+          async (openId, userName) => {
+            const groups = await policy.groupsFor(openId, userName).catch(() => [] as string[]);
+            return [`身份组：${groups.join("、") || "（无）"}`];
           },
-        ]),
+        ),
         new LogoutCommand(userAuth),
       ],
       // 回复末尾的模型统计小字开关（工具过程状态不受影响）
