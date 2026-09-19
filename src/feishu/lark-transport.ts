@@ -8,10 +8,8 @@ import { logger } from "../utils/logger.ts";
 import { attachmentsDir, sanitizeFileName } from "../utils/session-paths.ts";
 import { upsertEnvLine } from "../utils/env-file.ts";
 import { toBuffer } from "./resource-buffer.ts";
-import { extractCredentialFields } from "./credential-card.ts";
 import { mentionedUserIds } from "./people-roster.ts";
 import { WorkspaceManager } from "./workspace.ts";
-import { redactSecrets } from "../utils/redact.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -25,16 +23,6 @@ export interface CardCallbackParams {
 
 /** 会话模式缓存条目上限（超出驱逐最久未用） */
 const CHAT_MODE_CACHE_MAX = 500;
-
-/** 凭证表单卡回调参数：字段值已从 form_value/input_value 提取（不得写日志） */
-export interface CredentialSubmitParams {
-  /** 按钮回传参数（含 provider） */
-  value: Record<string, unknown>;
-  /** 回调来源：卡片消息 ID（用于原地更新结果卡）、会话与提交者 */
-  action: { messageId: string; chatId: string; operatorOpenId: string };
-  /** 提交的表单字段（已 trim；空值剔除） */
-  fields: Record<string, string>;
-}
 
 export interface LarkTransportConfig {
   appId: string;
@@ -53,7 +41,14 @@ export interface LarkTransportConfig {
   /** 话题根持久化文件路径（话题群会话收敛用） */
   topicRootsFile?: string;
   /** 会话工作区根目录（可选，默认 work_space/）：每个会话一个文件夹收纳其文件 */
-  workspaceRoot?: string;
+  /** 会话工作区管理器（每个会话一个子文件夹，图片/附件归拢） */
+  workspace?: WorkspaceManager;
+  /** 本地 OCR 兜底开关：模型无视觉能力时，把下载图片 OCR 成文字一并交给模型 */
+  useExtraOcr?: boolean;
+  /** 本地 OCR 执行器（识别图片 Buffer → 文本） */
+  ocrImage?: (image: Buffer) => Promise<string | undefined>;
+  /** 当前模型是否支持视觉（支持则不做 OCR，直接传图） */
+  modelHasVision?: () => boolean;
   /** lark-cli 用户态搜索通道（contact +search-user，见 lark-cli-search.ts）：部门信息的来源 */
   searchUserProfile?: (openId: string) => Promise<{ name?: string; en_name?: string; department_name?: string[] } | undefined>;
   /** 模型切换回调（/model 指令确认后触发，用于运行时热切换） */
@@ -87,9 +82,14 @@ export class LarkTransport implements FeishuTransport {
   private askHandler?: (params: CardCallbackParams) => Promise<void>;
   private connecting?: Promise<void>;
   /** 会话模式缓存（p2p/group/topic），话题群与普通群的会话隔离策略不同 */
-  private readonly chatModeCache = new Map<string, "p2p" | "group" | "topic">();  /** 话题根持久化（chatId -> 待定话题根 messageId） */
+  private readonly chatModeCache = new Map<string, "p2p" | "group" | "topic">();
+  /** 话题根持久化（chatId -> 待定话题根 messageId） */
   private readonly topicRoots?: TopicRootStore;
   private readonly workspace?: WorkspaceManager;
+  /** 本地 OCR 兜底开关与执行器（模型无视觉能力时启用） */
+  private readonly useExtraOcr?: boolean;
+  private readonly ocrImage?: (image: Buffer) => Promise<string | undefined>;
+  private readonly modelHasVision?: () => boolean;
   /** 会话数据根目录（附件下载到 {根目录}/{会话}/files/） */
   private readonly sessionDataDir?: string;
   /** 图片缓存目录（供附件下载参考） */
@@ -108,9 +108,10 @@ export class LarkTransport implements FeishuTransport {
     if (config.topicRootsFile) {
       this.topicRoots = new TopicRootStore(config.topicRootsFile);
     }
-    if (config.workspaceRoot) {
-      this.workspace = new WorkspaceManager(config.workspaceRoot);
-    }
+    this.workspace = config.workspace;
+    this.useExtraOcr = config.useExtraOcr;
+    this.ocrImage = config.ocrImage;
+    this.modelHasVision = config.modelHasVision;
     this.larkCli = new LarkCli(config.appId, config.userProfileDir, {
       searchUser: config.searchUserProfile,
     });
@@ -223,12 +224,27 @@ export class LarkTransport implements FeishuTransport {
       // 处理图片附件（含 post 富文本里的图片：SDK 会把它们放进 resources）
       let images;
       let imageCount = 0;
+      let ocrNotes: string[] = [];
       const resources = (message as unknown as { resources?: Array<{ type: string; fileKey: string; fileName?: string }> }).resources ?? [];
       if (resources.length > 0) {
         const imageKeys = resources.filter((r) => r.type === "image").map((r) => r.fileKey);
         if (imageKeys.length > 0) {
           imageCount = imageKeys.length;
-          images = await this.imageProcessor?.processImages(imageKeys, workspaceDir ? join(workspaceDir, "images") : undefined);
+          // 模型无视觉能力 + useExtraOcr 开启 → 下载后本地 OCR，把识别文字并入消息文本
+          const wantOcr = !!this.useExtraOcr && !(this.modelHasVision?.() ?? true);
+          const processed = await this.imageProcessor?.processImages(
+            message.messageId,
+            imageKeys,
+            workspaceDir ? join(workspaceDir, "images") : undefined,
+            wantOcr ? this.ocrImage : undefined,
+          );
+          if (processed && processed.length > 0) {
+            if (wantOcr) {
+              ocrNotes = processed.map((img) => img.ocrText).filter((t): t is string => !!t);
+            } else {
+              images = processed;
+            }
+          }
         }
       }
 
@@ -241,14 +257,19 @@ export class LarkTransport implements FeishuTransport {
         const attachmentNote = await downloadFileAttachments(
           workspaceDir ?? join(this.sessionDataDir, conversationId),
           resources,
-          (fileKey, type) => this.downloadResource(fileKey, type),
+          (fileKey, type) => this.downloadResource(message.messageId, fileKey, type),
         );
         if (attachmentNote) cleanedText += attachmentNote;
       }
 
+      if (ocrNotes.length > 0) {
+        // 无视觉模型：OCR 结果并入消息文本，让模型以文字方式"看图"
+        cleanedText += `\n[图片文字识别]\n${ocrNotes.join("\n---\n")}`;
+      }
+
       // 记录收到的消息
       const imageInfo = imageCount > 0 ? `（含 ${imageCount} 张图片）` : "";
-      logger.userInput(displayName, `: ${imageInfo}${formatLogText(redactSecrets(cleanedText))}`);
+      logger.userInput(displayName, `: ${imageInfo}${formatLogText(cleanedText)}`);
 
       // 判断是否为管理员
       const isAdmin = this.adminOpenId ? message.senderId === this.adminOpenId : false;
@@ -312,18 +333,6 @@ export class LarkTransport implements FeishuTransport {
         await this.askHandler?.({
           value,
           action: { messageId: action.messageId, chatId: action.chatId, operatorOpenId: action.operator.openId },
-        });
-        return;
-      }
-
-      // 凭证表单卡回调（form_submit）：输入内容经回调直达服务端，不落聊天记录；
-      // 字段值不写日志，handler 自行加密入库
-      if (typeof value === "object" && value?.action === "credential_submit") {
-        const rawAction = (action.raw as { action?: unknown } | undefined)?.action;
-        await this.credentialSubmitHandler?.({
-          value,
-          action: { messageId: action.messageId, chatId: action.chatId, operatorOpenId: action.operator.openId },
-          fields: extractCredentialFields(rawAction),
         });
         return;
       }
@@ -459,12 +468,16 @@ export class LarkTransport implements FeishuTransport {
     }
   }
 
-  /** 下载消息资源（image/file）为 Buffer（响应形态差异由 resource-buffer 收敛）。 */
-  private async downloadResource(fileKey: string, type: string): Promise<Buffer> {
-    const res =
-      type === "image"
-        ? await this.client.im.v1.image.get({ path: { image_key: fileKey } })
-        : await this.client.im.v1.file.get({ path: { file_key: fileKey } });
+  /**
+   * 下载消息资源（image/file）为 Buffer（响应形态差异由 resource-buffer 收敛）。
+   * 用户消息里的资源必须走「获取消息中的资源文件」接口（带 message_id），
+   * /im/v1/images、/im/v1/files 只支持应用自己上传的资源。
+   */
+  private async downloadResource(messageId: string, fileKey: string, type: string): Promise<Buffer> {
+    const res = await this.client.im.v1.messageResource.get({
+      path: { message_id: messageId, file_key: fileKey },
+      params: { type: type === "image" ? "image" : "file" },
+    });
     return toBuffer(res);
   }
 
@@ -485,13 +498,6 @@ export class LarkTransport implements FeishuTransport {
   /** 注册选项卡回调处理器（AskBroker 校验存在性/一次性 token/仅本人）。 */
   onAskUser(handler: (params: CardCallbackParams) => Promise<void>): void {
     this.askHandler = handler;
-  }
-
-  private credentialSubmitHandler?: (params: CredentialSubmitParams) => Promise<void>;
-
-  /** 注册凭证表单卡回调（form_submit → credential_submit）：字段值不得写入日志。 */
-  onCredentialSubmit(handler: (params: CredentialSubmitParams) => Promise<void>): void {
-    this.credentialSubmitHandler = handler;
   }
 
   /** 向指定会话发送一张卡片，返回 messageId。 */

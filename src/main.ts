@@ -1,3 +1,4 @@
+import { getModel } from "@earendil-works/pi-ai/compat";
 import "./bootstrap-env.ts"; // 最早执行：.env 缺失自动拷贝（必须在 dotenv 之前）
 import "dotenv/config";
 import { ConversationManager } from "./runtime/conversation-manager.ts";
@@ -16,7 +17,6 @@ import { LoginCommand, LogoutCommand, UserAuthService } from "./feishu/user-auth
 import { PeopleRoster } from "./feishu/people-roster.ts";
 import { createIdentityBashTool } from "./runtime/identity-bash.ts";
 import { runSetupWizard } from "./feishu/setup-wizard.ts";
-import { MEEGLE_DEFAULT_HOST, StaticCredentialService } from "./feishu/meegle-auth.ts";
 import { createCliSearchUser, resolveLarkCliBinary } from "./feishu/lark-cli-search.ts";
 import { delimiter, dirname, join } from "node:path";
 import { readFile } from "node:fs/promises";
@@ -30,6 +30,8 @@ import { ToolGuard } from "./guard/tool-guard.ts";
 import { PolicyJudge } from "./guard/judge.ts";
 import { buildNoticeCard } from "./guard/card.ts";
 import { AskBroker, createAskUserTool } from "./feishu/ask-broker.ts";
+import { WorkspaceManager } from "./feishu/workspace.ts";
+import { createLocalOcrRunner } from "./feishu/local-ocr.ts";
 import type { CleanupStats } from "./runtime/data-cleaner.ts";
 
 /** 授权请求失效（服务重启/已处理）时就地更新的提示卡文案。 */
@@ -67,7 +69,7 @@ export async function main(): Promise<void> {
 
   const config = loadConfig();
 
-  // 项目内预制 CLI（lark-cli / meegle …）：把 node_modules/.bin 前插到 PATH，
+  // 项目内预制 CLI（lark-cli）：把 node_modules/.bin 前插到 PATH，
   // Agent 的 bash 子进程继承后可直接调用，且优先于全局同名命令（npm install 即自带，不依赖全局安装）
   const projectBinDir = join(config.cwd, "node_modules", ".bin");
   process.env.PATH = `${projectBinDir}${delimiter}${process.env.PATH ?? ""}`;
@@ -81,6 +83,9 @@ export async function main(): Promise<void> {
     retentionDays: 7,
   });
 
+  // 工作区根目录（work_space/）用同一套保留期清理：会话 jsonl、files 附件、空目录回收
+  const workspaceCleaner = new DataCleaner({ sessionDir: config.workspaceRoot, retentionDays: 7 });
+
   logger.info("[DataCleaner] 清理卡住的消息...");
   const stuckCount = await cleaner.cleanupStuckMessages();
   if (stuckCount > 0) {
@@ -89,11 +94,13 @@ export async function main(): Promise<void> {
 
   logger.info("[DataCleaner] 清理过期数据（保留 7 天）...");
   await logCleanupStats(cleaner.cleanup());
+  await logCleanupStats(workspaceCleaner.cleanup());
 
   // 定期清理（每天一次）；conversations 在下方声明，回调首次触发时早已初始化
   const cleanupTimer = setInterval(async () => {
     logger.info("[DataCleaner] 执行定期清理...");
     await logCleanupStats(cleaner.cleanup());
+    await logCleanupStats(workspaceCleaner.cleanup());
     // 空闲超过 24 小时的会话驱逐出内存（历史在磁盘，下次消息自动恢复），防长驻内存增长
     await conversations.evictIdle(24 * 60 * 60 * 1000);
   }, 24 * 60 * 60 * 1000); // 24 小时
@@ -148,20 +155,15 @@ export async function main(): Promise<void> {
   // userAuth 先声明（transport 的资料查询/搜索通道闭包引用它的 token；实际实例在其后创建）
   let userAuth: UserAuthService | undefined;
 
+  // onLoginBound 处理器在装配后期才定义；终端登录（启动第 2 步）可能早于装配完成触发，
+  // 因此先入队、装配完成后回放，避免 TDZ 崩溃也不丢登录资料
+  let handleLoginBoundImpl: typeof handleLoginBound | undefined;
+  const pendingLoginBound: Parameters<typeof handleLoginBound>[] = [];
+
   const credentialsDir = join(config.dataDir, "credentials");
   const vaultKeyFile = join(config.dataDir, ".vault-key");
-  // 静态凭证服务（用户经卡片表单提交、无刷新链路）：meegle 单 token / bbt 用户名+应用密码
-  const meegleAuth = new StaticCredentialService(
-    join(credentialsDir, "meegle.vault.json"),
-    vaultKeyFile,
-    "meegle",
-  );
-  const bbtAuth = new StaticCredentialService(
-    join(credentialsDir, "bbt.vault.json"),
-    vaultKeyFile,
-    "bbt",
-  );
-
+  // 会话工作区：会话的第一句话就建立专属文件夹，图片/附件等产物全部归拢于此
+  const workspace = new WorkspaceManager(config.workspaceRoot);
   // 用户飞书身份授权（Device Flow，RFC 8628）：/login 指令 + 按 openId 加密存取 user_access_token。
   // 先于 transport 创建（冷启动管理员识别要在 transport 装配前完成）；
   // updateCard/sendCard 闭包后置引用 transport，仅在实际收发卡片时才会执行。
@@ -172,19 +174,18 @@ export async function main(): Promise<void> {
     vaultFile: join(credentialsDir, "lark.vault.json"),
     vaultKeyFile: vaultKeyFile,
     updateCard: (messageId, card) => transport.updateCardById(messageId, card),
-    // 增量授权：能力需要新 scope 时自动向该会话发授权卡
-    sendCard: (chatId, card) => transport.sendCardToChat(chatId, card),
+    // 增量授权：能力需要新 scope 时自动把授权卡发到该用户（open_id 口径，投递到与用户的私聊）
+    sendCard: (openId, card) => transport.sendCardToUser(openId, card),
     // /login 绑定完成时：管理员尚未识别且登录者与管理员配置匹配 → 资料入缓存（重启即生效）
-    onLoginBound: (info) => handleLoginBound(info),
+    onLoginBound: (info) => {
+      if (handleLoginBoundImpl) handleLoginBoundImpl(info);
+      else pendingLoginBound.push([info]);
+    },
   });
 
   // 存量会话清洗（后台）：用凭证库已知密钥值扫描历史会话 jsonl，命中的明文替换为 ***
   void (async () => {
-    const secrets = [
-      ...(await meegleAuth.exportSecretValues()),
-      ...(await bbtAuth.exportSecretValues()),
-      ...(await userAuth.exportSecretValues()),
-    ];
+    const secrets = [...(await userAuth.exportSecretValues())];
     const replaced = await scrubSecretsInDir(config.sessionDir, secrets);
     if (replaced > 0) logger.info(`[Main] 已清洗历史会话文件中的明文凭证（处理 ${replaced} 个文件）`);
   })().catch((error) => logger.warn("[Main] 会话清洗失败:", error));
@@ -196,7 +197,8 @@ export async function main(): Promise<void> {
     throw new Error("lark-cli 二进制缺失（node_modules/@larksuite/cli），请重新 npm install 后启动");
   }
 
-  /** 管理员登录态：FEISHU_PI_ADMIN 为 open_id 直接查；否则经用户缓存姓名匹配出 openId 再查。
+  /** 管理员登录态：FEISHU_PI_ADMIN 为 open_id 直接查；否则经用户缓存姓名匹配出 openId 再查；
+   *  缓存为空/未命中时回退用凭证库登录记录匹配（否则新环境会误报"尚未登录"）。
    *  返回 active=有效 / expired=已过期 / none=找不到管理员对应的登录。 */
   const adminLoginState = async (): Promise<"active" | "expired" | "none"> => {
     const identifier = config.feishuAdmin;
@@ -210,6 +212,7 @@ export async function main(): Promise<void> {
         openId = undefined; // 缓存不存在/损坏按未匹配处理
       }
     }
+    if (!openId) openId = await resolveAdminFromLogins(userAuth, identifier, usersFile).catch(() => undefined);
     if (!openId) return "none";
     return (await userAuth.loginStatus(openId)).state;
   };
@@ -264,6 +267,19 @@ export async function main(): Promise<void> {
     logger.warn("[Main] 未配置 FEISHU_PI_ADMIN：管理员能力不可用");
   }
 
+  // —— 启动第 3.5 步：管理员 lark 未登录/已失效 → 主动把授权链接卡推送到管理员私聊 ——
+  // （此前只打日志提示 /login lark，链接不会自己出现；expired 档案先清掉 ensureScopes 才会重新发卡）
+  if (adminOpenId) {
+    const loginState = (await userAuth.loginStatus(adminOpenId)).state;
+    if (loginState !== "active") {
+      if (loginState === "expired") await userAuth.logout(adminOpenId);
+      void userAuth
+        .ensureScopes(adminOpenId, config.userAuthScopes)
+        .catch((error) => logger.warn("[Main] 管理员授权链接推送失败:", error));
+      logger.info("[Main] 管理员 lark 未登录/已失效，授权链接卡已推送到管理员私聊，点击完成即可");
+    }
+  }
+
   // ---------- 消息传输 ----------
 
   // runtime 先声明（transport 的 onModelSwitch 回调引用它）
@@ -275,6 +291,12 @@ export async function main(): Promise<void> {
     appSecret: config.feishuAppSecret,
     botOpenId,
     client,
+    workspace,
+
+    // 本地 OCR 兜底（模型无视觉能力时启用）：下载图片 → tesseract.js 识别 → 文字并入消息
+    useExtraOcr: config.useExtraOcr,
+    ocrImage: createLocalOcrRunner({ cacheDir: join(config.dataDir, "ocr") }),
+    modelHasVision: () => getModel(config.modelProvider as never, config.modelName as never)?.input?.includes("image") === true,
     // 图片下载缓存：纯排查用途（只写不读），放 cache/ 与会话数据分家
     sessionDataDir: config.sessionDir,
     adminOpenId,
@@ -312,6 +334,9 @@ export async function main(): Promise<void> {
       })
       .catch((error) => logger.warn("[Main] 管理员资料写入用户缓存失败:", error));
   };
+  // 处理器就绪：回放装配期间积压的登录事件
+  handleLoginBoundImpl = handleLoginBound;
+  for (const args of pendingLoginBound.splice(0)) handleLoginBound(...args);
 
   // 后台保鲜：定时把已登录用户（含管理员）的 access token 刷新一遍——
   // 会话 bash 的凭证注入走同步内存缓存，靠这里保证缓存里的 token 始终有效
@@ -350,7 +375,7 @@ export async function main(): Promise<void> {
     models: config.guardModels,
     apiKey: config.guardApiKey,
     timeoutMs: config.guardTimeoutMs,
-  }));
+  }), () => policy.describe());
 
   // 授权卡回调 → PermissionBroker 服务端校验（token / 卡片来源 / 管理员身份）
   transport.onApproval(async ({ value, action }) => {
@@ -414,31 +439,7 @@ export async function main(): Promise<void> {
     }
   });
 
-  // 凭证表单卡回调（form_submit）：字段值加密入库，不写日志；就地更新卡片为结果
-  transport.onCredentialSubmit(async ({ value, action, fields }) => {
-    const provider = typeof value.provider === "string" ? value.provider : "";
-    const operator = action.operatorOpenId;
-    try {
-      if (provider === "meegle") {
-        const token = fields.token;
-        if (!token) throw new Error("token 未填写");
-        await meegleAuth.submitToken(operator, token);
-      } else if (provider === "bbt") {
-        if (!fields.username || !fields.password) throw new Error("用户名 / App Password 未填写完整");
-        await bbtAuth.submitFields(operator, { username: fields.username, password: fields.password });
-      } else {
-        throw new Error(`未知的凭证提供方: ${provider || "(空)"}`);
-      }
-      logger.info(`[Main] ${provider} 凭证已提交入库（用户 ${operator}）`);
-      await transport.updateCardById(action.messageId, markdownCard(`✅ ${provider} 凭证已加密保存，此卡片可以撤回。`));
-    } catch (error) {
-      const detail = error instanceof Error ? error.message : String(error);
-      logger.warn(`[Main] ${provider} 凭证提交失败（用户 ${operator}）: ${detail}`);
-      await transport.updateCardById(action.messageId, markdownCard(`❌ 凭证保存失败：${detail}\n请重新发送 /login ${provider} 再试。`)).catch(() => undefined);
-    }
-  });
 
-  // ---------- 定时任务 ----------
 
   const dataDir = dirname(config.sessionDir);
 
@@ -486,6 +487,8 @@ ${trimmed}` }] },
     modelName: config.modelName,
     modelBaseUrl: config.modelBaseUrl,
     systemPrompt: config.systemPrompt,
+    // Pi 会话 jsonl 落进会话工作区（与图片/附件同在一个文件夹）
+    workspaceFor: (conversationId) => workspace.dirFor(conversationId),
     permissionPolicy: policy,
     toolGuard: (groupPolicy, params, signal) => toolGuard.check(groupPolicy, params, signal),
     scheduleService,
@@ -507,27 +510,9 @@ ${trimmed}` }] },
             logger.warn(`[Main] 增量授权发起失败（${scopes.join(", ")}）:`, error);
           });
           logger.info(`[Main] lark-cli 缺少用户 scope，已发起增量授权: ${scopes.join(", ")}（用户 ${uid}）`);
-          return `【补充授权已发起】本次调用缺少用户授权 scope：${scopes.join("、")}。已向当前会话发送补充授权卡片，请提醒用户点击完成授权后重试本命令；授权完成后无需其他操作。`;
+          return `【补充授权已发起】本次调用缺少用户授权 scope：${scopes.join("、")}。已向你的飞书私聊发送补充授权卡片，请完成授权后重试本命令；授权完成后无需其他操作。`;
         },
-        extraInjections: [
-          {
-            // Meegle（飞书项目）：/login meegle 提交的静态 token，命令命中 meegle 时注入；
-            // 站点固定为飞书项目（MEEGLE_DEFAULT_HOST），不做环境变量
-            commandPattern: /meegle/,
-            envToken: "MEEGLE_USER_ACCESS_TOKEN",
-            staticEnv: { MEEGLE_HOST: MEEGLE_DEFAULT_HOST },
-            getToken: () => meegleAuth?.peekToken(userId),
-          },
-          {
-            // Bitbucket（bbt）：CLI 凭证是命令行明文参数，模型在命令里只写变量名
-            // （--user "$BBT_USERNAME" --password "$BBT_PASSWORD"），真实值经进程环境注入
-            commandPattern: /\bbbt\b/,
-            envFields: {
-              get: () => bbtAuth?.peekFields(userId),
-              map: { username: "BBT_USERNAME", password: "BBT_PASSWORD" },
-            },
-          },
-        ],
+
       });
     },
   }, [createAskUserTool(askBroker)]);
@@ -549,8 +534,8 @@ ${trimmed}` }] },
       // /perm 查看身份、双组策略与工具档位（仅管理员）；/login /logout 用户飞书身份授权（Device Flow）
       extraCommands: [
         new PermCommand(() => policy.describe()),
-        new LoginCommand(userAuth, { meegle: meegleAuth, bbt: bbtAuth }),
-        new LogoutCommand(userAuth, { meegle: meegleAuth, bbt: bbtAuth }),
+        new LoginCommand(userAuth),
+        new LogoutCommand(userAuth),
       ],
       // 回复末尾的模型统计小字开关（工具过程状态不受影响）
       showModelStats: config.showModelStats,

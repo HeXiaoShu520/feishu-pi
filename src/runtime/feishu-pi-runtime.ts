@@ -1,14 +1,13 @@
 import { createAgentSession, SessionManager, type AgentSession, DefaultResourceLoader, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { getModel, type ImageContent } from "@earendil-works/pi-ai/compat";
+import { findEnvKeys, getModel, type ImageContent } from "@earendil-works/pi-ai/compat";
+import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/providers/all";
 import type { FeishuPiConfig, FeishuPiEvent, FeishuPiPrompt, FeishuPiSession, FeishuPiTool } from "./types.ts";
 import type { FeishuContext } from "../context/types.ts";
 import { DEFAULT_BUILTIN_TOOLS, createToolRegistryAsync } from "../tools/registry.ts";
 import { join } from "node:path";
 import { logger, colors } from "../utils/logger.ts";
-import { redactSecrets } from "../utils/redact.ts";
 import { conversationDir } from "../utils/session-paths.ts";
 import { createScheduleManagerTool } from "../schedule/tool.ts";
-import { rewritePlaintextCliCredentials } from "./identity-bash.ts";
 import type { GroupPolicy } from "../permission/policy.ts";
 
 /** .agent/tools/ 里的脚本可在导出对象上附带 risk: "high"（强制走授权卡） */
@@ -82,7 +81,7 @@ class SessionWrapper implements FeishuPiSession {
     }));
     // 脱敏后落会话：/login <provider> 体系下用户可能在聊天中提交凭证
     // （bitbucket app password、user token 等），进入 session jsonl 前统一遮蔽
-    const text = redactSecrets(input.text);
+    const text = input.text;
     await this.raw.prompt(text, images.length ? { images } : undefined);
   }
 
@@ -126,11 +125,11 @@ const SECRET_RULE = [
 ].join(NL);
 
 /**
- * 内置默认人格：FEISHU_PI_SYSTEM_PROMPT 未配置时生效（配置后由其替换此段）。
+ * 内置默认人格：PERSONA.md 未配置时生效（配置后由其替换此段）。
  * 没有它，系统提示开头就是安全规则，模型不知道自己是谁、以什么口吻说话。
  */
 const DEFAULT_PERSONA = [
-  "你是部署在飞书里的智能助手，通过飞书与用户对话，可以使用工具（bash、读写文件、lark-cli、meegle、bbt 等）帮助用户完成查询与操作。",
+  "你是部署在飞书里的智能助手，通过飞书与用户对话，可以使用工具（bash、读写文件、lark-cli 等）帮助用户完成查询与操作。",
   "默认使用中文交流，用户使用其他语言时跟随用户语言；回答先给结论、简洁直接，必要时分点。",
   "不确定的信息如实说明，不编造；操作受权限策略与授权卡约束，按流程执行即可，无需向用户复述这些约束。",
 ].join(NL);
@@ -189,7 +188,7 @@ export class FeishuPiRuntime {
 
     if (skills.length > 0) {
       // 只报数量不逐个罗列：技能一多逐行打印就是刷屏，明细看 /stats 页面
-      logger.info(`[Runtime] 已加载 ${colors.bright}${colors.magenta}${skills.length}${colors.reset} 个 Skills（对所有人开放）`);
+      logger.info(`[Runtime] 已加载 ${colors.bright}${colors.magenta}${skills.length}${colors.reset} 个 Skills`);
     } else {
       logger.warn(`[Runtime] 未找到任何 Skills`);
     }
@@ -202,9 +201,41 @@ export class FeishuPiRuntime {
       logger.warn("[Runtime] 自定义 Tools 加载失败（不影响启动，下个会话重试）:", error);
     }
     if (customTools.length > 0) {
-      logger.info(`[Runtime] 已加载 ${colors.bright}${colors.cyan}${customTools.length}${colors.reset} 个 Tools（对所有人开放）`);
+      logger.info(`[Runtime] 已加载 ${colors.bright}${colors.cyan}${customTools.length}${colors.reset} 个 Tools`);
     } else {
       logger.info(`[Runtime] 未找到自定义 Tools（.agent/tools/ 为空）`);
+    }
+
+    // 内置模型目录：只打印白名单厂商的完整清单（含上下文规模与视觉标注），供选型参考
+    try {
+      const printed = ["anthropic", "deepseek", "openai", "zai", "kimi-coding"];
+      for (const prov of printed) {
+        const models = getBuiltinModels(prov as never);
+        if (!models || models.length === 0) continue;
+        const ids = models.map((m) => {
+          const ctx = (m.contextWindow ?? 0) >= 1_000_000 ? "1M" : Math.round((m.contextWindow ?? 0) / 1000) + "K";
+          const vis = m.input?.includes("image") ? "/视" : "";
+          return `${m.id}[${ctx}${vis}]`;
+        });
+        logger.info(`[Runtime]   ${colors.magenta}${prov}${colors.reset}(${models.length}): ${ids.join(" ")}`);
+      }
+    } catch (error) {
+      logger.warn("[Runtime] 模型目录打印失败（不影响启动）:", error);
+    }
+
+    // 当前模型的名字与解析后的使用配置（协议/地址/上下文/视觉/思维链/计价/密钥变量）
+    try {
+      const model = this.resolveModel();
+      const inputDesc = model.input?.includes("image") ? "文本+图片" : "文本";
+      const keyEnv = findEnvKeys(this.config.modelProvider as never, process.env as Record<string, string>)?.[0]
+        ?? `${this.config.modelProvider.toUpperCase().replace(/-/g, "_")}_API_KEY`;
+      const thinking = (model.compat as { thinkingFormat?: string } | undefined)?.thinkingFormat;
+      logger.info(
+        `[Runtime] 当前模型 ${colors.cyan}${model.provider}/${model.id}${colors.reset}: ` +
+          `地址 ${model.baseUrl ?? "官方默认"} · 上下文 ${model.contextWindow ?? "?"} · 输出上限 ${model.maxTokens ?? "?"} · 输入 ${inputDesc} · ${thinking ? `思维链 ${thinking} · ` : ""}定价 ${model.cost?.input ?? 0}/${model.cost?.output ?? 0} per M · 密钥注入 ${keyEnv}`,
+      );
+    } catch (error) {
+      logger.warn("[Runtime] 当前模型属性读取失败:", error);
     }
 
     // 打印内置工具列表
@@ -251,7 +282,43 @@ export class FeishuPiRuntime {
   private resolveModel(): NonNullable<ReturnType<typeof getModel>> {
     const { modelProvider: provider, modelName: name, modelBaseUrl: baseUrl } = this.config;
     const known = getModel(provider as never, name as never);
-    if (known) return baseUrl ? { ...known, baseUrl } : known;
+    // 精确 id 未收录 → 继承同供应商目录条目的协议语义（thinkingFormat、reasoning_content
+    // 回传、窗口与计价），只替换 id/name。匹配规则：
+    //   1) 尾段同名（deepseek-v4.1-flash → deepseek-v4-flash）；
+    //   2) 模型名以供应商名开头（deepseek 开头 → deepseek 目录），兜底取该组第一条。
+    // 供应商整个不在目录时才走最后的通用 OpenAI/Anthropic 兼容分支
+    let template = known;
+    let inheritedFrom: string | undefined;
+    if (!template) {
+      const family = getBuiltinModels(provider as never);
+      const suffix = name.split("-").pop() ?? "";
+      const match =
+        family.find((m) => m.id.endsWith(`-${suffix}`)) ??
+        (name.toLowerCase().startsWith(provider.toLowerCase()) ? family[0] : undefined);
+      if (match) {
+        // DeepSeek 官方确认：旧模型名已由 DeepSeek-V4.1-Flash 提供服务，且该模型支持图像理解——
+        // 继承语义时补上图片输入声明，让用户发的图可以直接传给模型
+        template = {
+          ...match,
+          id: name,
+          name,
+          input: [...new Set([...(match.input ?? []), "image" as const])],
+        };
+        inheritedFrom = match.id;
+      }
+    }
+    if (template) {
+      const withBase = baseUrl ? { ...template, baseUrl } : template;
+      const model = { ...withBase } as NonNullable<ReturnType<typeof getModel>>;
+      if (inheritedFrom) {
+        const compat = (template as { compat?: { thinkingFormat?: string } }).compat;
+        logger.info(
+          `[Runtime] 模型 ${provider}/${name} 未收录，已继承 ${provider}/${inheritedFrom} 目录语义` +
+            `（thinkingFormat=${compat?.thinkingFormat ?? "默认"}，ctx=${template.contextWindow}）`,
+        );
+      }
+      return model;
+    }
     const anthropicCompatible = provider === "anthropic";
     logger.info(
       `[Runtime] 模型 ${provider}/${name} 不在内置目录，按 ${anthropicCompatible ? "Anthropic" : "OpenAI"} 兼容协议自定义接入（baseUrl=${baseUrl ?? "官方默认"}）`,
@@ -276,21 +343,24 @@ export class FeishuPiRuntime {
     if (!apiKey) {
       throw new Error("FEISHU_PI_MODEL_API_KEY is required");
     }
-    if (this.config.modelProvider === "anthropic") {
-      process.env.ANTHROPIC_API_KEY = apiKey;
-    } else if (this.config.modelProvider === "openai") {
-      process.env.OPENAI_API_KEY = apiKey;
-    }
+    // Pi 自带各厂商密钥环境变量映射表：按 provider 查出变量名后注入（覆盖目录内全部厂商）
+    const envName = findEnvKeys(this.config.modelProvider as never, process.env as Record<string, string>)?.[0]
+      ?? `${this.config.modelProvider.toUpperCase().replace(/-/g, "_")}_API_KEY`;
+    process.env[envName] = apiKey;
 
-    // 判定所属身份组（admin 管理员组 / 其余自定义组），并取该组的已编译策略
+    // 判定所属身份组；策略在每次工具调用时按文件 mtime 缓存重编译——
+    // 修改 permissions.json 对已驻留会话即时生效，无需 /new 或重启
     const groups = await this.config.permissionPolicy.groupsFor(userId, context?.userName);
-    const groupPolicy: GroupPolicy = await this.config.permissionPolicy.forGroups(groups);
+    const groupPolicyFor = (): Promise<GroupPolicy> => this.config.permissionPolicy.forGroups(groups);
     const displayName = context?.userName || userId;
     logger.info(`[Runtime] 用户身份: ${colors.cyan}${displayName}${colors.reset}(${colors.gray}${userId}${colors.reset}) -> ${colors.yellow}${groups.join(", ") || "(无组)"}${colors.reset}`);
 
     // 一个会话一个文件夹：新会话的 jsonl 落在会话专属目录；续聊传入同目录，
     // 供 Pi 内部 /new、分支等操作在正确位置建新文件
-    const convDir = conversationDir(this.config.sessionDir, context?.conversationId ?? "default");
+    // 会话目录：优先用 workspaceFor 提供的会话工作区（jsonl 与图片/附件同处）；未配置回退传统布局
+    const convDir = this.config.workspaceFor
+      ? await this.config.workspaceFor(context?.conversationId ?? "default")
+      : conversationDir(this.config.sessionDir, context?.conversationId ?? "default");
     const sessionManager = sessionFile
       ? SessionManager.open(sessionFile, convDir, this.config.cwd)
       : SessionManager.create(this.config.cwd, convDir);
@@ -351,19 +421,8 @@ export class FeishuPiRuntime {
     const toolGuard = this.config.toolGuard;
     const chatId = context?.chatId;
     session.agent.beforeToolCall = async (ctx, signal) => {
-      // bash 明文凭证防线（先于一切判定与落盘）：bbt 命令里写了真实账号/密码时，
-      // 原地改写为环境变量引用——执行结果不变（spawnHook 注入真实值），
-      // 而会话 jsonl、卡片展示、终端日志都只剩变量名
-      if (ctx.toolCall.name === "bash") {
-        const command = (ctx.args as { command?: string } | undefined)?.command;
-        if (typeof command === "string") {
-          const rewritten = rewritePlaintextCliCredentials(command);
-          if (rewritten !== command) {
-            (ctx.args as { command: string }).command = rewritten;
-            logger.info("[Runtime] 已将 bbt 明文凭证改写为环境变量引用（不落会话与展示）");
-          }
-        }
-      }
+      // 每次调用重新取已编译策略（内部有 mtime 缓存）：permissions.json 改动即时生效
+      const groupPolicy = await groupPolicyFor();
       if (ctx.toolCall.name === "read") {
         const target = extractReadPath(ctx.args);
         if (target !== undefined) {

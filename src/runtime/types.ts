@@ -36,6 +36,8 @@ export interface FeishuPiConfig {
   modelBaseUrl?: string;
   systemPrompt?: string;
   /** 统一权限策略（.agent/permissions.json）：工具注册、调用判定、可读范围全部由它驱动 */
+  /** 会话工作区：返回该会话专属文件夹（jsonl/图片/附件归拢于此）；未配置则用 data/sessions 传统布局 */
+  workspaceFor?: (conversationId: string) => Promise<string>;
   permissionPolicy: PermissionPolicy;
   /** 工具调用 Guard（beforeToolCall 钩子），可选；signal 中止（/stop）时取消授权等待。
    *  risky = 自定义工具标记了 risk: "high"，需要走授权卡。

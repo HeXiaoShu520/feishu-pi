@@ -53,3 +53,18 @@ describe("parseGroupMembership（FEISHU_PI_GROUP 配置语义）", () => {
     expect(groups["admin"]).toEqual(["张三"]);
   });
 });
+
+describe("deriveModelProvider（供应商由模型名推断）", () => {
+  it("带 claude → anthropic；带 deepseek → deepseek；其余 → openai", () => {
+    expect(loadConfig({ ...baseEnv, FEISHU_PI_MODEL_NAME: "claude-sonnet-4-6" }).modelProvider).toBe("anthropic");
+    expect(loadConfig({ ...baseEnv, FEISHU_PI_MODEL_NAME: "deepseek-v4-flash" }).modelProvider).toBe("deepseek");
+    expect(loadConfig({ ...baseEnv, FEISHU_PI_MODEL_NAME: "deepseek-v4.1-flash" }).modelProvider).toBe("deepseek");
+    expect(loadConfig({ ...baseEnv, FEISHU_PI_MODEL_NAME: "gpt-4o" }).modelProvider).toBe("openai");
+    expect(loadConfig({ ...baseEnv, FEISHU_PI_MODEL_NAME: "qwen-max" }).modelProvider).toBe("openai");
+  });
+
+  it("FEISHU_PI_MODEL_PROVIDER 环境变量已废弃：不再影响推断结果", () => {
+    const env = { ...baseEnv, FEISHU_PI_MODEL_PROVIDER: "deepseek", FEISHU_PI_MODEL_NAME: "claude-sonnet-4-6" };
+    expect(loadConfig(env).modelProvider).toBe("anthropic");
+  });
+});
