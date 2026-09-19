@@ -102,8 +102,9 @@ export class PolicyJudge {
    */
   private async judgeWithSingleModel(model: string, input: JudgeInput): Promise<JudgeVerdict> {
     const verdict = await this.callJudgeModel(model, input);
+    const label = verdict.decision === "allow" ? "通过" : verdict.reason.includes("超时") ? "超时" : "不通过";
     logger.info(
-      `[Judge] 审核: ${verdict.decision} 内容: ${input.toolName}: ${singleLine(JSON.stringify(input.args) ?? "", 600)}`,
+      `[Judge] 审核: ${label} 内容: ${input.toolName}: ${singleLine(JSON.stringify(input.args) ?? "", 600)}`,
     );
     return verdict;
   }
@@ -154,8 +155,12 @@ export class PolicyJudge {
       if (parsed.decision === "ask") return { decision: "ask", reason: parsed.reason || "审核模型要求确认" };
       return { decision: "ask", reason: "审核模型输出无法解析" };
     } catch (error) {
-      logger.warn(`[Judge] 模型 ${model} 审核失败，按 ask 处理: ${error instanceof Error ? error.message : String(error)}`);
-      return { decision: "ask", reason: "审核调用失败" };
+      // 超时（timeoutMs 到点触发 abort）与其它异常区分开，日志据此显示"超时"
+      const timedOut = controller.signal.aborted;
+      logger.warn(
+        `[Judge] 模型 ${model} 审核失败（${timedOut ? "超时" : "异常"}），按 ask 处理: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return { decision: "ask", reason: timedOut ? `审核超时（>${Math.round(timeoutMs / 1000)}s）` : "审核调用失败" };
     } finally {
       clearTimeout(timer);
     }
