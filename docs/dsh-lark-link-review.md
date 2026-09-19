@@ -1,5 +1,7 @@
 # dsh-lark-link 调研总结
 
+> 历史调研/问题草稿，不代表当前工程功能；现状以 architecture.md 和源码为准。
+
 项目地址：https://github.com/amlyczz/dsh-lark-link
 
 ## 核心设计亮点

@@ -18,7 +18,7 @@
 | 文件/目录 | 作用 | 加载方 |
 |---|---|---|
 | `permissions.json` | 权限策略：`deny` + 各身份组的 `allow` 规则（fail-safe，未放行即拦截） | `src/permission/policy.ts` |
-| `tools/` | 自定义工具（如 `memory.py`，注册为 Pi 的 `customTools`） | `src/runtime/feishu-pi-runtime.ts` |
+| `tools/` | 自定义工具（`.ts`/`.js` 导出含 `name`+`execute` 的对象；`.py` 用首行 `#! {...}` 元数据。注册为 Pi 的 `customTools`，详见 `skills/skill-to-tool.md`） | `src/runtime/feishu-pi-runtime.ts` |
 
 > 注意：`tools/` **不是** Pi 的原生约定。Pi 的原生"自定义工具"机制是 `extensions/`（扩展代码），
 > 与本目录的脚本约定不通用，不要为了名字好看而改名。
@@ -27,7 +27,7 @@
 
 - **改人设 / 加行为规则** → 编辑 `SYSTEM.md`，**需重启进程生效**（ResourceLoader 进程内只创建一次）。
 - **改谁能用哪个工具 / 读写哪个路径** → 编辑 `permissions.json`。
-- **加一个工具** → 在 `tools/` 放脚本，由运行时扫描注册。
+- **加一个工具** → 在 `tools/` 顶层放脚本，由运行时扫描注册；**需重启进程生效**（工具集在进程内只加载一次），并要在 `permissions.json` 对应组配置 `Tools(工具名)`，否则执行时会被拦截。
 - **加一项技能** → 在 `skills/` 放 `.md` 说明书。
 
 ## 相关

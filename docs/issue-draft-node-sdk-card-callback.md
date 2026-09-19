@@ -1,5 +1,7 @@
 # Issue 草稿：node-sdk 卡片回调（card.action.trigger）应答数据丢失 + 去重静默吞事件
 
+> 历史调研/问题草稿，不代表当前工程功能；现状以 architecture.md 和源码为准。
+
 > 以下内容可直接提交到 https://github.com/larksuite/node-sdk/issues
 > 标题建议：Card callback (card.action.trigger) response has no data and duplicate clicks are silently dropped via LarkChannel
 

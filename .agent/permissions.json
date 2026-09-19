@@ -1,7 +1,9 @@
 {
-  "_说明": "两个输入：deny=全局禁止读写的路径 glob 数组（第 0 层，先于一切 allow，对所有人含管理员生效），无内置默认、全部在此显式列出，可自行追加；allow=各身份组的规则数组，保留组名 common（所有人自动叠加）与 admin（FEISHU_PI_ADMIN 自动属于，未配置字段取全量缺省），其余组名任取。组成员在 .env 配置：FEISHU_PI_GROUP=成员 对应主团队组 group，FEISHU_PI_GROUP_1/2…对应 group_1/2…，自定义组用 FEISHU_PI_GROUP_<组名>；成员可以是 open_id、中文名、英文名或组织架构部门名（用户部门路径含该名称即入组）。allow 内每条规则为 Read(路径glob)、Write(路径glob)、Tools(工具名)、Bash(命令) 格式；_ 开头的键视为注释。修改即时生效（新会话起作用），/perm 可查看当前策略。",
+  "_说明": "两个输入：deny=全局禁止读写的路径 glob 数组（第 0 层，先于一切 allow，对所有人含管理员生效），无内置默认、全部在此显式列出，可自行追加；allow=各身份组的规则数组，保留组名 common（所有人自动叠加）与 admin（FEISHU_PI_ADMIN 自动属于，权限仅来自显式规则），其余组名任取。组成员在 .env 配置：FEISHU_PI_GROUP=成员 对应主团队组 group，FEISHU_PI_GROUP_1/2…对应 group_1/2…，自定义组用 FEISHU_PI_GROUP_<组名>；成员可以是 open_id、中文名、英文名或组织架构部门名（用户部门路径含该名称即入组）。allow 内每条规则为 Read(路径glob)、Write(路径glob)、Tools(工具名)、Bash(命令) 格式；_ 开头的键视为注释。每次工具调用重新检查文件变化；/status 可查看身份组。",
   "deny": [
-    ".env"
+    ".env",
+    "data/credentials/**",
+    "data/.vault-key"
   ],
   "allow": {
     "common": [
@@ -9,7 +11,6 @@
       "Read(README.md)",
       "Read(.env.example)",
       "Read(docs/**)",
-      "Read(data/schedules.json)",
       "Tools(memory)",
       "Tools(schedule_manager)",
       "Bash(ls:*)",
@@ -18,12 +19,12 @@
       "Bash(git log:*)",
       "Bash(npm run test:*)",
       "Bash(npm run check:*)",
-      "bash(grep:*)",
-      "bash(cat:*)",
-      "bash(head:*)",
-      "bash(tail:*)",
-      "bash(find:*)",
-      "bash(wc:*)"
+      "Bash(grep:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(find:*)",
+      "Bash(wc:*)"
     ],
     "admin": [
       "Read(**)",
@@ -57,16 +58,16 @@
       "Bash(lark-cli okr:*)",
       "Bash(lark-cli meeting:*)",
       "Bash(meegle:*)",
-      "bash(grep:*)",
-      "bash(sed:*)",
-      "bash(cat:*)",
-      "bash(head:*)",
-      "bash(tail:*)",
-      "bash(find:*)",
-      "bash(wc:*)",
-      "bash(echo:*)",
-      "bash(diff:*)",
-      "bash(sort:*)",
+      "Bash(grep:*)",
+      "Bash(sed:*)",
+      "Bash(cat:*)",
+      "Bash(head:*)",
+      "Bash(tail:*)",
+      "Bash(find:*)",
+      "Bash(wc:*)",
+      "Bash(echo:*)",
+      "Bash(diff:*)",
+      "Bash(sort:*)",
       "Bash(lark-cli --help)"
     ],
     "group": [
