@@ -35,6 +35,19 @@ function singleLine(text: string, maxLength: number): string {
 }
 
 /**
+ * 按审核模型名推断"关闭思考"的请求参数——各厂商字段不同，认不出的厂商不发
+ * （OpenAI 本家会拒绝未知参数，发了反而 400）。审核是简单分类，能关就关，提显著提速。
+ * - deepseek / glm：thinking: {type: "disabled"}（两家同款扩展字段）
+ * - gpt-5.x：reasoning_effort: "none"（OpenAI 官方关思考写法；o 系列关不掉、gpt-4o 无思考，都不发）
+ */
+function thinkingOffParam(model: string): Record<string, unknown> {
+  const n = model.toLowerCase();
+  if (n.includes("deepseek") || n.includes("glm")) return { thinking: { type: "disabled" } };
+  if (n.includes("gpt-5")) return { reasoning_effort: "none" };
+  return {};
+}
+
+/**
  * 审核模型的系统提示：二级门禁的放行标准刻意从宽——
  * 工作范围在本工程内且非恶意即放行；deny 层已在上游拦截，不会到这里。
  */
@@ -118,8 +131,7 @@ export class PolicyJudge {
             { role: "user", content: instruction },
           ],
           temperature: 0,
-          // 审核是简单分类判定，思考模式显式关闭（DeepSeek 服务端默认开+high，不关则每次审核白等思维链）
-          thinking: { type: "disabled" },
+          ...thinkingOffParam(model),
         }),
       });
       if (!response.ok) {
