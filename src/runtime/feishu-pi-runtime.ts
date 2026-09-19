@@ -222,7 +222,7 @@ export class FeishuPiRuntime {
       const thinking = (model.compat as { thinkingFormat?: string } | undefined)?.thinkingFormat;
       logger.info(
         `[Runtime] 当前模型 ${colors.cyan}${model.provider}/${model.id}${colors.reset}${sourceNote}: ` +
-          `地址 ${model.baseUrl ?? "官方默认"} · 上下文 ${model.contextWindow ?? "?"} · 输出上限 ${model.maxTokens ?? "?"} · 输入 ${inputDesc} · ${thinking ? `思维链 ${thinking} · ` : ""}定价 ${model.cost?.input ?? 0}/${model.cost?.output ?? 0} per M · 密钥注入 ${keyEnv}`,
+          `地址 ${model.baseUrl ?? "官方默认"} · 上下文 ${model.contextWindow ?? "?"} · 输出上限 ${model.maxTokens ?? "?"} · 输入 ${inputDesc} · ${thinking ? `思维链 ${thinking} · ` : ""}档位 ${this.config.thinkingLevel} · 定价 ${model.cost?.input ?? 0}/${model.cost?.output ?? 0} per M · 密钥注入 ${keyEnv}`,
       );
     } catch (error) {
       logger.warn("[Runtime] 当前模型属性读取失败:", error);
@@ -383,6 +383,8 @@ export class FeishuPiRuntime {
       cwd: this.config.cwd,
       sessionManager,
       model,
+      // 思考档位：默认 high（DeepSeek 官方默认）；pi 默认 off 会显式发 thinking:disabled 关思考
+      thinkingLevel: this.config.thinkingLevel,
       tools: builtinNames,
       customTools: sessionTools,
       resourceLoader: baseResourceLoader,

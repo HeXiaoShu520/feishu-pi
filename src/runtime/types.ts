@@ -4,6 +4,7 @@
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import type { GroupPolicy, PermissionPolicy } from "../permission/policy.ts";
+import type { ThinkingLevelConfig } from "../config.ts";
 import type { ScheduleService } from "../schedule/service.ts";
 import type { FeishuContext } from "../context/types.ts";
 
@@ -34,6 +35,8 @@ export interface FeishuPiConfig {
   modelProvider: string;
   modelName: string;
   modelBaseUrl?: string;
+  /** 思考档位：off=显式关闭思考；其余开启并传 effort（默认 high，DeepSeek 官方默认） */
+  thinkingLevel: ThinkingLevelConfig;
   systemPrompt?: string;
   /** 统一权限策略（.agent/permissions.json）：工具注册、调用判定、可读范围全部由它驱动 */
   /** 会话工作区：返回该会话专属文件夹（jsonl/图片/附件归拢于此）；未配置则用 data/sessions 传统布局 */

@@ -13,6 +13,8 @@ export interface FeishuPiAppConfig {
   modelProvider: string;
   modelName: string;
   modelBaseUrl?: string;
+  /** 思考档位：off=显式关闭思考；其余档位开启思考并传 effort（FEISHU_PI_THINKING_LEVEL，默认 high） */
+  thinkingLevel: ThinkingLevelConfig;
   /** 会话工作区根目录：每个会话一个子文件夹（jsonl/图片/附件都归拢于此） */
   workspaceRoot: string;
   /** 本地 OCR 兜底：模型无视觉能力时，把下载图片 OCR 成文字一并交给模型（FEISHU_USE_EXTRA_OCR） */
@@ -59,6 +61,16 @@ export function deriveModelProvider(modelName: string): string {
 function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined || value.trim() === "") return fallback;
   return ["1", "true", "on", "yes"].includes(value.trim().toLowerCase());
+}
+
+/** 思考档位全集（与 pi-agent-core 的 ThinkingLevel 对齐）。 */
+const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
+export type ThinkingLevelConfig = (typeof THINKING_LEVELS)[number];
+
+/** 思考档位：合法值取之，未配置/非法值回退 high（DeepSeek 官方默认=开启且 effort=high）。 */
+function parseThinkingLevel(value: string | undefined): ThinkingLevelConfig {
+  const raw = (value ?? "").trim().toLowerCase();
+  return (THINKING_LEVELS as readonly string[]).includes(raw) ? (raw as ThinkingLevelConfig) : "high";
 }
 
 /** 主团队组名：FEISHU_PI_GROUP（无后缀）落到这里（与 permissions.json 的 group 对应） */
@@ -131,6 +143,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     // FEISHU_PI_MODEL_VISION=1 → 模型声明含图片输入（覆盖内置目录的过时元数据）
     // 本地 OCR 兜底（tesseract.js，首次联网下载语言包）：模型无视觉能力时把图片文字识别后交给模型
     useExtraOcr: parseBoolEnv(env.FEISHU_USE_EXTRA_OCR, false),
+    // 思考档位：off/minimal/low/medium/high/xhigh/max。pi 默认 off（显式发 thinking:disabled），
+    // DeepSeek 官方默认=开启且 effort=high，故本工程默认 high（FEISHU_PI_THINKING_LEVEL 可覆盖，非法值回退 high）
+    thinkingLevel: parseThinkingLevel(env.FEISHU_PI_THINKING_LEVEL),
     // 自定义人格：独立文件 PERSONA.md（不入 .env），缺失 = 内置默认人格
     systemPrompt: readPersona(process.cwd()),
     // 智能体审核（策略外调用的综合判断）：OpenAI 兼容接口，支持逗号分隔多模型取安全交集

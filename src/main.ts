@@ -486,6 +486,7 @@ ${trimmed}` }] },
     modelProvider: config.modelProvider,
     modelName: config.modelName,
     modelBaseUrl: config.modelBaseUrl,
+    thinkingLevel: config.thinkingLevel,
     systemPrompt: config.systemPrompt,
     // Pi 会话 jsonl 落进会话工作区（与图片/附件同在一个文件夹）
     workspaceFor: (conversationId) => workspace.dirFor(conversationId),
