@@ -13,6 +13,9 @@ import { randomUUID } from "node:crypto";
 import { formatStatsLine, formatToolCall, toolIcon, ReplyParts } from "./reply-parts.ts";
 import type { PeopleRoster } from "./people-roster.ts";
 
+/** 工具段延迟上屏阈值：工具运行满该时长才显示工具段与小字动画，快速指令不刷屏。 */
+const TOOL_SEGMENT_DELAY_MS = 1000;
+
 /** 将飞书消息转换为 Pi 会话，并把增量文本交给飞书传输层。 */
 export class FeishuAgentBridge {
   private readonly conversations: ConversationManager;
@@ -110,6 +113,8 @@ export class FeishuAgentBridge {
     // 动画定时器句柄提级声明：无论 prompt 成功或抛错，finally 都要清掉，避免句柄泄漏
     let animationTimer: NodeJS.Timeout | undefined;
     let toolTimer: NodeJS.Timeout | undefined;
+    // 工具段延迟上屏句柄：快速工具（<1s 完成）不展示，避免快速指令来回刷屏
+    let pendingToolTimer: NodeJS.Timeout | undefined;
 
     try {
       // 创建随机 spinner 实例
@@ -188,17 +193,30 @@ export class FeishuAgentBridge {
             await replyParts.appendText(event.text);
           }
           // 工具事件：追加工具摘要段（精简模式只留当前一个），小字位置同步显示动画。
-          // bash：只渲染命令代码块（不显示工具名）；其余工具保留「🛠 名称 + 参数」样式。
+          // 工具段延迟 1s 上屏：跑得比 1s 快的工具（快速指令）什么都不显示，不刷屏；
+          // 满 1s 仍在运行才追加代码块并启动小字动画。
           if (event.type === "tool_started") {
-            activeToolName = event.toolName;
-            toolSpinner.withPrefix(`${toolIcon(event.toolName)} ${event.toolName}`);
             if (!hasRealContent) await startRealContent();
-            await replyParts.appendTool(`\n\n${formatToolCall(event.toolName, event.args)}`);
+            const toolName = event.toolName;
+            const segment = `\n\n${formatToolCall(toolName, event.args)}`;
+            clearTimeout(pendingToolTimer);
+            pendingToolTimer = setTimeout(() => {
+              pendingToolTimer = undefined;
+              activeToolName = toolName;
+              toolSpinner.withPrefix(`${toolIcon(toolName)} ${toolName}`);
+              void replyParts.appendTool(segment).catch(() => {});
+            }, TOOL_SEGMENT_DELAY_MS);
           }
           if (event.type === "tool_finished") {
+            if (pendingToolTimer) {
+              // 工具在 1s 内跑完：工具段从未上屏，直接丢弃（连小字动画都没启动过）
+              clearTimeout(pendingToolTimer);
+              pendingToolTimer = undefined;
+            } else {
+              // 清空小字，等待下一次工具调用或最终统计（完成状态不占正文，避免刷屏）
+              await reply.updateStats(" ");
+            }
             activeToolName = "";
-            // 清空小字，等待下一次工具调用或最终统计（完成状态不占正文，避免刷屏）
-            await reply.updateStats(" ");
           }
         },
       );
@@ -247,6 +265,7 @@ export class FeishuAgentBridge {
       // 动画定时器兜底清理（prompt 抛错时走这里；已清理过的句柄重复 clear 是无害的）
       clearInterval(animationTimer);
       clearInterval(toolTimer);
+      clearTimeout(pendingToolTimer);
       // 移除 reaction
       await this.reactionController?.stop(message.messageId);
     }
