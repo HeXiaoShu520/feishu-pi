@@ -35,7 +35,7 @@ export interface FeishuPiConfig {
   modelProvider: string;
   modelName: string;
   modelBaseUrl?: string;
-  /** 思考档位：off=显式关闭思考；其余开启并传 effort（默认 high，DeepSeek 官方默认） */
+  /** 思考档位：low/high/max 三档，各模型自动适配等效等级（默认 high） */
   thinkingLevel: ThinkingLevelConfig;
   systemPrompt?: string;
   /** 统一权限策略（.agent/permissions.json）：工具注册、调用判定、可读范围全部由它驱动 */
