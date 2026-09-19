@@ -14,7 +14,7 @@ export interface FeishuPiAppConfig {
   modelProvider: string;
   modelName: string;
   modelBaseUrl?: string;
-  /** 思考档位：off=关闭思考（默认），low/high/max 各模型自动适配等效等级（FEISHU_PI_THINKING_LEVEL） */
+  /** 思考档位：off=关闭思考，low/high/max 各模型自动适配等效等级（FEISHU_PI_THINKING_LEVEL，默认 high） */
   thinkingLevel: ThinkingLevelConfig;
   /** 会话工作区根目录：每个会话一个子文件夹（jsonl/图片/附件都归拢于此） */
   workspaceRoot: string;
@@ -68,19 +68,19 @@ function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
 const THINKING_LEVELS = ["off", "low", "high", "max"] as const;
 export type ThinkingLevelConfig = (typeof THINKING_LEVELS)[number];
 
-/** 思考档位归一：只认 off/low/high/max；旧超集档位就近折算（minimal→low、medium/xhigh→high，xhigh 按 DeepSeek 官方映射表等价于 high），其余回退默认 off。 */
+/** 思考档位归一：只认 off/low/high/max；旧超集档位就近折算（minimal→low、medium/xhigh→high，xhigh 按 DeepSeek 官方映射表等价于 high），其余回退默认 high。 */
 function parseThinkingLevel(value: string | undefined): ThinkingLevelConfig {
   const raw = (value ?? "").trim().toLowerCase();
   if ((THINKING_LEVELS as readonly string[]).includes(raw)) return raw as ThinkingLevelConfig;
-  if (raw === "") return "off";
+  if (raw === "") return "high";
   const equivalents: Record<string, ThinkingLevelConfig> = { minimal: "low", medium: "high", xhigh: "high" };
   const folded = equivalents[raw];
   if (folded) {
     logger.warn(`[Config] FEISHU_PI_THINKING_LEVEL="${raw}" 不是公开档位，已折算为 ${folded}`);
     return folded;
   }
-  logger.warn(`[Config] FEISHU_PI_THINKING_LEVEL="${raw}" 无法识别（可选 off/low/high/max），已按默认 off 处理`);
-  return "off";
+  logger.warn(`[Config] FEISHU_PI_THINKING_LEVEL="${raw}" 无法识别（可选 off/low/high/max），已按默认 high 处理`);
+  return "high";
 }
 
 /** 主团队组名：FEISHU_PI_GROUP（无后缀）落到这里（与 permissions.json 的 group 对应） */
@@ -153,8 +153,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     // FEISHU_PI_MODEL_VISION=1 → 模型声明含图片输入（覆盖内置目录的过时元数据）
     // 本地 OCR 兜底（tesseract.js，首次联网下载语言包）：模型无视觉能力时把图片文字识别后交给模型
     useExtraOcr: parseBoolEnv(env.FEISHU_USE_EXTRA_OCR, false),
-    // 思考档位默认 off（关闭思考，响应最快）：pi 默认会显式发 thinking:disabled，
-    // 想开思考配 low/high/max，各模型自动适配等效等级
+    // 思考档位默认 high（观察思考对回复质量/耗时的实际影响）：pi 默认 off（显式发 thinking:disabled），
+    // 想关思考配 off，各模型自动适配等效等级
     thinkingLevel: parseThinkingLevel(env.FEISHU_PI_THINKING_LEVEL),
     // 自定义人格：独立文件 PERSONA.md（不入 .env），缺失 = 内置默认人格
     systemPrompt: readPersona(process.cwd()),
