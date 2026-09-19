@@ -105,22 +105,31 @@ export class CardKitStream {
   }
 
   /**
-   * 收尾时序：推最终全文（最后一帧携带全部尾字，打字机一并打出）→ 等预计打字时间打完 →
-   * 写统计小字 → 3s 让客户端处理完 → 关流式。
+   * 收尾时序：推最终全文 + 统计小字（小字紧跟最终帧入队，打字机打尾字时小字同步出现）→
+   * 等 3s 让客户端处理完 → 关流式。
    */
   async finalize(fullText: string, statsText?: string): Promise<void> {
     if (this.disposed || !this.cardId) return;
 
     try {
       this.accumulator = fullText;
-      // 1. 推最终全文（流式仍开，最后一帧携带全部尾字，打字机把它们一并打出）
+      // 1. 推最终全文 + 统计小字（流式仍开，两笔元素 PUT 背靠背入队，写队列保证先后）
       await this.enqueueWrite(() => this.pushUpdate(fullText));
-      // 2. 等一小段，让客户端把最后一帧的尾字打印完（推送间隔 400ms，尾量很小）
-      await new Promise((resolve) => setTimeout(resolve, 800));
-      // 3. 写统计小字
-      if (statsText) await this.enqueueWrite(() => this.putStats(statsText));
-      // 4. 统计小字 + 3s 后关流式（给客户端处理小字元素的余量）
+      if (statsText) {
+        await this.enqueueWrite(async () => {
+          // 小字失败不阻断收尾：重试一次，仍失败则记日志放弃（缺小字好过卡片卡在"生成中"）
+          try {
+            await this.putStats(statsText);
+          } catch (err) {
+            this.onError?.(err);
+            await new Promise((resolve) => setTimeout(resolve, 500));
+            await this.putStats(statsText).catch((retryErr) => this.onError?.(retryErr));
+          }
+        });
+      }
+      // 2. 等 3s，给客户端处理小字元素的余量
       await new Promise((resolve) => setTimeout(resolve, 3_000));
+      // 3. 关流式
       await this.enqueueWrite(() => this.patchSettings(false));
       this.disposed = true;
     } catch (err) {
