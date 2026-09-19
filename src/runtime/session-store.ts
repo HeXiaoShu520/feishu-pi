@@ -98,18 +98,32 @@ export class SessionStore extends JsonMapStore<SessionRecord> {
 
   /** 新建一代会话：分配不重名的会话 id、建目录、写自述文件、登记路由。 */
   private async createRecord(conversationId: string): Promise<SessionRecord> {
-    const sessionId = await this.allocateSessionId();
-    const dir = join(this.root, sessionId);
-    await mkdir(dir, { recursive: true });
+    // mkdir 非递归 = 文件系统级原子创建：即便并发拿到同一 id（查盘与建目录之间的竞态窗口），
+    // 也只有一个成功，另一个 EEXIST 后换 id 重试——构造上排除两代会话共用一个目录
+    await mkdir(this.root, { recursive: true });
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const sessionId = attempt < 5 ? await this.allocateSessionId() : `${newSessionId()}-${Math.random().toString(36).slice(2, 8)}`;
+      const dir = join(this.root, sessionId);
+      try {
+        await mkdir(dir);
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code === "EEXIST") {
+          logger.warn(`[Session] 会话目录撞名（${sessionId}），已自动重新分配`);
+          continue;
+        }
+        throw err;
+      }
 
-    const now = Date.now();
-    const record: SessionRecord = { sessionId, dir, createdAt: now, updatedAt: now };
-    this.records.set(conversationId, record);
-    await this.writeMeta(dir, conversationId, sessionId, now).catch((error) => {
-      logger.warn(`[Session] 写入会话自述文件失败（不影响会话）: ${dir}`, error);
-    });
-    await this.persist();
-    return record;
+      const now = Date.now();
+      const record: SessionRecord = { sessionId, dir, createdAt: now, updatedAt: now };
+      this.records.set(conversationId, record);
+      await this.writeMeta(dir, conversationId, sessionId, now).catch((error) => {
+        logger.warn(`[Session] 写入会话自述文件失败（不影响会话）: ${dir}`, error);
+      });
+      await this.persist();
+      return record;
+    }
+    throw new Error("[Session] 会话 id 连续 50 次撞名（理论上不可能），放弃创建");
   }
 
   /** 分配一个磁盘上尚不存在的会话 id（同一秒内多次调用也不会撞名）。 */
