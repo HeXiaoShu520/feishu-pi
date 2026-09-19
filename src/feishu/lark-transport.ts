@@ -103,7 +103,16 @@ export class LarkTransport implements FeishuTransport {
     if (this.connecting) return this.connecting;
     if (this.wsClient) return; // 已连接（WSClient 自带重连，无需重复 start）
 
-    const dispatcher = new EventDispatcher({});
+    const dispatcher = new EventDispatcher({
+      // dispatcher 自带 tslog 默认 logger（格式与项目不一致，且不受 Client 的 loggerLevel 控制，
+      // 启动时会打一行 "event-dispatch is ready"）：注入静音实现，异常仍经项目日志可见
+      logger: {
+        info: () => {},
+        debug: () => {},
+        warn: (data: unknown) => logger.warn("[LarkTransport] SDK:", data),
+        error: (data: unknown) => logger.error("[LarkTransport] SDK:", data),
+      } as never,
+    });
     dispatcher.register({
       // 未使用的事件注册空处理器：避免 SDK 对每个未订阅事件打 "no xxx handle" 无上下文警告
       "im.chat.member.bot.added_v1": async () => {},
