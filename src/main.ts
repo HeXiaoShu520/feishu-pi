@@ -13,7 +13,7 @@ import { resolveAdminOpenId, persistUserProfile, resolveAdminFromLogins } from "
 import { ScheduleService } from "./schedule/service.ts";
 import { PermissionPolicy } from "./permission/policy.ts";
 import { PermCommand, markdownCard } from "./feishu/commands.ts";
-import { LoginCommand, LogoutCommand, UserAuthService } from "./feishu/user-auth.ts";
+import { LogoutCommand, StatusCommand, UserAuthService } from "./feishu/user-auth.ts";
 import { MeegleDeviceLogin, MEEGLE_DEFAULT_HOST, StaticCredentialService } from "./feishu/meegle-auth.ts";
 import { PeopleRoster } from "./feishu/people-roster.ts";
 import { createIdentityBashTool } from "./runtime/identity-bash.ts";
@@ -163,7 +163,7 @@ export async function main(): Promise<void> {
 
   const credentialsDir = join(config.dataDir, "credentials");
   const vaultKeyFile = join(config.dataDir, ".vault-key");
-  // Meegle（飞书项目）静态凭证：/login meegle Device Flow 授权后 token 加密入库，
+  // Meegle（飞书项目）静态凭证：Device Flow 授权后 token 加密入库，
   // 会话 bash 命中 meegle 命令时注入（MEEGLE_USER_ACCESS_TOKEN / MEEGLE_HOST）
   const meegleAuth = new StaticCredentialService(
     join(credentialsDir, "meegle.vault.json"),
@@ -172,7 +172,8 @@ export async function main(): Promise<void> {
   );
   // 会话工作区：会话的第一句话就建立专属文件夹，图片/附件等产物全部归拢于此
   const workspace = new WorkspaceManager(config.workspaceRoot);
-  // 用户飞书身份授权（Device Flow，RFC 8628）：/login 指令 + 按 openId 加密存取 user_access_token。
+  // 用户飞书身份授权（Device Flow，RFC 8628）：按 openId 加密存取 user_access_token；
+  // 未登录/失效时由 CLI 调用链路自动弹出授权链接（见 identityBash.onNotLoggedIn / 启动 3.5 步）。
   // 先于 transport 创建（冷启动管理员识别要在 transport 装配前完成）；
   // updateCard/sendCard 闭包后置引用 transport，仅在实际收发卡片时才会执行。
   userAuth = new UserAuthService({
@@ -191,10 +192,14 @@ export async function main(): Promise<void> {
     },
   });
 
-  // Meegle Device Flow 登录：发授权链接卡 → 后台轮询 meegle CLI → token 加密入库 → 原地更新卡片
+  // Meegle Device Flow 授权：会话 bash 命中 meegle 且该用户无凭证时，自动把授权链接卡发到其私聊，
+  // 后台轮询 meegle CLI → token 加密入库 → 原地更新卡片
   const meegleDeviceLogin = new MeegleDeviceLogin(
     meegleAuth,
-    (messageId, card) => transport.updateCardById(messageId, card),
+    {
+      updateCard: (messageId, card) => transport.updateCardById(messageId, card),
+      sendCardToUser: (openId, card) => transport.sendCardToUser(openId, card),
+    },
     config.cwd,
   );
 
@@ -259,9 +264,9 @@ export async function main(): Promise<void> {
     if (state === "active") {
       logger.info("[Main] 启动 2/4 lark-cli 就绪：管理员已登录");
     } else if (state === "expired") {
-      logger.warn("[Main] 启动 2/4 lark-cli 管理员登录已失效，请在聊天中发 /login lark 重新授权");
+      logger.warn("[Main] 启动 2/4 lark-cli 管理员登录已失效，授权链接卡将推送到管理员私聊");
     } else {
-      logger.warn(`[Main] 启动 2/4 lark-cli 管理员（${config.feishuAdmin}）尚未登录，管理员相关能力不可用（可 /login lark 授权）`);
+      logger.warn(`[Main] 启动 2/4 lark-cli 管理员（${config.feishuAdmin}）尚未登录，管理员相关能力不可用（授权链接卡将推送到管理员私聊）`);
     }
   }
 
@@ -502,7 +507,6 @@ ${trimmed}` }] },
     modelName: config.modelName,
     modelBaseUrl: config.modelBaseUrl,
     thinkingLevel: config.thinkingLevel,
-    systemPrompt: config.systemPrompt,
     // Pi 会话 jsonl 落进会话工作区（与图片/附件同在一个文件夹）
     workspaceFor: (conversationId) => workspace.dirFor(conversationId),
     permissionPolicy: policy,
@@ -528,14 +532,22 @@ ${trimmed}` }] },
           logger.info(`[Main] lark-cli 缺少用户 scope，已发起增量授权: ${scopes.join(", ")}（用户 ${uid}）`);
           return `【补充授权已发起】本次调用缺少用户授权 scope：${scopes.join("、")}。已向你的飞书私聊发送补充授权卡片，请完成授权后重试本命令；授权完成后无需其他操作。`;
         },
+        onNotLoggedIn: (uid) => {
+          // lark-cli 未登录/凭证失效：自动发起 Device Flow，授权链接卡推送到用户私聊
+          void userAuth?.ensureLogin(uid).catch((error) => logger.warn("[Main] lark-cli 登录链接推送失败:", error));
+        },
         // Meegle（飞书项目）：/login meegle 授权的静态 token，命令命中 meegle 时注入；
-        // 站点固定为飞书项目（MEEGLE_DEFAULT_HOST）
+        // 站点固定为飞书项目（MEEGLE_DEFAULT_HOST）；无凭证时自动发起到该用户私聊的授权
         extraInjections: [
           {
             commandPattern: /meegle/,
             envToken: "MEEGLE_USER_ACCESS_TOKEN",
             staticEnv: { MEEGLE_HOST: MEEGLE_DEFAULT_HOST },
-            getToken: () => meegleAuth.peekToken(userId),
+            getToken: () => {
+              const token = meegleAuth.peekToken(userId);
+              if (!token) meegleDeviceLogin.beginFor(userId);
+              return token;
+            },
           },
         ],
 
@@ -560,7 +572,13 @@ ${trimmed}` }] },
       // /perm 查看身份、双组策略与工具档位（仅管理员）；/login /logout 用户飞书身份授权（Device Flow）
       extraCommands: [
         new PermCommand(() => policy.describe()),
-        new LoginCommand(userAuth, { meegle: meegleAuth, meegleDevice: meegleDeviceLogin }),
+        new StatusCommand(userAuth, [
+          {
+            id: "meegle",
+            label: "飞书项目（meegle-cli）",
+            ready: (openId) => meegleAuth.peekToken(openId) !== undefined,
+          },
+        ]),
         new LogoutCommand(userAuth),
       ],
       // 回复末尾的模型统计小字开关（工具过程状态不受影响）

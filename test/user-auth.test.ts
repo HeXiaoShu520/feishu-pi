@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CredentialVault } from "../src/utils/credential-vault.ts";
-import { LoginCommand, LogoutCommand, UserAuthService } from "../src/feishu/user-auth.ts";
+import { StatusCommand, LogoutCommand, UserAuthService } from "../src/feishu/user-auth.ts";
 import type { FeishuInboundMessage } from "../src/feishu/types.ts";
 
 /** 构造注入版 UserAuthService：HTTP 全走脚本应答（postForm：第 1 次为 begin，其余为轮询/刷新） */
@@ -322,18 +322,47 @@ describe("getUserAccessToken 刷新", () => {
   });
 });
 
-describe("/login 指令路由（provider 后缀必填）", () => {
-  it("无参数 /login 返回各 CLI 登录状态总览（未登录引导对应 /login 命令）", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "uauth-route-"));
+describe("/status 指令（各 CLI 凭证状态总览）", () => {
+  it("未登录时展示 lark/meegle 状态与自动授权提示", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "uauth-status-"));
     const { service } = makeService({ dir, postForm: vi.fn(), updateCard: async () => {} });
-    const cmd = new LoginCommand(service);
+    const cmd = new StatusCommand(service, [{ id: "meegle", label: "飞书项目（meegle-cli）", ready: () => false }]);
     const result = await cmd.execute(message());
     const card = JSON.stringify(result?.card);
-    expect(card).toContain("登录状态");
+    expect(card).toContain("当前状态");
     expect(card).toContain("未登录");
-    expect(card).toContain("/login lark");
+    expect(card).toContain("meegle");
+    expect(card).toContain("自动弹出授权链接");
   });
 
+  it("展示已登录用户的 scope 与有效期，以及各 provider 就绪状态", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "uauth-status-"));
+    const updates: Array<{ messageId: string; card: object }> = [];
+    const postForm = vi.fn()
+      .mockResolvedValueOnce(BEGIN_OK)
+      .mockResolvedValueOnce({ error: "authorization_pending" })
+      .mockResolvedValueOnce(TOKEN_OK);
+    const { service } = makeService({
+      dir,
+      postForm,
+      updateCard: async (messageId, card) => {
+        updates.push({ messageId, card });
+      },
+    });
+    const login = await service.startLogin(message());
+    login.afterSend?.("om_card");
+    await vi.waitFor(() => expect(updates).toHaveLength(1));
+
+    const cmd = new StatusCommand(service, [{ id: "meegle", label: "飞书项目（meegle-cli）", ready: () => true }]);
+    const result = await cmd.execute(message());
+    const card = JSON.stringify(result?.card);
+    expect(card).toContain("已登录");
+    expect(card).toContain("contact:user.base:readonly");
+    expect(card).toContain("已配置凭证");
+  });
+});
+
+describe("登录态数据面（startLogin/onLoginBound/listLoginUsers）", () => {
   it("登录成功触发 onLoginBound 回调（携带反查身份），供冷启动管理员识别落缓存", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-bound-"));
     const updates: Array<{ messageId: string; card: object }> = [];
@@ -379,55 +408,6 @@ describe("/login 指令路由（provider 后缀必填）", () => {
     login.afterSend?.("om_card");
     await vi.waitFor(async () => expect(await service.listLoginUsers()).toEqual(["ou_test"]));
     expect(await service.describeIdentity("any-token")).toEqual({ openId: "ou_test", name: "测试用户" });
-  });
-
-  it("/login 状态总览展示已登录用户的 scope 与有效期", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "uauth-route-"));
-    const updates: Array<{ messageId: string; card: object }> = [];
-    const postForm = vi.fn()
-      .mockResolvedValueOnce(BEGIN_OK)
-      .mockResolvedValueOnce({ error: "authorization_pending" })
-      .mockResolvedValueOnce(TOKEN_OK);
-    const { service } = makeService({
-      dir,
-      postForm,
-      updateCard: async (messageId, card) => {
-        updates.push({ messageId, card });
-      },
-    });
-    const login = await service.startLogin(message());
-    login.afterSend?.("om_card");
-    await vi.waitFor(() => expect(updates).toHaveLength(1));
-
-    const cmd = new LoginCommand(service);
-    const msg = message();
-    msg.text = "/login";
-    const result = await cmd.execute(msg);
-    const card = JSON.stringify(result?.card);
-    expect(card).toContain("已登录");
-    expect(card).toContain("contact:user.base:readonly");
-  });
-
-  it("/login 未知应用返回支持清单", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "uauth-route-"));
-    const { service } = makeService({ dir, postForm: vi.fn(), updateCard: async () => {} });
-    const cmd = new LoginCommand(service);
-    const msg = message();
-    msg.text = "/login foobar";
-    const result = await cmd.execute(msg);
-    expect(JSON.stringify(result?.card)).toContain("未知的应用");
-  });
-
-  it("/login lark 正常路由到飞书授权", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "uauth-route-"));
-    const postForm = vi.fn().mockResolvedValueOnce(BEGIN_OK);
-    const { service } = makeService({ dir, postForm, updateCard: async () => {} });
-    const cmd = new LoginCommand(service);
-    const msg = message();
-    msg.text = "/login lark";
-    const result = await cmd.execute(msg);
-    expect(JSON.stringify(result?.card)).toContain("ABCD-1234");
-    expect(postForm).toHaveBeenCalledTimes(1);
   });
 });
 

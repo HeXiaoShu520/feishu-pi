@@ -486,8 +486,12 @@ export class UserAuthService {
     return undefined;
   }
 
-  /** 清除用户的登录记录。返回是否存在（供 /logout 回执）。 */
-  async logout(openId: string): Promise<boolean> {
+  /** 未登录/已失效时主动发起授权（卡发用户私聊，后台轮询入库）；已有效或已有进行中的授权则不动。 */
+  async ensureLogin(openId: string): Promise<string | undefined> {
+    return this.ensureScopes(openId, this.options.scopes);
+  }
+
+  /** 清除用户的登录记录。返回是否存在（供 /logout 回执）。 */  async logout(openId: string): Promise<boolean> {
     const existing = await this.store.get(openId);
     if (!existing) return false;
     await this.store.delete(openId);
@@ -573,88 +577,52 @@ export class UserAuthService {
   }
 }
 
-/** 登录 provider 目录：/login <provider> 的可接入清单。 */
-interface ProviderEntry {
+/** 单个 CLI 的凭证状态展示项（/status 用；新 CLI 接入时在此追加一项即可）。 */
+export interface StatusProvider {
+  /** 展示 id（如 meegle） */
+  id: string;
+  /** 展示名（如 飞书项目（meegle-cli）） */
   label: string;
+  /** 该 CLI 的用户凭证是否就绪（同步/异步均可） */
+  ready(openId: string): boolean | Promise<boolean>;
 }
 
-const LOGIN_PROVIDERS: Record<string, ProviderEntry> = {
-  lark: { label: "飞书 CLI（lark-cli）" },
-  meegle: { label: "飞书项目（meegle-cli）" },
-};
-
-/** Meegle 凭证提交/清除/查询的最小接口（由 StaticCredentialService 实现）。 */
-export interface MeegleLoginHandler {
-  submitToken(openId: string, token: string): Promise<void>;
-  logout(openId: string): Promise<boolean>;
-  /** 同步查询是否已有凭证（/login 状态总览用，不返回内容） */
-  peekToken?(openId: string): string | undefined;
-}
-
-/** Meegle Device Flow 登录的最小接口（由 MeegleDeviceLogin 实现；结构化类型便于测试注入）。 */
-export interface MeegleDeviceStarter {
-  startLogin(message: FeishuInboundMessage): Promise<{ card: object; afterSend?: (messageId?: string) => void }>;
-}
-
-export class LoginCommand implements CommandHandler {
+/** /status：展示当前用户在各 CLI 的凭证状态（仅本人视角，不展示任何凭证内容）。 */
+export class StatusCommand implements CommandHandler {
   private readonly auth: UserAuthService;
-  private readonly meegle?: MeegleLoginHandler;
-  private readonly meegleDevice?: MeegleDeviceStarter;
+  private readonly providers: StatusProvider[];
 
-  constructor(auth: UserAuthService, options?: { meegle?: MeegleLoginHandler; meegleDevice?: MeegleDeviceStarter }) {
+  constructor(auth: UserAuthService, providers: StatusProvider[] = []) {
     this.auth = auth;
-    this.meegle = options?.meegle;
-    this.meegleDevice = options?.meegleDevice;
+    this.providers = providers;
   }
 
   match(text: string): boolean {
-    return /^\/login(\s+\S+)?$/.test(text.trim());
+    return /^\/status$/.test(text.trim());
   }
 
   async execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
-    const parts = message.text.trim().split(/\s+/);
-    const provider = parts[1]?.toLowerCase();
-    if (!provider) {
-      return this.statusCard(message.context.userOpenId);
-    }
-    const entry = LOGIN_PROVIDERS[provider];
-    if (!entry) {
-      const known = Object.entries(LOGIN_PROVIDERS).map(([id, e]) => `- \`/login ${id}\`：${e.label}`).join("\n");
-      return { card: markdownCard(`❓ 未知的应用「${provider}」。当前支持：\n${known}`) };
-    }
-    if (provider === "meegle") {
-      if (message.context.chatMode !== "p2p") {
-        return { card: markdownCard("❌ Meegle 授权仅支持在**私聊**中进行。请私聊机器人发送 /login meegle。") };
-      }
-      // Device Flow：发链接卡，后台轮询，同意后 token 加密入库
-      if (!this.meegleDevice) return { card: markdownCard("⏳ Meegle 授权服务未就绪，请稍后重试。") };
-      const login = await this.meegleDevice.startLogin(message);
-      return { card: login.card, afterSend: login.afterSend };
-    }
-
-    return this.auth.startLogin(message);
-  }
-
-  /** /login（无参数）：各 CLI 登录状态总览（仅本人视角，不展示任何凭证内容）。 */
-  private async statusCard(openId: string): Promise<CommandResult> {
-    const lines = ["🔑 **各应用登录状态**", ""];
+    const openId = message.context.userOpenId;
+    const lines = ["📊 **当前状态**", "", "🔑 **CLI 凭证**"];
 
     const status = await this.auth.loginStatus(openId);
     if (status.state === "none") {
-      lines.push("- **lark**（飞书 CLI）：⚪ 未登录 —— `/login lark` 开启");
+      lines.push("- **lark**（飞书 CLI）：⚪ 未登录 —— 首次使用 lark-cli 时会自动弹出授权链接");
     } else if (status.state === "expired") {
-      lines.push("- **lark**（飞书 CLI）：🔴 登录已过期 —— 重新 `/login lark`");
+      lines.push("- **lark**（飞书 CLI）：🔴 已过期 —— 使用 lark-cli 时会自动弹出重新授权链接");
     } else {
       const validUntil = new Date(status.refreshExpiresAt).toLocaleString("zh-CN");
       lines.push(`- **lark**（飞书 CLI）：🟢 已登录（scope：${status.scope || "默认"}，有效期至 ${validUntil}）`);
     }
 
-    const meegleReady = this.meegle?.peekToken?.(openId) !== undefined;
-    lines.push(meegleReady
-      ? "- **meegle**（飞书项目）：🟢 已配置凭证"
-      : "- **meegle**（飞书项目）：⚪ 未配置 —— `/login meegle` 开启");
+    for (const provider of this.providers) {
+      const ready = await provider.ready(openId);
+      lines.push(ready
+        ? `- **${provider.id}**（${provider.label}）：🟢 已配置凭证`
+        : `- **${provider.id}**（${provider.label}）：⚪ 未配置 —— 使用 meegle 命令时会自动弹出授权链接`);
+    }
 
-    lines.push("", "发起登录：`/login <应用名>`，如 `/login lark`。");
+    lines.push("", "💡 未配置的 CLI 在你使用对应命令时会自动推送授权链接，无需主动操作。");
     return { card: markdownCard(lines.join("\n")) };
   }
 }
@@ -678,7 +646,7 @@ export class LogoutCommand implements CommandHandler {
       return { card: markdownCard(removed ? "✅ 已退出登录，用户授权已清除。" : "你当前没有登录记录。") };
     }
     return {
-      card: markdownCard(removed ? "✅ 已退出登录，用户授权已清除。需要用户身份能力时请重新 /login lark。" : "你当前没有登录记录。"),
+      card: markdownCard(removed ? "✅ 已退出登录，用户授权已清除。使用 lark-cli 时会自动弹出重新授权。" : "你当前没有登录记录。"),
     };
   }
 }

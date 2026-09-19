@@ -47,6 +47,8 @@ export interface IdentityBashOptions {
    * 返回追加到工具输出的提示文案（undefined = 不追加）。
    */
   onMissingScopes?: (userId: string, chatId: string | undefined, scopes: string[]) => string | undefined;
+  /** lark-cli 未登录/凭证失效时的回调：主动发起 Device Flow（授权链接卡推送到用户私聊） */
+  onNotLoggedIn?: (userId: string) => void;
   /** 当前会话用户 openId（增量授权定位用户） */
   userId?: string;
   /** 当前会话 chatId（授权卡片的目的会话） */
@@ -148,7 +150,7 @@ export function createIdentityBashTool(options: IdentityBashOptions): ToolDefini
     ) => Promise<{ content: Array<{ type: string; text?: string }>; details?: unknown }>;
   };
 
-  if (!options.onMissingScopes) return tool;
+  if (!options.onMissingScopes && !options.onNotLoggedIn) return tool;
 
   // 包装 execute：lark-cli 权限类失败时触发增量授权，并把提示追加给模型
   const rawExecute = tool.execute.bind(tool);
@@ -167,13 +169,14 @@ export function createIdentityBashTool(options: IdentityBashOptions): ToolDefini
           const note = options.onMissingScopes!(options.userId ?? "", options.chatId, scopes);
           if (note) return { ...result, content: [...(result.content ?? []), { type: "text", text: note }] };
         }
-        // 未登录（99991668）：补授权无从谈起，提示引导 /login
+        // 未登录（99991668）：主动发起 Device Flow（卡发用户私聊），完成后重试即生效
         if (NOT_LOGGED_IN_PATTERN.test(output)) {
+          options.onNotLoggedIn?.(options.userId ?? "");
           return {
             ...result,
             content: [...(result.content ?? []), {
               type: "text",
-              text: "该 lark-cli 调用没有可用的用户凭证（未 /login 或 token 已失效）。请提醒用户在**私聊**中发送 /login lark 完成飞书用户授权后重试；若命令本应以机器人身份执行，请改用 `--as bot`。",
+              text: "该 lark-cli 调用没有可用的用户凭证（未登录或已失效）。已自动向用户的飞书私聊发送授权链接，用户点击完成后重试本命令即可；若命令本应以机器人身份执行，请改用 `--as bot`。",
             }],
           };
         }
