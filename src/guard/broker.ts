@@ -26,7 +26,7 @@ export interface ApprovalRequest {
   reason: string;
   /**
    * 审批模式：admin=管理员卡（默认，仅管理员可批）；self=用户卡——
-   * 命令使用发起者本人的 CLI 凭证（lark-cli 用户态 / meegle / bbt），
+   * 命令使用发起者本人的 CLI 凭证（lark-cli 用户态），
    * 由发起者本人确认即可，无需管理员。
    */
   mode?: "admin" | "self";

@@ -20,12 +20,6 @@ import { logger } from "../utils/logger.ts";
 import { CredentialVault } from "../utils/credential-vault.ts";
 import type { FeishuInboundMessage } from "./types.ts";
 import { markdownCard, type CommandHandler, type CommandResult } from "./commands.ts";
-import { buildCredentialFormCard } from "./credential-card.ts";
-/** Meegle Device Flow 登录的最小接口（由 MeegleDeviceLogin 实现；结构化类型便于测试注入） */
-export interface MeegleDeviceStarter {
-  startLogin(message: FeishuInboundMessage): Promise<{ card: object; afterSend?: (messageId?: string) => void }>;
-}
-
 const DEVICE_AUTHORIZATION_URL = "https://accounts.feishu.cn/oauth/v1/device_authorization";
 const TOKEN_URL = "https://open.feishu.cn/open-apis/authen/v2/oauth/token";
 const DEVICE_CODE_GRANT = "urn:ietf:params:oauth:grant-type:device_code";
@@ -579,60 +573,19 @@ export class UserAuthService {
   }
 }
 
-/**
- * 登录 provider 目录：/login <provider> 的可接入清单。
- * - lark：飞书 CLI（Device Flow，已完整接入）；
- * - meegle / bbt（bitbucket）：占位——各自的用户凭证获取方式确定后在此追加实现，
- *   凭证统一进 CredentialVault 的对应 provider 命名空间。
- */
+/** 登录 provider 目录：/login <provider> 的可接入清单（当前仅 lark）。 */
 interface ProviderEntry {
   label: string;
-  /** 占位 provider 的说明文案（有 startLogin 的 provider 不需要） */
-  pending?: string;
 }
 
 const LOGIN_PROVIDERS: Record<string, ProviderEntry> = {
   lark: { label: "飞书 CLI（lark-cli）" },
-  meegle: { label: "飞书项目（meegle-cli）" },
-  bbt: { label: "Bitbucket（bbt，凭证已可入库）" },
 };
 
-/** Meegle 凭证提交/清除/查询的最小接口（由 StaticCredentialService 实现）。 */
-export interface MeegleLoginHandler {
-  submitToken(openId: string, token: string): Promise<void>;
-  logout(openId: string): Promise<boolean>;
-  /** 同步查询是否已有凭证（/login 状态总览用，不返回内容） */
-  peekToken?(openId: string): string | undefined;
-}
-
-/** 多字段静态凭证（bbt 等）的最小接口（由 StaticCredentialService 实现）。 */
-export interface StaticCredentialHandler {
-  submitFields(openId: string, fields: Record<string, string>): Promise<void>;
-  logout(openId: string): Promise<boolean>;
-  /** 同步查询是否已有凭证（/login 状态总览用，不返回内容） */
-  peekFields?(openId: string): Record<string, string> | undefined;
-}
-
-/** /login <provider>：统一多应用登录入口，必须显式指定应用。
- *  - `/login`（无参数）：展示各 CLI 的登录状态总览（不猜测默认应用）；
- *  - `/login lark`：飞书 Device Flow 授权；
- *  - `/login meegle`：Meegle Device Flow 授权（链接卡 → 后台轮询 → token 加密入库）；
- *  - `/login bbt`：仅私聊发表单卡（用户名 + 应用密码，回调直达加密入库）。
- *  发起后卡片后台轮询/等待回调，完成时原地更新结果。 */
 export class LoginCommand implements CommandHandler {
   private readonly auth: UserAuthService;
-  private readonly meegle?: MeegleLoginHandler;
-  private readonly bbt?: StaticCredentialHandler;
-  private readonly meegleDevice?: MeegleDeviceStarter;
-
-  constructor(
-    auth: UserAuthService,
-    options?: { meegle?: MeegleLoginHandler; bbt?: StaticCredentialHandler; meegleDevice?: MeegleDeviceStarter },
-  ) {
+  constructor(auth: UserAuthService) {
     this.auth = auth;
-    this.meegle = options?.meegle;
-    this.bbt = options?.bbt;
-    this.meegleDevice = options?.meegleDevice;
   }
 
   match(text: string): boolean {
@@ -650,21 +603,7 @@ export class LoginCommand implements CommandHandler {
       const known = Object.entries(LOGIN_PROVIDERS).map(([id, e]) => `- \`/login ${id}\`：${e.label}`).join("\n");
       return { card: markdownCard(`❓ 未知的应用「${provider}」。当前支持：\n${known}`) };
     }
-    if (provider === "meegle") {
-      if (message.context.chatMode !== "p2p") {
-        return { card: markdownCard("❌ Meegle 授权仅支持在**私聊**中进行。请私聊机器人发送 /login meegle。") };
-      }
-      // Device Flow：发链接卡，后台轮询，同意后 token 加密入库
-      if (!this.meegleDevice) return { card: markdownCard("⏳ Meegle 授权服务未就绪，请稍后重试。") };
-      const login = await this.meegleDevice.startLogin(message);
-      return { card: login.card, afterSend: login.afterSend };
-    }
-    if (provider === "bbt") {
-      return this.loginBbt(message);
-    }
-    if (entry.pending) {
-      return { card: markdownCard(`⏳ ${entry.label}：${entry.pending}`) };
-    }
+
     return this.auth.startLogin(message);
   }
 
@@ -682,54 +621,17 @@ export class LoginCommand implements CommandHandler {
       lines.push(`- **lark**（飞书 CLI）：🟢 已登录（scope：${status.scope || "默认"}，有效期至 ${validUntil}）`);
     }
 
-    const meegleReady = this.meegle?.peekToken?.(openId) !== undefined;
-    lines.push(meegleReady
-      ? "- **meegle**（飞书项目）：🟢 已配置凭证"
-      : "- **meegle**（飞书项目）：⚪ 未配置 —— `/login meegle` 提交");
-
-    const bbtReady = this.bbt?.peekFields?.(openId) !== undefined;
-    lines.push(bbtReady
-      ? "- **bbt**（Bitbucket）：🟢 已配置凭证"
-      : "- **bbt**（Bitbucket）：⚪ 未配置 —— `/login bbt` 提交");
-
     lines.push("", "发起登录：`/login <应用名>`，如 `/login lark`。");
     return { card: markdownCard(lines.join("\n")) };
   }
-
-  /** /login meegle：仅私聊，发表单卡（密码框，回调直达入库）。 */
-  /** /login bbt：仅私聊，发表单卡（用户名 + 应用密码，密码框 • 显示，回调直达入库）。 */
-  private loginBbt(message: FeishuInboundMessage): CommandResult {
-    if (message.context.chatMode !== "p2p") {
-      return { card: markdownCard("❌ Bitbucket 凭证提交仅支持在**私聊**中进行（群聊中会暴露给群成员）。请私聊机器人发送 /login bbt。") };
-    }
-    if (!this.bbt) {
-      return { card: markdownCard("⏳ Bitbucket 凭证服务未就绪，请稍后重试。") };
-    }
-    return {
-      card: buildCredentialFormCard({
-        provider: "bbt",
-        title: "🔑 Bitbucket（bbt）凭证提交",
-        intro: "填写用户名与 **App Password**（Bitbucket 设置 → Personal app passwords 生成）后提交；内容经加密回调直达服务端，**不会显示在聊天记录中**。",
-        fields: [
-          { name: "username", label: "用户名", placeholder: "Bitbucket 用户名", inputType: "text", maxLength: 200 },
-          { name: "password", label: "App Password", placeholder: "应用密码", inputType: "password", maxLength: 200 },
-        ],
-        notice: "⏱️ 凭证失效时重新发送 /login bbt 提交即可；提交成功后此卡片会自动更新。",
-      }),
-    };
-  }
 }
 
-/** /logout [provider]：清除登录记录（无参数 = 全部 provider）。 */
+/** /logout：清除本人的飞书登录记录。 */
 export class LogoutCommand implements CommandHandler {
   private readonly auth: UserAuthService;
-  private readonly meegle?: MeegleLoginHandler;
-  private readonly bbt?: StaticCredentialHandler;
 
-  constructor(auth: UserAuthService, options?: { meegle?: MeegleLoginHandler; bbt?: StaticCredentialHandler }) {
+  constructor(auth: UserAuthService) {
     this.auth = auth;
-    this.meegle = options?.meegle;
-    this.bbt = options?.bbt;
   }
 
   match(text: string): boolean {
@@ -738,25 +640,12 @@ export class LogoutCommand implements CommandHandler {
 
   async execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
     const provider = message.text.trim().split(/\s+/)[1]?.toLowerCase() ?? "all";
-    if (provider === "meegle") {
-      const removed = this.meegle ? await this.meegle.logout(message.context.userOpenId) : false;
-      return { card: markdownCard(removed ? "✅ 已清除 Meegle 凭证。" : "你当前没有 Meegle 登录记录。") };
-    }
-    if (provider === "bbt") {
-      const removed = this.bbt ? await this.bbt.logout(message.context.userOpenId) : false;
-      return { card: markdownCard(removed ? "✅ 已清除 Bitbucket 凭证。" : "你当前没有 Bitbucket 登录记录。") };
-    }
-    if (provider !== "all" && provider !== "lark") {
-      return { card: markdownCard(`⏳ ${LOGIN_PROVIDERS[provider]?.label ?? provider}：暂无登录记录可清除（该应用尚未接入 /login）。`) };
-    }
-    const removedLark = await this.auth.logout(message.context.userOpenId);
-    const removedMeegle = this.meegle ? await this.meegle.logout(message.context.userOpenId) : false;
-    const removedBbt = this.bbt ? await this.bbt.logout(message.context.userOpenId) : false;
+    const removed = await this.auth.logout(message.context.userOpenId);
     if (provider === "all") {
-      return { card: markdownCard(removedLark || removedMeegle || removedBbt ? "✅ 已清除你的全部登录凭证（飞书 / Meegle / Bitbucket）。" : "你当前没有登录记录。") };
+      return { card: markdownCard(removed ? "✅ 已退出登录，用户授权已清除。" : "你当前没有登录记录。") };
     }
     return {
-      card: markdownCard(removedLark ? "✅ 已退出登录，用户授权已清除。需要用户身份能力时请重新 /login lark。" : "你当前没有飞书登录记录。"),
+      card: markdownCard(removed ? "✅ 已退出登录，用户授权已清除。需要用户身份能力时请重新 /login lark。" : "你当前没有登录记录。"),
     };
   }
 }

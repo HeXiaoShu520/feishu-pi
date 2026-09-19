@@ -60,22 +60,6 @@ const TOKEN_OK = {
   scope: "contact:user.base:readonly offline_access",
 };
 
-/** 假静态凭证服务（结构化匹配 MeegleLoginHandler / StaticCredentialHandler） */
-function makeFakeMeegle() {
-  return {
-    submitToken: async () => {},
-    logout: async () => true,
-    peekToken: () => "tok",
-  };
-}
-function makeFakeBbt() {
-  return {
-    submitFields: async () => {},
-    logout: async () => true,
-    peekFields: () => ({ username: "u", password: "p" }),
-  };
-}
-
 describe("UserAuthService（Device Flow）", () => {
   it("发起授权返回指引卡；轮询 pending→成功后落库并把原卡更新为成功", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-"));
@@ -228,6 +212,7 @@ describe("UserAuthService 增量授权（ensureScopes）", () => {
 });
 
 
+describe("UserAuthService 链接代点绑定", () => {
   it("链接被他人代点 → token 绑定实际授权账号（人人可绑定自己的飞书）", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-"));
     const updates: object[] = [];
@@ -252,6 +237,7 @@ describe("UserAuthService 增量授权（ensureScopes）", () => {
     expect(await service.getUserAccessToken("ou_B")).toBe("uat_1");
     expect(await service.getUserAccessToken("ou_A")).toBeUndefined();
   });
+});
 
 describe("getUserAccessToken 刷新", () => {
   it("近过期自动刷新（表单编码）；刷新失败清档返回 undefined", async () => {
@@ -331,7 +317,7 @@ describe("getUserAccessToken 刷新", () => {
     expect(await service.getUserAccessToken("ou_test")).toBe("uat_1");
 
     const receipt = await new LogoutCommand(service).execute(message());
-    expect(JSON.stringify(receipt?.card)).toContain("已清除你的全部登录凭证");
+    expect(JSON.stringify(receipt?.card)).toContain("已退出登录");
     expect(await service.getUserAccessToken("ou_test")).toBeUndefined();
   });
 });
@@ -346,7 +332,6 @@ describe("/login 指令路由（provider 后缀必填）", () => {
     expect(card).toContain("登录状态");
     expect(card).toContain("未登录");
     expect(card).toContain("/login lark");
-    expect(card).toContain("/login meegle");
   });
 
   it("登录成功触发 onLoginBound 回调（携带反查身份），供冷启动管理员识别落缓存", async () => {
@@ -431,43 +416,6 @@ describe("/login 指令路由（provider 后缀必填）", () => {
     msg.text = "/login foobar";
     const result = await cmd.execute(msg);
     expect(JSON.stringify(result?.card)).toContain("未知的应用");
-  });
-
-  it("/login meegle 私聊 → 委派 MeegleDeviceLogin 发起 Device Flow 授权", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "uauth-route-"));
-    const postForm = vi.fn();
-    const { service } = makeService({ dir, postForm, updateCard: async () => {} });
-    const sentinel = { card: { marker: "meegle-device-card" } };
-    const startLogin = vi.fn(async () => sentinel);
-    const cmd = new LoginCommand(service, { meegleDevice: { startLogin } });
-    const msg = message();
-    msg.text = "/login meegle";
-    const result = await cmd.execute(msg);
-    expect(startLogin).toHaveBeenCalledTimes(1);
-    expect(result?.card).toBe(sentinel.card);
-    expect(postForm).not.toHaveBeenCalled(); // meegle 授权不经 lark 的 device flow
-  });
-
-  it("/login meegle 群聊拒绝（授权只在私聊发起）；/login bbt 发用户名+密码表单卡", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "uauth-route-"));
-    const { service } = makeService({ dir, postForm: vi.fn(), updateCard: async () => {} });
-    const startLogin = vi.fn(async () => ({ card: {} }));
-    const cmd = new LoginCommand(service, { meegle: makeFakeMeegle(), bbt: makeFakeBbt(), meegleDevice: { startLogin } });
-
-    const groupMsg = message();
-    groupMsg.text = "/login meegle";
-    (groupMsg.context as { chatMode?: string }).chatMode = "group";
-    const groupResult = await cmd.execute(groupMsg);
-    expect(JSON.stringify(groupResult?.card)).toContain("私聊");
-    expect(startLogin).not.toHaveBeenCalled(); // 群聊直接拒绝，不发起授权
-
-    const bbtMsg = message();
-    bbtMsg.text = "/login bbt";
-    const bbtResult = await cmd.execute(bbtMsg);
-    const bbtCard = JSON.stringify(bbtResult?.card);
-    expect(bbtCard).toContain('"provider":"bbt"');
-    expect(bbtCard).toContain("App Password");
-    expect(bbtCard).toContain('"input_type":"password"');
   });
 
   it("/login lark 正常路由到飞书授权", async () => {

@@ -20,7 +20,7 @@ import { logger } from "../utils/logger.ts";
  * 授权卡片发到当前会话），并把提示文案追加到工具输出，让模型转告用户完成授权后重试。
  */
 
-/** 单个 CLI provider 的凭证注入规则（lark 内置；meegle / bitbucket … 走 extraInjections 扩展） */
+/** 单个 CLI provider 的凭证注入规则（lark 内置；其他 CLI 可经 extraInjections 扩展） */
 export interface ProviderInjection {
   /** 命令匹配（对 bash command 做正则测试，命中才注入） */
   commandPattern: RegExp;
@@ -30,20 +30,6 @@ export interface ProviderInjection {
   envToken?: string;
   /** 注入应用 ID 的环境变量名（可选，如 LARKSUITE_CLI_APP_ID） */
   envAppId?: string;
-  /**
-   * 多字段型注入：把凭证库里的字段值映射为环境变量。
-   * 用于凭证明文出现在命令行参数的 CLI（如 bbt 的 --user/--password）——
-   * 命令文本里只写变量名（`--user "$BBT_USERNAME"`），真实值经进程环境进入子进程，
-   * 不出现在命令文本/会话记录/工具展示中。
-   */
-  envFields?: {
-    /** 同步读内存缓存；undefined 表示未登录，不注入 */
-    get: () => Record<string, string> | undefined;
-    /** 字段名 → 环境变量名（字段缺失则跳过该变量） */
-    map: Record<string, string>;
-  };
-  /** 该 CLI 需要的固定环境变量（如 meegle 的 MEEGLE_HOST），注入时一并写入 */
-  staticEnv?: Record<string, string>;
   /** 该 provider 的同步取 token 口（读内存缓存，不触发刷新；单 token 型使用） */
   getToken?: () => string | undefined;
 }
@@ -77,34 +63,18 @@ const LARK_INJECTION: ProviderInjection = {
 };
 
 /**
- * 命令是否以"用户身份"调用 CLI（纯函数，供单测与授权分流）：
- * - meegle / bbt：凭证本身就是用户个人凭证，恒为用户身份；
- * - lark-cli：省略身份（或显式 --as user）时注入用户 token → 用户身份；显式 --as bot 是机器人身份 → 否。
+ * 命令是否以"用户身份"调用 lark-cli（纯函数，供单测与授权分流）：
+ * 省略身份（或显式 --as user）时注入用户 token → 用户身份；显式 --as bot 是机器人身份 → 否。
  * 用于授权分流：用户身份操作弹"用户卡"由发起者本人确认，其余走管理员卡。
  */
 export function matchesUserIdentityCli(command: string): boolean {
-  if (/\bmeegle\b/.test(command) || /\bbbt\b/.test(command)) return true;
-  if (/\blark[-_]?cli\b/.test(command)) return !LARK_INJECTION.excludePattern!.test(command);
-  return false;
-}
-
-/**
- * 把 bbt 命令里的明文凭证参数改写为环境变量引用（纯函数，供单测）。
- * 模型偶尔不守技能约定直接写 `--password 真值`——在工具执行与会话落盘前改写为
- * `--password "$BBT_PASSWORD"`：spawnHook 注入真实值后执行结果不变，
- * 而会话记录、卡片展示、终端日志里只剩变量名。$ 开头的引用（已合规）原样保留。
- */
-export function rewritePlaintextCliCredentials(command: string): string {
-  if (!/\bbbt\b/.test(command)) return command;
-  return command
-    .replace(/(--user(?:name)?\s*=?\s*)("?)((?!\$)[^\s"']{1,})\2/gi, '$1"$BBT_USERNAME"')
-    .replace(/(--(?:password|passwd|pwd)\s*=?\s*)("?)((?!\$)[^\s"']{1,})\2/gi, '$1"$BBT_PASSWORD"');
+  if (!/\blark[-_]?cli\b/.test(command)) return false;
+  return !LARK_INJECTION.excludePattern!.test(command);
 }
 
 /**
  * 纯函数：按规则把凭证写入 spawn 环境（供单测）。
  * 逐规则判断：命令匹配、未被排除、且有可用凭证 —— 三者齐备才注入。
- * 单 token 型（envToken + getToken）与多字段型（envFields）可并存；任一凭证注入成功才写 staticEnv。
  */
 export function applyCredentialInjections(
   command: string,
@@ -115,30 +85,10 @@ export function applyCredentialInjections(
     if (!rule.commandPattern.test(command)) continue;
     if (rule.excludePattern?.test(command)) continue;
 
-    let injected = false;
-
     const token = rule.getToken?.();
     if (token && rule.envToken) {
       env[rule.envToken] = token;
       if (rule.envAppId && rule.appId) env[rule.envAppId] = rule.appId;
-      injected = true;
-    }
-
-    if (rule.envFields) {
-      const fields = rule.envFields.get();
-      if (fields) {
-        for (const [field, envName] of Object.entries(rule.envFields.map)) {
-          const value = fields[field];
-          if (value) env[envName] = value;
-        }
-        injected = true;
-      }
-    }
-
-    if (injected) {
-      for (const [key, value] of Object.entries(rule.staticEnv ?? {})) {
-        env[key] = value;
-      }
     }
   }
 }

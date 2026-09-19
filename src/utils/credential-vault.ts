@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { logger } from "./logger.ts";
 
 /**
- * 加密凭证库：所有 CLI（lark-cli / meegle / bitbucket …）按用户隔离的密钥统一落盘层。
+ * 加密凭证库：所有 CLI（如 lark-cli）按用户隔离的密钥统一落盘层。
  *
  * 线上格式（data/credentials/<provider>.vault.json）：整个记录表序列化为 JSON 后整体 AES-256-GCM 加密，
  * 落盘内容为 { version, salt, iv, tag, data }（全部 base64）。防的是"主体文件单独泄漏"

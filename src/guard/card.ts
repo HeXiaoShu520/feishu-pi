@@ -66,7 +66,7 @@ export function buildPermissionCard(params: PermissionCardParams): object {
         {
           tag: "markdown",
           content: self
-            ? "⚠️ 该命令将以**你的个人凭证**执行（你的飞书 / Meegle / Bitbucket 账号），仅你本人点击有效，授权仅本次生效"
+            ? "⚠️ 该命令将以**你的个人凭证**执行（你的飞书账号），仅你本人点击有效，授权仅本次生效"
             : "⚠️ 仅管理员点击有效，授权仅本次生效",
         },
         buttonsRow,
