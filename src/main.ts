@@ -31,7 +31,6 @@ import { ToolGuard } from "./guard/tool-guard.ts";
 import { PolicyJudge } from "./guard/judge.ts";
 import { buildNoticeCard } from "./guard/card.ts";
 import { AskBroker, createAskUserTool } from "./feishu/ask-broker.ts";
-import { createLocalOcrRunner } from "./feishu/local-ocr.ts";
 import type { CleanupStats } from "./runtime/data-cleaner.ts";
 
 /** 授权请求失效（服务重启/已处理）时就地更新的提示卡文案。 */
@@ -75,7 +74,7 @@ export async function main(): Promise<void> {
   const messages = new MessageStore(config.messagesFile);
 
   // 启动时清理过期数据和卡住的消息。清理以「会话目录」为单位：
-  // 整个目录超过保留期就整体删除（历史 jsonl、图片、附件、OCR 过程文件同属一个会话，不拆开删）
+  // 整个目录超过保留期就整体删除（历史 jsonl、图片、附件同属一个会话，不拆开删）
   const cleaner = new DataCleaner({
     sessionsRoot: config.sessionsRoot,
     messagesFile: config.messagesFile,
@@ -163,7 +162,7 @@ export async function main(): Promise<void> {
     vaultKeyFile,
     "meegle",
   );
-  // 会话注册表：会话的第一句话就为它建立一个专属目录，jsonl/图片/附件/OCR 过程文件全部在里面；
+  // 会话注册表：会话的第一句话就为它建立一个专属目录，jsonl/图片/附件全部在里面；
   // `/new` 换代 = 新会话 id + 新目录，旧目录留在磁盘上等过期清理
   const sessions = new SessionStore(config.sessionsFile, config.sessionsRoot);
   // 用户飞书身份授权（Device Flow，RFC 8628）：按 openId 加密存取 user_access_token；
@@ -307,12 +306,6 @@ export async function main(): Promise<void> {
     client,
     sessions,
 
-    // 本地 OCR 兜底（模型无视觉能力时启用）：下载图片 → tesseract.js 识别 → 文字并入消息。
-    // 语言包工作副本放当前会话目录的 ocr/（随会话一起清理），首次下载后回存到
-    // data/assets/ocr/ 共享缓存，后续会话直接本地复制，不再联网
-    useExtraOcr: config.useExtraOcr,
-    ocrImage: createLocalOcrRunner({ langCacheDir: join(config.assetsDir, "ocr") }),
-    modelHasVision: () => getModel(config.modelProvider as never, config.modelName as never)?.input?.includes("image") === true,
     adminOpenId,
     topicRootsFile: config.topicRootsFile,
     // lark-cli 用户态搜索通道（contact +search-user）：部门信息的主要来源，不依赖需审核权限；
@@ -500,7 +493,7 @@ ${trimmed}` }] },
     modelName: config.modelName,
     modelBaseUrl: config.modelBaseUrl,
     thinkingLevel: config.thinkingLevel,
-    // 会话目录的唯一事实来源：Pi 会话 jsonl 与图片/附件/OCR 过程文件同在一个会话目录
+    // 会话目录的唯一事实来源：Pi 会话 jsonl 与图片/附件同在一个会话目录
     sessions,
     permissionPolicy: policy,
     toolGuard: (groupPolicy, params, signal) => toolGuard.check(groupPolicy, params, signal),

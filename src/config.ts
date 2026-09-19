@@ -14,8 +14,7 @@ export interface FeishuPiAppConfig {
   messagesFile: string;
   /** 话题根表（话题群会话收敛用） */
   topicRootsFile: string;
-  /** 共享资源缓存目录（OCR 语言包等），会话目录按需从它播种 */
-  assetsDir: string;
+  /** 共享资源缓存目录，会话目录按需从它播种 */
   /** Per-user 授权（Device Flow，/login）申请的用户身份 scope；留空 = 禁用 /login */
   userAuthScopes: string[];
   modelProvider: string;
@@ -23,8 +22,6 @@ export interface FeishuPiAppConfig {
   modelBaseUrl?: string;
   /** 思考档位：off=关闭思考，low/high/max 各模型自动适配等效等级（FEISHU_PI_THINKING_LEVEL，默认 high） */
   thinkingLevel: ThinkingLevelConfig;
-  /** 本地 OCR 兜底：模型无视觉能力时，把下载图片 OCR 成文字一并交给模型（FEISHU_USE_EXTRA_OCR） */
-  useExtraOcr: boolean;
   /** 智能体审核接口（OpenAI 兼容）；未配置则策略外调用直接弹卡 */
   guardBaseUrl?: string;
   /** 审核模型列表（多个时全部 allow 才放行，任一 ask 即弹卡） */
@@ -128,12 +125,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     feishuAppSecret: required("FEISHU_APP_SECRET"),
     feishuAdmin: env.FEISHU_PI_ADMIN || "", // 可选：支持中文名、英文名、open_id、邮箱
     cwd: process.cwd(),
-    // 会话目录根：会话的第一句话就为它建立一个专属目录，jsonl/图片/附件/OCR 过程文件全在里面
+    // 会话目录根：会话的第一句话就为它建立一个专属目录，jsonl/图片/附件全在里面
     sessionsRoot: `${process.cwd()}/work_space`,
     sessionsFile: `${process.cwd()}/data/sessions.json`,
     messagesFile: `${process.cwd()}/data/messages.json`,
     topicRootsFile: `${process.cwd()}/data/topic-roots.json`,
-    assetsDir: `${process.cwd()}/data/assets`,
     // 非会话数据（用户资料、凭证、记忆、共享缓存）统一在 data/ 下
     dataDir: `${process.cwd()}/data`,
     // 用户身份授权 scope（Device Flow）：默认内置"用户资料查询"所需最小集合；FEISHU_USER_AUTH_SCOPES 可覆盖。
@@ -144,9 +140,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     // （FEISHU_PI_MODEL_PROVIDER 环境变量已移除）
     modelProvider: deriveModelProvider(env.FEISHU_PI_MODEL_NAME ?? "claude-sonnet-4-6"),
     modelBaseUrl: env.FEISHU_PI_MODEL_BASE_URL,
-    // FEISHU_PI_MODEL_VISION=1 → 模型声明含图片输入（覆盖内置目录的过时元数据）
-    // 本地 OCR 兜底（tesseract.js，首次联网下载语言包）：模型无视觉能力时把图片文字识别后交给模型
-    useExtraOcr: parseBoolEnv(env.FEISHU_USE_EXTRA_OCR, false),
     // 思考档位默认 high（观察思考对回复质量/耗时的实际影响）：pi 默认 off（显式发 thinking:disabled），
     // 想关思考配 off，各模型自动适配等效等级
     thinkingLevel: parseThinkingLevel(env.FEISHU_PI_THINKING_LEVEL),

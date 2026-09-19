@@ -16,25 +16,15 @@ import { logger } from "../utils/logger.ts";
 export interface ProcessedImage {
   data: Uint8Array;
   mimeType: string;
-  /** 本地 OCR 识别出的文字（useExtraOcr 开启时存在；供无视觉模型以文本方式"看图"） */
-  ocrText?: string;
   /** 落盘位置（传 cacheDir 时存在）。图片 base64 不再写入会话记录，消息文本靠它指回原图 */
   savedPath?: string;
 }
 
-/** 本地 OCR 执行器：图片 Buffer → 识别文本（失败抛错/返回 undefined 均可，调用方降级） */
-export type OcrRunner = (image: Buffer) => Promise<string | undefined>;
-
 export interface FeishuImageProcessor {
   /** 下载消息中的图片并转换为 Pi 可用格式 */
-  processImage(messageId: string, imageKey: string, cacheDir?: string, ocr?: OcrRunner): Promise<ProcessedImage | undefined>;
+  processImage(messageId: string, imageKey: string, cacheDir?: string): Promise<ProcessedImage | undefined>;
   /** 批量处理图片（cacheDir 可覆盖默认缓存目录） */
-  processImages(
-    messageId: string,
-    imageKeys: string[],
-    cacheDir?: string,
-    ocr?: OcrRunner,
-  ): Promise<ProcessedImage[]>;
+  processImages(messageId: string, imageKeys: string[], cacheDir?: string): Promise<ProcessedImage[]>;
 }
 
 export class LarkImageProcessor implements FeishuImageProcessor {
@@ -45,7 +35,7 @@ export class LarkImageProcessor implements FeishuImageProcessor {
   }
 
   /** 下载单张图片：失败返回 undefined（不阻断其余图片/消息处理）。 */
-  async processImage(messageId: string, imageKey: string, cacheDir?: string, ocr?: OcrRunner): Promise<ProcessedImage | undefined> {
+  async processImage(messageId: string, imageKey: string, cacheDir?: string): Promise<ProcessedImage | undefined> {
     try {
       const response = await this.client.im.v1.messageResource.get({
         path: { message_id: messageId, file_key: imageKey },
@@ -66,17 +56,7 @@ export class LarkImageProcessor implements FeishuImageProcessor {
         }
       }
 
-      const processed: ProcessedImage = { data: new Uint8Array(imageData), mimeType: this.detectMimeType(imageData), savedPath };
-
-      // 本地 OCR（useExtraOcr 开启时由传输层注入）：把图片文字提取出来，供无视觉模型以文本方式获取
-      if (ocr) {
-        try {
-          processed.ocrText = await ocr(imageData);
-        } catch (err) {
-          logger.warn("[LarkImageProcessor] OCR 识别失败（跳过，不影响图片本体）", err);
-        }
-      }
-      return processed;
+      return { data: new Uint8Array(imageData), mimeType: this.detectMimeType(imageData), savedPath };
     } catch (err) {
       logger.error("[LarkImageProcessor] 处理图片失败", imageKey, err);
       return undefined;
@@ -85,13 +65,8 @@ export class LarkImageProcessor implements FeishuImageProcessor {
 
   /** 并发处理多张图片；单张失败自动跳过（allSettled + 过滤 undefined）。
    *  cacheDir 传入时把图片落盘到该目录（会话工作区/images），不传则不落盘。 */
-  async processImages(
-    messageId: string,
-    imageKeys: string[],
-    cacheDir?: string,
-    ocr?: OcrRunner,
-  ): Promise<ProcessedImage[]> {
-    const results = await Promise.allSettled(imageKeys.map((key) => this.processImage(messageId, key, cacheDir, ocr)));
+  async processImages(messageId: string, imageKeys: string[], cacheDir?: string): Promise<ProcessedImage[]> {
+    const results = await Promise.allSettled(imageKeys.map((key) => this.processImage(messageId, key, cacheDir)));
     return results
       .filter((r): r is PromiseFulfilledResult<ProcessedImage | undefined> => r.status === "fulfilled")
       .map((r) => r.value)

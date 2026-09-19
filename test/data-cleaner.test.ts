@@ -18,20 +18,18 @@ async function ageTree(path: string): Promise<void> {
   await age(path);
 }
 
-/** 造一个会话目录：历史 jsonl + 附件 + OCR 过程文件都在里面 */
+/** 造一个会话目录：历史 jsonl + 附件都在里面 */
 async function makeSession(root: string, sessionId: string): Promise<string> {
   const dir = join(root, sessionId);
   await mkdir(join(dir, "files"), { recursive: true });
-  await mkdir(join(dir, "ocr"), { recursive: true });
   await writeFile(join(dir, "session.json"), "{}");
   await writeFile(join(dir, "history.jsonl"), "x");
   await writeFile(join(dir, "files", "报表.xlsx"), "x");
-  await writeFile(join(dir, "ocr", "chi_sim.traineddata"), "x");
   return dir;
 }
 
 describe("DataCleaner 以会话目录为清理单位", () => {
-  it("整个会话目录过期就整体删除（历史/附件/OCR 过程文件一起走）", async () => {
+  it("整个会话目录过期就整体删除（历史/附件一起走）", async () => {
     const root = await mkdtemp(join(tmpdir(), "clean-"));
     const expired = await makeSession(root, "20260901-100000-aaaa");
     await ageTree(expired); // 目录树整体停在 10 天前
@@ -54,7 +52,7 @@ describe("DataCleaner 以会话目录为清理单位", () => {
 
     expect(stats.sessionsDeleted).toBe(0);
     // 目录原样保留：既没有半截会话，也没有被拆散的附件
-    expect(await readdir(active)).toEqual(expect.arrayContaining(["history.jsonl", "files", "ocr"]));
+    expect(await readdir(active)).toEqual(expect.arrayContaining(["history.jsonl", "files"]));
     expect(await readdir(join(active, "files"))).toEqual(["报表.xlsx"]);
   });
 

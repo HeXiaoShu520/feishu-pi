@@ -2,7 +2,7 @@
 
 ## 一句话模型
 
-**一次会话 = 磁盘上一个目录**（会话目录）。会话期间产生的所有文件——Pi 历史（jsonl）、用户发来的图片、文件附件、OCR 过程文件——全部落在该目录里；会话目录之外的 `data/` 只放"特殊"长期数据（记忆、用户、凭证、索引、共享缓存）。
+**一次会话 = 磁盘上一个目录**（会话目录）。会话期间产生的所有文件——Pi 历史（jsonl）、用户发来的图片、文件附件——全部落在该目录里；会话目录之外的 `data/` 只放"特殊"长期数据（记忆、用户、凭证、索引、共享缓存）。
 
 清理也以**会话目录**为单位：整个目录超过保留期（7 天）就整体删除，不做文件级删减。
 
@@ -15,7 +15,6 @@ work_space/                              # 会话目录根（一次会话一个�
     │   └── img_v3_….jpg
     ├── files/                           # 该会话收到的文件附件
     │   └── 1757…-报表.xlsx
-    └── ocr/                             # OCR 过程文件（tesseract 语言包工作副本）
 
 data/                                    # 非会话数据（长期）
 ├── sessions.json                        # 会话索引：conversationId → 当前会话
@@ -24,7 +23,6 @@ data/                                    # 非会话数据（长期）
 ├── memory/MEMORY.md                     # 团队记忆
 ├── credentials/                         # 加密凭证库（lark.vault.json / .vault-key / meegle.vault.json）
 ├── users/{appId}_users.json             # 用户资料缓存（3 天过期）
-├── assets/ocr/                          # 共享 OCR 语言包（可重建的共享缓存）
 ├── schedules.json                       # 定时任务表
 └── stats/skill-usage.jsonl              # 技能使用事件流（长期留存）
 ```
@@ -76,13 +74,6 @@ data/                                    # 非会话数据（长期）
 ### `files/` - 会话收到的文件附件
 
 文件名 `{毫秒时间戳}-{消毒后的原始文件名}`（同名文件先后上传不互相覆盖），单条消息最多下载 5 个，Agent 可通过消息文本里的路径直接读取。
-
-### `ocr/` - OCR 过程文件
-
-只有模型没有视觉能力且开启 `FEISHU_USE_EXTRA_OCR` 时才会出现：tesseract.js 的语言包工作副本放这里（`chi_sim.traineddata` + `eng.traineddata`，约 7.4MB）。语言包是"输入资源"而不是会话产物，因此：
-
-- 用前从共享目录 `data/assets/ocr/` **播种**到本会话目录，用后把新下载的语言包**回存**到共享目录；
-- 首次在某台机器上跑 OCR 才会联网下载，之后跨会话都是本地复制，且语言包随会话目录被清理。
 
 ### `data/sessions.json` - 会话索引
 
@@ -145,10 +136,9 @@ data/                                    # 非会话数据（长期）
 ### ✅ 会自动创建
 
 - `work_space/{sessionId}/`（含 `session.json`）— 会话第一句话时创建
-- `{会话目录}/images|files|ocr/` — 首次收到图片/附件/需要 OCR 时创建
+- `{会话目录}/images|files/` — 首次收到图片/附件时创建
 - `data/sessions.json` / `data/messages.json` — 首次运行时创建
 - `data/topic-roots.json` — 首次收到话题群消息时创建
-- `data/assets/ocr/` — 首次跑本地 OCR 时创建
 - `data/users/{appId}_users.json` — 首次查询用户资料时创建
 
 ### ❌ 不要手工往会话目录外扔东西

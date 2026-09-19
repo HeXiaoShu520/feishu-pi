@@ -85,7 +85,7 @@ interface FeishuContext {
 
 **回复形态：** 话题群内回复一律以话题形式（`reply_in_thread: true`）落进原话题——包括话题根消息（它自身没有 threadId，若按"有无 threadId"判定，飞书会为回复另开一个新话题）；私聊与普通群跟随消息自身形态：普通消息普通回复，消息本身在线程内则回线程内。
 
-**会话数据存储（一次会话 = 一个会话目录）：** 会话的**第一句话**就在 `work_space/` 下给它建一个专属目录（目录名 = 会话 id，如 `20260919-145252-a1b2c3`），Pi 会话历史（jsonl）、用户发来的图片（`images/`）、文件附件（`files/`）、OCR 过程文件（`ocr/`）**全部落在里面**；`conversationId → 当前会话` 的索引在 `data/sessions.json`，程序恢复会话以它为准。会话目录之外的 `data/` 只放长期数据（记忆、用户资料、凭证、会话索引、共享语言包缓存）。
+**会话数据存储（一次会话 = 一个会话目录）：** 会话的**第一句话**就在 `work_space/` 下给它建一个专属目录（目录名 = 会话 id，如 `20260919-145252-a1b2c3`），Pi 会话历史（jsonl）、用户发来的图片（`images/`）、文件附件（`files/`）**全部落在里面**；`conversationId → 当前会话` 的索引在 `data/sessions.json`，程序恢复会话以它为准。会话目录之外的 `data/` 只放长期数据（记忆、用户资料、凭证、会话索引）。
 
 `/new` 在话题内被禁止（共享会话不允许单人换代），私聊和普通群可用。它做的是**换代**：分配新会话 id、建新会话目录，历史从空开始；旧目录留在磁盘上（不删、也不再参与对话），由 `data-cleaner` 按 7 天保留期以**会话目录为单位整体清理**——不做文件级删减，避免留下"历史没了、附件还在"的半截会话。
 
@@ -226,8 +226,6 @@ FEISHU_PI_MODEL_API_KEY=sk-ant-xxx
 两个覆盖项：
 
 - `FEISHU_PI_MODEL_BASE_URL`：填了就覆盖目录默认地址（走中转站时用；不填用官方地址）；
-- `FEISHU_USE_EXTRA_OCR=1`：模型无视觉能力时，把下载的图片本地 OCR 成文字交给模型
-  （模型目录声明支持图片时自动关闭，图片直接传给模型）。
 
 密钥注入：`FEISHU_PI_MODEL_API_KEY` 会按 pi 自带的厂商映射表注入对应环境变量
 （deepseek→`DEEPSEEK_API_KEY`、openai→`OPENAI_API_KEY`、anthropic→`ANTHROPIC_API_KEY`、google→`GEMINI_API_KEY`…覆盖目录内全部 39 家）。

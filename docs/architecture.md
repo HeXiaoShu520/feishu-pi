@@ -217,11 +217,10 @@ Agent 处理失败时，Bridge 将卡片更新为失败提示并记录日志；�
 
 | 路径 | 内容 | 清理策略 |
 |------|------|---------|
-| `work_space/{sessionId}/` | 会话目录：Pi 会话 jsonl、图片、附件、OCR 过程文件全在里面 | 整个目录树最后活跃时间早于 7 天即整目录删除 |
+| `work_space/{sessionId}/` | 会话目录：Pi 会话 jsonl、图片、附件全在里面 | 整个目录树最后活跃时间早于 7 天即整目录删除 |
 | `data/sessions.json` | conversationId → 当前会话（id/目录/sessionFile） | 不主动清理；目录不存在时下次使用重建会话 |
 | `data/messages.json` | 消息处理状态（去重） | 保留 7 天；processing 超 1 小时视为卡住清理 |
 | `data/topic-roots.json` | 话题根消息 ID | — |
-| `data/assets/ocr/` | 共享 OCR 语言包（跨会话复用） | 不清理（可重建） |
 | `data/user-tokens.json` | 用户飞书身份 token（/login） | 不按期清理；refresh 失效时按用户清档 |
 | `data/stats/skill-usage.jsonl` | 技能使用事件流（JSONL，只增不删） | 不清理，长期留存 |
 | `data/schedules.json` | 定时任务表（cron + 指令 + 目标会话） | 不自动清理；删除靠对话管理或手动编辑 |

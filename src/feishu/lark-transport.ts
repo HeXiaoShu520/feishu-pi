@@ -5,7 +5,7 @@ import { TopicRootStore } from "./topic-root-store.ts";
 import { LarkImageProcessor } from "./image-processor.ts";
 import { formatLogText } from "./log-utils.ts";
 import { logger } from "../utils/logger.ts";
-import { attachmentsDirOfSession, imagesDirOfSession, ocrDirOfSession, sanitizeFileName } from "../utils/session-paths.ts";
+import { attachmentsDirOfSession, imagesDirOfSession, sanitizeFileName } from "../utils/session-paths.ts";
 import { upsertEnvLine } from "../utils/env-file.ts";
 import { toBuffer } from "./resource-buffer.ts";
 import { mentionedUserIds } from "./people-roster.ts";
@@ -34,18 +34,12 @@ export interface LarkTransportConfig {
   pingTimeout?: number;
   /** 飞书 Client 实例（消息发送、卡片更新、资源下载等 API 调用） */
   client: Client;
-  /** 会话注册表：一次会话一个目录，图片/附件/OCR 过程文件全部落在那里面 */
+  /** 会话注册表：一次会话一个目录，图片/附件全部落在那里面 */
   sessions: SessionStore;
   /** 管理员 Open ID（可选） */
   adminOpenId?: string;
   /** 话题根持久化文件路径（话题群会话收敛用） */
   topicRootsFile?: string;
-  /** 本地 OCR 兜底开关：模型无视觉能力时，把下载图片 OCR 成文字一并交给模型 */
-  useExtraOcr?: boolean;
-  /** 本地 OCR 执行器（图片 Buffer + 本会话的 OCR 过程目录 → 文本） */
-  ocrImage?: (image: Buffer, scratchDir: string) => Promise<string | undefined>;
-  /** 当前模型是否支持视觉（支持则不做 OCR，直接传图） */
-  modelHasVision?: () => boolean;
   /** lark-cli 用户态搜索通道（contact +search-user，见 lark-cli-search.ts）：部门信息的来源 */
   searchUserProfile?: (openId: string) => Promise<{ name?: string; en_name?: string; department_name?: string[] } | undefined>;
   /** 模型切换回调（/model 指令确认后触发，用于运行时热切换） */
@@ -83,10 +77,6 @@ export class LarkTransport implements FeishuTransport {
   /** 话题根持久化（chatId -> 待定话题根 messageId） */
   private readonly topicRoots?: TopicRootStore;
   private readonly sessions: SessionStore;
-  /** 本地 OCR 兜底开关与执行器（模型无视觉能力时启用） */
-  private readonly useExtraOcr?: boolean;
-  private readonly ocrImage?: (image: Buffer, scratchDir: string) => Promise<string | undefined>;
-  private readonly modelHasVision?: () => boolean;
 
   constructor(config: LarkTransportConfig) {
     this.appId = config.appId;
@@ -102,9 +92,6 @@ export class LarkTransport implements FeishuTransport {
     if (config.topicRootsFile) {
       this.topicRoots = new TopicRootStore(config.topicRootsFile);
     }
-    this.useExtraOcr = config.useExtraOcr;
-    this.ocrImage = config.ocrImage;
-    this.modelHasVision = config.modelHasVision;
     this.larkCli = new LarkCli(config.appId, config.userProfileDir, {
       searchUser: config.searchUserProfile,
     });
@@ -217,30 +204,22 @@ export class LarkTransport implements FeishuTransport {
       // 处理图片附件（含 post 富文本里的图片：SDK 会把它们放进 resources）
       let images;
       let imageCount = 0;
-      let ocrNotes: string[] = [];
       let imageNotes: string[] = [];
       const resources = (message as unknown as { resources?: Array<{ type: string; fileKey: string; fileName?: string }> }).resources ?? [];
       if (resources.length > 0) {
         const imageKeys = resources.filter((r) => r.type === "image").map((r) => r.fileKey);
         if (imageKeys.length > 0) {
           imageCount = imageKeys.length;
-          // 模型无视觉能力 + useExtraOcr 开启 → 下载后本地 OCR，把识别文字并入消息文本
-          const wantOcr = !!this.useExtraOcr && !(this.modelHasVision?.() ?? true);
           const processed = await this.imageProcessor?.processImages(
             message.messageId,
             imageKeys,
             imagesDirOfSession(sessionDir),
-            wantOcr && this.ocrImage ? (image: Buffer) => this.ocrImage!(image, ocrDirOfSession(sessionDir)) : undefined,
           );
           if (processed && processed.length > 0) {
             // 图片 base64 不写入会话记录（易失内容不落盘，见 runtime 的 disableVolatilePersistence），
             // 这里把落盘路径写进消息文本，需要时可用 read 工具按路径取回原图
             imageNotes = processed.map((img) => img.savedPath).filter((p): p is string => !!p);
-            if (wantOcr) {
-              ocrNotes = processed.map((img) => img.ocrText).filter((t): t is string => !!t);
-            } else {
-              images = processed;
-            }
+            images = processed;
           }
         }
       }
@@ -257,11 +236,6 @@ export class LarkTransport implements FeishuTransport {
           (fileKey, type) => this.downloadResource(message.messageId, fileKey, type),
         );
         if (attachmentNote) cleanedText += attachmentNote;
-      }
-
-      if (ocrNotes.length > 0) {
-        // 无视觉模型：OCR 结果并入消息文本，让模型以文字方式"看图"
-        cleanedText += `\n[图片文字识别]\n${ocrNotes.join("\n---\n")}`;
       }
 
       if (imageNotes.length > 0) {

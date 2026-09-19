@@ -5,8 +5,7 @@
  *   ├── session.json                     ← 目录自述：会话 id / 所属会话 / 创建时间
  *   ├── *.jsonl                          ← Pi 会话历史
  *   ├── images/                          ← 用户发来的图片
- *   ├── files/                           ← 用户发来的文件/语音/视频附件
- *   └── ocr/                             ← OCR 过程文件（语言包工作副本等）
+ *   └── files/                           ← 用户发来的文件/语音/视频附件
  *
  * 会话目录之外只有"特殊"长期数据（data/ 下的记忆、用户、凭证、索引、共享缓存）。
  */
@@ -17,8 +16,6 @@ import { join } from "node:path";
 export const ATTACHMENTS_SUBDIR = "files";
 /** 会话目录内的图片子目录（用户发来的图片） */
 export const IMAGES_SUBDIR = "images";
-/** 会话目录内的 OCR 过程目录（tesseract 语言包工作副本等） */
-export const OCR_SUBDIR = "ocr";
 /** 会话目录自述文件名 */
 export const SESSION_META_FILE = "session.json";
 
@@ -26,8 +23,6 @@ export const SESSION_META_FILE = "session.json";
 export const attachmentsDirOfSession = (sessionDir: string): string => join(sessionDir, ATTACHMENTS_SUBDIR);
 /** 会话目录内的图片目录：`{会话目录}/images/` */
 export const imagesDirOfSession = (sessionDir: string): string => join(sessionDir, IMAGES_SUBDIR);
-/** 会话目录内的 OCR 过程目录：`{会话目录}/ocr/` */
-export const ocrDirOfSession = (sessionDir: string): string => join(sessionDir, OCR_SUBDIR);
 
 /** 文件/目录名消毒：把路径分隔符等文件系统保留字符替换为 _，防路径逃逸；空名兜底 unnamed。 */
 export function sanitizeFileName(name: string): string {

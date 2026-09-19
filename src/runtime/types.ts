@@ -39,7 +39,7 @@ export interface FeishuPiConfig {
   thinkingLevel: ThinkingLevelConfig;
   /** 系统提示（身份 + 行为规则）由 Pi 自动发现 <agentDir>/SYSTEM.md（即 .agent/SYSTEM.md）注入，此处不再透传 */
   /** 统一权限策略（.agent/permissions.json）：工具注册、调用判定、可读范围全部由它驱动 */
-  /** 会话注册表：会话目录（jsonl/图片/附件/OCR 过程文件同居其中）的唯一事实来源 */
+  /** 会话注册表：会话目录（jsonl/图片/附件同居其中）的唯一事实来源 */
   sessions: SessionStore;
   permissionPolicy: PermissionPolicy;
   /** 工具调用 Guard（beforeToolCall 钩子），可选；signal 中止（/stop）时取消授权等待。
