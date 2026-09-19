@@ -16,6 +16,8 @@ import { logger } from "../utils/logger.ts";
 const CARD_SCHEMA = "2.0";
 const STREAM_ELEMENT_ID = "stream_md";
 const STATS_ELEMENT_ID = "stats_md";
+/** 状态栏空态占位字符（盲文空位 U+2800）：不可见但保留一行高度，避免状态栏忽隐忽现导致卡片跳动 */
+export const STATS_PLACEHOLDER = "\u2800";
 
 interface CardKitStreamOptions {
   client: Client;
@@ -282,7 +284,7 @@ export class CardKitStream {
           },
           {
             tag: "markdown",
-            content: statsText || " ",
+            content: statsText || STATS_PLACEHOLDER,
             text_size: "notation",
             element_id: STATS_ELEMENT_ID,
           },

@@ -11,6 +11,7 @@ import { logger } from "../utils/logger.ts";
 import { createDefaultRegistry, DetailCommand, NewCommand, StopCommand, markdownCard, type CommandRegistry, type CommandHandler } from "./commands.ts";
 import { randomUUID } from "node:crypto";
 import { formatStatsLine, formatToolCall, toolIcon, ReplyParts } from "./reply-parts.ts";
+import { STATS_PLACEHOLDER } from "./cardkit-stream.ts";
 import type { PeopleRoster } from "./people-roster.ts";
 
 /** 工具段延迟上屏阈值：工具运行满该时长才显示工具段与小字动画，快速指令不刷屏。 */
@@ -225,8 +226,8 @@ export class FeishuAgentBridge {
               pendingToolTimer = undefined;
             } else {
               await pendingToolFrameWrite;
-              // 清空小字，等待下一次工具调用或最终统计（完成状态不占正文，避免刷屏）
-              await reply.updateStats(" ");
+              // 清成占位字符（不可见但保留行高）：状态栏恒定存在，不因空内容塌陷跳动
+              await reply.updateStats(STATS_PLACEHOLDER);
             }
           }
         },
