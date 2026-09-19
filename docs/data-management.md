@@ -2,22 +2,30 @@
 
 ## 目录结构
 
-统一会话文件夹布局：**一个会话一个文件夹**，历史与附件同住（ID 中的 `:` 等文件系统非法字符替换为 `_`）。
+会话工作区：**会话的第一句话就建立专属文件夹**（先于任何响应与图片/附件下载），
+Pi 会话 jsonl、图片、文件附件全部归拢其中（ID 中的 `:` 等文件系统非法字符替换为 `_`；
+跨重启按"文件夹名以会话 ID 消毒后 6 位结尾"找回同一文件夹）。
+
+```
+work_space/
+├── session-20260919-142530-c34b02/     # 会话专属工作区（session-<日期时间>-<会话ID尾6位>）
+│   ├── 2026-09-12T….jsonl              #   Pi Agent 会话文件（/new 后的新一代同目录累积）
+│   ├── images/                         #   该会话收到的图片（按 imageKey 命名）
+│   │   └── img_v3_….jpg
+│   └── files/                          #   该会话收到的文件附件
+│       └── 1757…-报表.xlsx
+└── session-20260918-091500-63ac77/     # 另一个会话的工作区
+```
+
+运行数据仍集中在 `data/`：
 
 ```
 data/
 ├── sessions/
 │   ├── conversations.json          # 会话路由表
 │   ├── messages.json               # 消息去重表
-│   ├── topic-roots.json            # 话题根消息表
-│   ├── images/                     # 图片缓存目录（按 imageKey 命名，平铺去重）
-│   ├── ou_xxx-chat_oc_xxx/         # 会话专属文件夹（私聊/普通群，按用户隔离）
-│   │   ├── 2026-09-12T….jsonl      #   Pi Agent 会话文件（/new 后的新一代同目录累积）
-│   │   └── files/                  #   该会话收到的文件附件
-│   │       └── 1757…-报表.xlsx
-│   └── topic_oc_xxx_om_yyy/        # 话题会话文件夹（话题内共享）
-│       ├── ….jsonl
-│       └── files/…
+│   └── topic-roots.json            # 话题根消息表
+├── credentials/                    # 加密凭证库（lark.vault.json / .vault-key）
 ├── user-tokens.json                # 用户飞书身份 token（/login，按 openId 一条）
 ├── schedules.json                  # 定时任务表（唯一 id + cron + 指令 + 目标会话，不自动清理）
 ├── stats/

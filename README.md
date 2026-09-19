@@ -143,17 +143,6 @@ cd mini-claw
 npm install
 ```
 
-> `npm install` 会自动执行 `postinstall` 脚本（`src/scripts/patch-pi-ai.js`），对 `node_modules/@earendil-works/pi-ai` 打补丁：移除 Anthropic 请求头中的 `anthropic-dangerous-direct-browser-access`，避免经 API 中转站调用时返回 403。重新安装依赖后补丁会自动重新应用，无需手动处理。
-
-### 依赖补丁与升级注意
-
-项目目前有 **1 个文件补丁 + 1 处历史行为补丁（已删除）**，升级依赖前扫一眼本节：
-
-| 补丁 | 补的对象 | 原因 | 失效症状 | 何时可删 |
-|------|---------|------|---------|---------|
-| `src/scripts/patch-pi-ai.js`（postinstall，自动重放） | `@earendil-works/pi-ai` | 浏览器访问请求头导致 API 中转站 403 | 直连官方 API 时中转站不再 403，或改用官方直连 | pi-ai 上游移除该请求头 |
-| ~~`patchCardAck()`（已删除）~~ | `@larksuiteoapi/node-sdk` LarkChannel | 卡片回调应答无数据体 + 去重静默吞事件 | — | 已于传输层切换到官方底层 `WSClient + EventDispatcher` 后删除（详见 `git log` 中"传输层切换"提交） |
-
 **传输层实现说明**：`src/feishu/lark-transport.ts` 使用官方**底层** `WSClient + EventDispatcher`（而非 LarkChannel 高层封装）——卡片回调 handler 的返回值会原样进 ACK 数据体（与 Go 官方 SDK 行为一致），消息归一化使用官方导出的 `normalize()`。升级 node-sdk 版本后建议快速回归一次：收发消息、文件附件、授权卡点击、/model 切换。
 
 **版本策略**：`@larksuiteoapi/node-sdk` 使用精确锁版（无 `^`），升级需手动改版本号并回归；`@earendil-works/*`（Pi 系）跟随上游 minor 版本。
@@ -179,8 +168,6 @@ npm install
   - `contact:department.base:readonly` - 部门基本信息
 - 部门路径类权限（`contact:user.department(:_path):readonly`）需要管理员审核、默认**不申请**——部门信息经 lark-cli 用户态搜索（`contact +search-user`）获得
 - 用户通过 `/login` 完成授权（Device Flow，无需配置重定向 URL 白名单）；如需自定义申请的权限，用 `FEISHU_USER_AUTH_SCOPES` 覆盖
-
-**多应用凭证提交（表单卡）**：`/login meegle`、`/login bbt`（仅私聊）会发送一张**表单卡片**——密码输入框（输入以 • 显示）+ 提交按钮，内容经卡片回调直达服务端加密入库，**不落聊天记录**；提交成功后卡片自动更新。`/login`（无参数）可查看各应用登录状态；`/logout bbt` 可清除对应凭证。BBT 的 CLI 命令注入待其 CLI 接入后自动生效，凭证先行加密保存。
 
 > **三种身份通道，各司其职、互不替代：**
 > - **机器人身份**（tenant token）：收发消息、群操作等应用能力，数据范围 = 应用的通讯录权限范围；
@@ -219,16 +206,36 @@ FEISHU_APP_ID=cli_xxx
 FEISHU_APP_SECRET=xxx
 FEISHU_PI_ADMIN=管理员标识
 
-# 模型配置
-FEISHU_PI_MODEL_PROVIDER=anthropic
+# 模型配置（供应商由模型名自动推断：带 claude → anthropic、带 deepseek → deepseek、其余 → openai）
 FEISHU_PI_MODEL_NAME=claude-sonnet-4-6
-FEISHU_PI_MODEL_BASE_URL=https://api.anthropic.com
 
 # API Key
 FEISHU_PI_MODEL_API_KEY=sk-ant-xxx
 
-# 系统提示词（可选）
-FEISHU_PI_SYSTEM_PROMPT=你是一个专业的编程助手，擅长代码分析和问题解决。
+### 模型名 → 供应商/配置 的匹配机制
+
+`FEISHU_PI_MODEL_PROVIDER` 已移除，供应商完全由**模型名**决定，匹配顺序：
+
+1. **关键词**：名字含 `claude` → anthropic；含 `deepseek` → deepseek；其余 → openai；
+2. **内置目录精确命中**：pi-ai 目录（39 家供应商 / 1300+ 模型）里有这个名字 → 应用该条目的全部配置
+   （API 协议、官方 baseUrl、上下文窗口/输出上限、思维链格式、视觉声明、官方计价）；
+3. **未收录但供应商在目录里**（如 `deepseek-v4.1-flash`）：继承同供应商条目的协议语义
+   （尾段同名优先，如 `-flash`→`-flash`；否则第一条），只替换模型名——新版本名开箱即用；
+4. **供应商也不在目录**：按 OpenAI 兼容协议接入（128K 默认窗口）。
+
+两个覆盖项：
+
+- `FEISHU_PI_MODEL_BASE_URL`：填了就覆盖目录默认地址（走中转站时用；不填用官方地址）；
+- `FEISHU_USE_EXTRA_OCR=1`：模型无视觉能力时，把下载的图片本地 OCR 成文字交给模型
+  （模型目录声明支持图片时自动关闭，图片直接传给模型）。
+
+密钥注入：`FEISHU_PI_MODEL_API_KEY` 会按 pi 自带的厂商映射表注入对应环境变量
+（deepseek→`DEEPSEEK_API_KEY`、openai→`OPENAI_API_KEY`、anthropic→`ANTHROPIC_API_KEY`、google→`GEMINI_API_KEY`…覆盖目录内全部 39 家）。
+启动日志会打印当前模型的解析结果（地址/上下文/视觉/思维链/计价/密钥变量）。
+
+
+# 自定义人格
+编辑仓库根目录的 PERSONA.md（内容即系统提示，置于提示词最前；删除该文件则使用内置默认人格）。
 
 # 团队成员（可选，用于权限控制）
 （已废弃——两档身份下没有成员名单，FEISHU_PI_ADMIN 即全部配置）
@@ -593,7 +600,22 @@ Bash      → 命令命中组 bash 名单（精确/前缀/*）？在→放行
 }
 ```
 
-> 智能体审核（`FEISHU_GUARD_*`）用于白名单未命中时的综合判断：以调用者所属组的策略为参考，判断调用是否符合授权意图——符合则免审放行，否则弹授权卡。未配置时直接弹卡（fail-safe）。
+> 智能体审核（`FEISHU_GUARD_*`）用于白名单未命中时的综合判断：把整份权限配置交给审核模型，放行标准从宽——工作范围在本工程内且非恶意即放行。未配置时直接弹卡（fail-safe）。
+>
+> **二级门禁的协议固定为通用 OpenAI**（POST {BASE_URL}/chat/completions，不查内置目录、无思维链特殊处理——审核只需要一个 JSON 判定）。任何 OpenAI 兼容端点都能用，常见配法：
+>
+> ```env
+> # DeepSeek 官方（直连，key 复用主模型的可不填 GUARD_API_KEY）
+> FEISHU_GUARD_BASE_URL=https://api.deepseek.com
+> FEISHU_GUARD_MODELS=deepseek-v4-flash
+>
+> # OpenAI 官方
+> FEISHU_GUARD_BASE_URL=https://api.openai.com/v1
+> FEISHU_GUARD_MODELS=gpt-4o
+> FEISHU_GUARD_API_KEY=sk-你的OpenAI密钥
+> ```
+>
+> 注意：`FEISHU_GUARD_API_KEY` 不填时**回退复用** `FEISHU_PI_MODEL_API_KEY`——主模型与门禁不同厂商时必须显式分开填。`FEISHU_GUARD_TIMEOUT_MS` 默认 15s，审核超时/异常一律按需确认处理（fail-safe）。
 
 ## 开发验证
 

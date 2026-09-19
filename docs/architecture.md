@@ -118,7 +118,7 @@ interface FeishuContext {
 ⑥ 智能体未配置 / 超时 / 异常 → 直接授权卡（fail-safe，负责人单次确认）
 ```
 
-智能体审核（`PolicyJudge`，`src/guard/judge.ts`）解决"复合命令永远命中不了前缀规则"的问题：以调用者所属组的策略为参考，综合判断策略外调用是否符合授权意图。多模型并行取安全交集；未配置、超时、异常一律 ask（fail-safe）。授权卡中的敏感参数（token/password/api_key/secret/cookie）脱敏展示。
+智能体审核（`PolicyJudge`，`src/guard/judge.ts`）解决"复合命令永远命中不了前缀规则"的问题：把整份权限配置（各组 allow 规则 + deny 清单）交给审核模型，放行标准从宽——工作范围在本工程内且非恶意即放行。多模型并行取安全交集；未配置、超时、异常一律 ask（fail-safe）。授权卡中的敏感参数（token/password/api_key/secret/cookie）脱敏展示。
 
 ### 为什么技能不配权限
 
