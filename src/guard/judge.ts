@@ -103,7 +103,7 @@ export class PolicyJudge {
     const { baseUrl, apiKey, timeoutMs } = this.options;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    // 审核指令 = 固定系统提示（见 SYSTEM_PROMPT）+ 本次调用的完整上下文，全量打印供审计
+    // 审核指令 = 固定系统提示 + 权限配置等上下文（不再逐条打印）；日志只记原始被审指令
     const instruction = JSON.stringify({
       权限配置: input.overview ?? null,
       调用者身份组: input.group,
@@ -115,7 +115,7 @@ export class PolicyJudge {
       },
       本次调用: { 工具: input.toolName, 参数: input.args },
     });
-    logger.info(`[Judge] → ${model} 审核指令: ${singleLine(instruction, 1200)}`);
+    logger.info(`[Judge] → ${model} 审核 ${input.toolName}: ${singleLine(JSON.stringify(input.args) ?? "", 600)}`);
     try {
       const response = await fetch(`${baseUrl!.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",
