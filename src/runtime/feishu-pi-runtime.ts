@@ -209,16 +209,19 @@ export class FeishuPiRuntime {
     // 当前模型的名字与解析后的使用配置（协议/地址/上下文/视觉/思维链/计价/密钥变量）
     try {
       const model = this.resolveModel();
-      // 未收录、继承目录语义的模型在名字后追加一句说明，不单独打日志
-      const inheritedNote = (model as { inheritedFrom?: string }).inheritedFrom
-        ? `（未收录，已继承 ${(model as { inheritedFrom?: string }).inheritedFrom} 目录语义）`
-        : "";
+      // 目录外模型的接入方式说明并入名字后，不单独打日志（每次建会话都不刷模型行）
+      const typed = model as { inheritedFrom?: string; customApi?: string };
+      const sourceNote = typed.inheritedFrom
+        ? `（未收录，已继承 ${typed.inheritedFrom} 目录语义）`
+        : typed.customApi
+          ? `（目录外，按 ${typed.customApi === "anthropic-messages" ? "Anthropic" : "OpenAI"} 兼容协议接入）`
+          : "";
       const inputDesc = model.input?.includes("image") ? "文本+图片" : "文本";
       const keyEnv = findEnvKeys(this.config.modelProvider as never, process.env as Record<string, string>)?.[0]
         ?? `${this.config.modelProvider.toUpperCase().replace(/-/g, "_")}_API_KEY`;
       const thinking = (model.compat as { thinkingFormat?: string } | undefined)?.thinkingFormat;
       logger.info(
-        `[Runtime] 当前模型 ${colors.cyan}${model.provider}/${model.id}${colors.reset}${inheritedNote}: ` +
+        `[Runtime] 当前模型 ${colors.cyan}${model.provider}/${model.id}${colors.reset}${sourceNote}: ` +
           `地址 ${model.baseUrl ?? "官方默认"} · 上下文 ${model.contextWindow ?? "?"} · 输出上限 ${model.maxTokens ?? "?"} · 输入 ${inputDesc} · ${thinking ? `思维链 ${thinking} · ` : ""}定价 ${model.cost?.input ?? 0}/${model.cost?.output ?? 0} per M · 密钥注入 ${keyEnv}`,
       );
     } catch (error) {
@@ -300,9 +303,7 @@ export class FeishuPiRuntime {
       return { ...withBase, inheritedFrom } as NonNullable<ReturnType<typeof getModel>> & { inheritedFrom?: string };
     }
     const anthropicCompatible = provider === "anthropic";
-    logger.info(
-      `[Runtime] 模型 ${provider}/${name} 不在内置目录，按 ${anthropicCompatible ? "Anthropic" : "OpenAI"} 兼容协议自定义接入（baseUrl=${baseUrl ?? "官方默认"}）`,
-    );
+    // 完全不在目录的模型带 customApi 标记，由启动属性行合并展示（不单独刷一行日志）
     return {
       id: name,
       name,
@@ -314,7 +315,8 @@ export class FeishuPiRuntime {
       cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 },
       contextWindow: 128_000,
       maxTokens: 8192,
-    } as NonNullable<ReturnType<typeof getModel>>;
+      customApi: anthropicCompatible ? "anthropic-messages" : "openai-completions",
+    } as NonNullable<ReturnType<typeof getModel>> & { customApi?: string };
   }
 
   async createSession(sessionFile: string | undefined, userId: string, context?: FeishuContext): Promise<FeishuPiSession> {
