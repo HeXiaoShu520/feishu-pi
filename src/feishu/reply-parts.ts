@@ -12,7 +12,6 @@
  */
 
 import { sessionAlias } from "./session-alias.ts";
-import { redactSecrets } from "../utils/redact.ts";
 
 /** Pi 会话统计的最小结构（与 runtime/types.ts 的 SessionStats 对齐） */
 interface StatsLike {
@@ -128,10 +127,10 @@ export function toolIcon(toolName: string): string {
 }
 
 /**
- * 格式化一次工具调用的展示文本：**单行紧凑式**——工具名加粗 + 内容行内代码，
- * 如 `**read** \`docs/a.md\``、`**bash** \`git status\``，多条工具各占一行，整洁不刷屏。
- * bash 显示命令本身，read/write/edit 显示目标路径，
- * 其余（自定义工具）按常见字段兜底提取，最终回退展示整包参数 JSON（单行、截断）。
+ * 格式化一次工具调用的展示文本：统一渲染为 Markdown 代码块，
+ * bash 带 bash 语言标注，read/write/edit 显示目标路径，换行原样保留；
+ * 其余（自定义工具）按常见字段兜底提取，最终回退展示整包参数 JSON，
+ * 代码块首行带工具名（命令/路径类内容自解释，不带）。
  */
 export function formatToolCall(toolName: string, args: unknown): string {
   const record = (typeof args === "object" && args !== null ? args : {}) as Record<string, unknown>;
@@ -160,28 +159,28 @@ export function formatToolCall(toolName: string, args: unknown): string {
       detail = undefined;
     }
   }
-  if (!detail) return `**${toolName}**`;
-  detail = redactSecrets(detail);
-  if (detail.length > TOOL_CALL_MAX_CHARS) detail = `${detail.slice(0, TOOL_CALL_MAX_CHARS)}…`;
-  // 行内代码安全：换行折叠为空格（保持单行），反引号/围栏替换避免破坏行内代码
-  const safe = detail
-    .replace(/```/g, "'''")
-    .replace(/\s*\n+\s*/g, " ")
-    .replace(/`/g, "'")
-    .trim();
-  return `**${toolName}** \`${safe}\``;
+  if (detail && detail.length > TOOL_CALL_MAX_CHARS) detail = `${detail.slice(0, TOOL_CALL_MAX_CHARS)}…`;
+
+  // 统一渲染为代码块：bash 带 bash 语言标注；围栏内出现三连反引号会破坏渲染，替换为三单引号；换行原样保留。
+  // 自定义工具在首行带工具名（命令/路径类工具内容自解释，不带）
+  const safe = (detail ?? "").replace(/```/g, "'''");
+  const lang = toolName === "bash" ? "bash" : "";
+  const body =
+    toolName === "bash" || toolName === "read" || toolName === "write" || toolName === "edit"
+      ? safe
+      : `${toolName}\n${safe}`;
+  return "```" + `${lang}\n${body}\n` + "```";
 }
 
 /**
  * 格式化回复末尾的统计小字：
- * `模型 · 累计token（新增 x） · $费用 · 耗时 · 会话别名`。
- * 新增 token = 当前上下文累计 - prompt 前基线；缺失的字段自动省略；无统计时返回 undefined。
+ * `模型 · 累计token（$费用） · 耗时 · 会话别名`。
+ * token 与会话内的累计费用同源（Pi 的 session 统计），只报累计值、不再显示单轮新增；
+ * 缺失的字段自动省略；无统计时返回 undefined。
  */
 export function formatStatsLine(input: {
   modelName?: string;
   stats?: StatsLike;
-  /** prompt 前基线的累计 token（计算本次新增量） */
-  baselineTotalTokens?: number;
   /** 本轮请求耗时（毫秒） */
   elapsedMs: number;
 }): string | undefined {
@@ -194,14 +193,13 @@ export function formatStatsLine(input: {
     return `${(value / 1000).toFixed(1)}K`;
   };
   const total = stats.tokens?.total || 0;
-  const deltaTokens = Math.max(0, total - (input.baselineTotalTokens || 0));
-  const cost = typeof stats.cost === "number" ? `$${stats.cost.toFixed(4)}` : "";
+  // 费用并入 token 段：$费用缺省时只留「累计」
+  const cost = typeof stats.cost === "number" ? `（$${stats.cost.toFixed(4)}）` : "";
   const elapsed = `${(input.elapsedMs / 1000).toFixed(1)}s`;
 
   return [
     input.modelName || "模型未知",
-    `${formatTokens(total)}（新增 ${formatTokens(deltaTokens)}）`,
-    cost,
+    `累计${formatTokens(total)}${cost}`,
     elapsed,
     sessionAlias(stats.sessionId),
   ]

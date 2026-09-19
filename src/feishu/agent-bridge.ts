@@ -6,7 +6,6 @@ import { MessageStore } from "./message-store.ts";
 import { formatLogText } from "./log-utils.ts";
 import { ReactionController } from "./reaction-controller.ts";
 import { Spinner, randomFrames } from "./spinner.ts";
-import { redactSecrets } from "../utils/redact.ts";
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "../utils/logger.ts";
 import { createDefaultRegistry, DetailCommand, NewCommand, StopCommand, markdownCard, type CommandRegistry, type CommandHandler } from "./commands.ts";
@@ -154,9 +153,6 @@ export class FeishuAgentBridge {
         }
       }, 200);
 
-      // 记录 prompt 前的基线统计，用于计算本次新增 token
-      const statsBefore = await this.conversations.getStats(conversationId, message.context);
-
       // 首个真实内容（正文或工具调用）到达时的公共收尾：
       // 停掉思考动画、清空累积器并清掉卡片上残留的 spinner 帧，避免动画文字混入正文
       let startedRealContent = false;
@@ -189,9 +185,10 @@ export class FeishuAgentBridge {
             lastTextLength = event.text.length;
             if (!hasRealContent) await startRealContent();
             // 回显脱敏：模型偶尔会把凭证原文带进正文——展示前遮蔽
-            await replyParts.appendText(redactSecrets(event.text));
+            await replyParts.appendText(event.text);
           }
           // 工具事件：追加工具摘要段（精简模式只留当前一个），小字位置同步显示动画。
+          // bash：只渲染命令代码块（不显示工具名）；其余工具保留「🛠 名称 + 参数」样式。
           if (event.type === "tool_started") {
             activeToolName = event.toolName;
             toolSpinner.withPrefix(`${toolIcon(event.toolName)} ${event.toolName}`);
@@ -200,7 +197,7 @@ export class FeishuAgentBridge {
           }
           if (event.type === "tool_finished") {
             activeToolName = "";
-            // 清空小字，等待下一次工具调用或最终统计
+            // 清空小字，等待下一次工具调用或最终统计（完成状态不占正文，避免刷屏）
             await reply.updateStats(" ");
           }
         },
@@ -216,7 +213,6 @@ export class FeishuAgentBridge {
         ? formatStatsLine({
             modelName: session?.getModelName?.(),
             stats: session?.getStats?.(),
-            baselineTotalTokens: statsBefore?.tokens?.total ?? 0,
             elapsedMs: Date.now() - requestStartedAt,
           })
         : undefined;
@@ -230,7 +226,7 @@ export class FeishuAgentBridge {
       await reply.close(finalText, statsLine);
 
       // 记录最终响应（含耗时；空文本单独特警，便于发现模型无输出/被拦截的情况）
-      const replyPreview: string = formatLogText(redactSecrets(finalText)) || "";
+      const replyPreview: string = formatLogText(finalText) || "";
       const elapsedSec = ((Date.now() - requestStartedAt) / 1000).toFixed(1);
       if (!replyPreview) {
         logger.warn(

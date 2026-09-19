@@ -211,8 +211,8 @@ export class CardKitReply implements FeishuReply {
       const tail = content.slice(split);
       const oldStream = this.stream!;
 
-      // 旧卡流式收尾（短渲染等待，尽快开始新卡）
-      await oldStream.finalize(head, undefined, 500);
+      // 旧卡流式收尾（关流式后全文即时呈现，无需渲染等待）
+      await oldStream.finalize(head);
 
       // 新卡承载剩余内容
       const newStream = new CardKitStream({ client: this.client, onError: this.onError });

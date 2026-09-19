@@ -19,7 +19,7 @@ const STATS_ELEMENT_ID = "stats_md";
 
 interface CardKitStreamOptions {
   client: Client;
-  /** 最小推送间隔（毫秒），默认 800ms */
+  /** 最小推送间隔（毫秒），默认 400ms：帧小而频繁，客户端打字机不追帧、观感连贯 */
   minPushIntervalMs?: number;
   /** 客户端打字机渲染速度（毫秒），默认 30ms */
   printFrequencyMs?: number;
@@ -46,7 +46,7 @@ export class CardKitStream {
 
   constructor(options: CardKitStreamOptions) {
     this.client = options.client;
-    this.minInterval = options.minPushIntervalMs ?? 800;
+    this.minInterval = options.minPushIntervalMs ?? 400;
     this.printFrequencyMs = options.printFrequencyMs ?? 30; // 加快客户端渲染：30ms/步
     this.printStep = options.printStep ?? 3;
     this.onError = options.onError;
@@ -104,31 +104,24 @@ export class CardKitStream {
     await this.enqueueWrite(() => this.pushUpdate(text));
   }
 
-  /** 关闭流式模式；statsText 在正文渲染完成后写入小字；renderWaitMsOverride 可覆盖渲染等待（分卡收尾时用短等待） */
-  async finalize(fullText: string, statsText?: string, renderWaitMsOverride?: number): Promise<void> {
+  /**
+   * 收尾时序：推最终全文（最后一帧携带全部尾字，打字机一并打出）→ 等预计打字时间打完 →
+   * 写统计小字 → 3s 让客户端处理完 → 关流式。
+   */
+  async finalize(fullText: string, statsText?: string): Promise<void> {
     if (this.disposed || !this.cardId) return;
 
     try {
-      // 0. 最终内容必须覆盖所有尚未完成的流式更新
       this.accumulator = fullText;
+      // 1. 推最终全文（流式仍开，最后一帧携带全部尾字，打字机把它们一并打出）
       await this.enqueueWrite(() => this.pushUpdate(fullText));
-
-      // 1. 等待客户端打字机把正文打完：速率 = print_step / print_frequency_ms
-      //    （默认 3 字符 / 30ms = 100 字符/秒）；上限 10s——超长回复不让小字无限迟到，到点即出小字
-      const typewriterMs = fullText.length * (this.printFrequencyMs / this.printStep);
-      const renderWaitMs = renderWaitMsOverride ?? Math.min(typewriterMs, 10_000);
-      await new Promise((resolve) => setTimeout(resolve, renderWaitMs));
-
-      // 2. 正文打完后写入统计小字（必须在关闭流式前，关闭后元素不能再更新）
-      if (statsText) {
-        await this.enqueueWrite(() => this.putStats(statsText));
-        // 3. 等 1s 让客户端处理完小字元素，再关闭流式
-        await new Promise((resolve) => setTimeout(resolve, 1_000));
-      }
-
-      // 4. 关闭流式模式（不再发送最终内容，避免覆盖正在渲染的文本）
+      // 2. 等一小段，让客户端把最后一帧的尾字打印完（推送间隔 400ms，尾量很小）
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      // 3. 写统计小字
+      if (statsText) await this.enqueueWrite(() => this.putStats(statsText));
+      // 4. 统计小字 + 3s 后关流式（给客户端处理小字元素的余量）
+      await new Promise((resolve) => setTimeout(resolve, 3_000));
       await this.enqueueWrite(() => this.patchSettings(false));
-
       this.disposed = true;
     } catch (err) {
       this.onError?.(err);
@@ -204,6 +197,20 @@ export class CardKitStream {
     });
   }
 
+  /** 卡片级全量更新：整卡 JSON 一次写入（含正文与统计小字），即时渲染。
+   *  实测形状：{ card: { type: "card_json", data: <卡片JSON字符串> }, sequence, uuid } */
+  private async putFinalCard(fullText: string, statsText?: string): Promise<void> {
+    await this.client.request({
+      method: "PUT",
+      url: `/open-apis/cardkit/v1/cards/${this.cardId}`,
+      data: {
+        card: { type: "card_json", data: this.buildCardJson(fullText, false, statsText) },
+        sequence: ++this.sequence,
+        uuid: this.uuid(),
+      },
+    });
+  }
+
   /** 关闭或开启流式模式 */
   private async patchSettings(streaming: boolean): Promise<void> {
     if (!this.cardId) return;
@@ -227,7 +234,7 @@ export class CardKitStream {
   }
 
   /** 构建 CardKit JSON */
-  private buildCardJson(text: string, streaming: boolean): string {
+  private buildCardJson(text: string, streaming: boolean, statsText?: string): string {
     return JSON.stringify({
       schema: CARD_SCHEMA,
       config: {
@@ -254,7 +261,7 @@ export class CardKitStream {
           },
           {
             tag: "markdown",
-            content: " ",
+            content: statsText || " ",
             text_size: "notation",
             element_id: STATS_ELEMENT_ID,
           },
