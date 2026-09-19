@@ -120,6 +120,23 @@ export class CardKitReply implements FeishuReply {
     }
   }
 
+  /** 替换展示内容但不改动内容累积器（思考动画帧专用）：避免 spinner 文本混入后续正文增量 */
+  async replaceVisual(text: string): Promise<void> {
+    if (this.closed) return;
+
+    try {
+      if (!this.stream) {
+        await this.initializeCardKit(text);
+        return;
+      }
+
+      await this.stream.replaceVisual(text);
+    } catch (err) {
+      this.onError?.(err);
+      throw err;
+    }
+  }
+
   async updateStats(text: string): Promise<void> {
     if (this.closed || !this.stream) return;
     await this.stream.updateStats(text);

@@ -104,6 +104,12 @@ export class CardKitStream {
     await this.enqueueWrite(() => this.pushUpdate(text));
   }
 
+  /** 替换展示内容但不改动内容累积器（动画帧专用）：spinner 文本不污染正文，首个真实内容整体覆盖 */
+  async replaceVisual(text: string): Promise<void> {
+    if (this.disposed || !this.cardId) return;
+    await this.enqueueWrite(() => this.pushUpdate(text));
+  }
+
   /**
    * 收尾时序：推最终全文 + 统计小字（小字紧跟最终帧入队，打字机打尾字时小字同步出现）→
    * 等 3s 让客户端处理完 → 关流式。

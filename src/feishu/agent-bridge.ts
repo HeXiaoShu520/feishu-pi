@@ -130,17 +130,17 @@ export class FeishuAgentBridge {
         () => this.detailMode.get(message.chatId) !== true,
       );
 
-      // 立即显示首帧（0ms 延迟）
-      await reply.replace(spinner.next());
+      // 立即显示首帧（0ms 延迟）——动画帧走 replaceVisual：只改展示、不污染内容累积器
+      await reply.replaceVisual(spinner.next());
 
-      // 启动动画定时器（真实内容到来前用 replace 循环刷新动画帧）
+      // 启动动画定时器（真实内容到来前用 replaceVisual 循环刷新动画帧）
       let animationUpdating = false;
-      // 在途帧写入句柄：停止动画时先等它落定再写清空，保证清空是最后一笔（否则残帧冻在卡片上）
+      // 在途帧写入句柄：停止动画时先等它落定，保证后续真实内容覆盖在最后
       let pendingAnimWrite: Promise<unknown> = Promise.resolve();
       animationTimer = setInterval(() => {
         if (!hasRealContent && !animationUpdating) {
           animationUpdating = true;
-          pendingAnimWrite = reply.replace(spinner.next()).catch(() => {});
+          pendingAnimWrite = reply.replaceVisual(spinner.next()).catch(() => {});
           pendingAnimWrite.finally(() => {
             animationUpdating = false;
           });
@@ -163,16 +163,16 @@ export class FeishuAgentBridge {
         }
       }, 200);
 
-      // 首个真实内容（正文或工具调用）到达时的公共收尾：
-      // 停掉思考动画、清空累积器并清掉卡片上残留的 spinner 帧，避免动画文字混入正文
+      // 首个真实内容（正文或工具调用）到达时的公共收尾：停掉思考动画。
+      // 不主动清空卡片——清空会造成"动画停→卡片空白→正文才来"的空窗；
+      // spinner 停在最后一帧，由首个真实内容（正文 replace / 工具段）整体覆盖
       let startedRealContent = false;
       const startRealContent = async () => {
         if (startedRealContent) return;
         startedRealContent = true;
         hasRealContent = true;
         clearInterval(animationTimer);
-        await pendingAnimWrite; // 在途思考帧先落定，清空才不会被迟到的帧覆盖
-        await reply.replace("");
+        await pendingAnimWrite;
       };
 
       // 预制人员名单：消息里按名字提到的人在 prompt 末尾补 open_id 提示（仅影响发给模型的内容，
