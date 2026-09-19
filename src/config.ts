@@ -20,7 +20,7 @@ export interface FeishuPiAppConfig {
   modelProvider: string;
   modelName: string;
   modelBaseUrl?: string;
-  /** 思考档位：off=关闭思考，low/high/max 各模型自动适配等效等级（FEISHU_PI_THINKING_LEVEL，默认 high） */
+  /** 思考档位：off=关闭思考，low/high/max 各模型自动适配等效等级（FEISHU_PI_THINKING_LEVEL，默认 off） */
   thinkingLevel: ThinkingLevelConfig;
   /** 智能体审核接口（OpenAI 兼容）；未配置则策略外调用直接弹卡 */
   guardBaseUrl?: string;
@@ -55,19 +55,19 @@ function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
 const THINKING_LEVELS = ["off", "low", "high", "max"] as const;
 export type ThinkingLevelConfig = (typeof THINKING_LEVELS)[number];
 
-/** 思考档位归一：只认 off/low/high/max；旧超集档位按服务端映射表就近折算（minimal→low；medium/xhigh→high；ultra→max），其余回退默认 high。 */
+/** 思考档位归一：只认 off/low/high/max；旧超集档位按服务端映射表就近折算（minimal→low；medium/xhigh→high；ultra→max），其余回退默认 off。 */
 function parseThinkingLevel(value: string | undefined): ThinkingLevelConfig {
   const raw = (value ?? "").trim().toLowerCase();
   if ((THINKING_LEVELS as readonly string[]).includes(raw)) return raw as ThinkingLevelConfig;
-  if (raw === "") return "high";
+  if (raw === "") return "off";
   const equivalents: Record<string, ThinkingLevelConfig> = { minimal: "low", medium: "high", xhigh: "high", ultra: "max" };
   const folded = equivalents[raw];
   if (folded) {
     logger.warn(`[Config] FEISHU_PI_THINKING_LEVEL="${raw}" 不是公开档位，已折算为 ${folded}`);
     return folded;
   }
-  logger.warn(`[Config] FEISHU_PI_THINKING_LEVEL="${raw}" 无法识别（可选 off/low/high/max），已按默认 high 处理`);
-  return "high";
+  logger.warn(`[Config] FEISHU_PI_THINKING_LEVEL="${raw}" 无法识别（可选 off/low/high/max），已按默认 off 处理`);
+  return "off";
 }
 
 /** 主团队组名：FEISHU_PI_GROUP（无后缀）落到这里（与 permissions.json 的 group 对应） */
@@ -140,8 +140,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     // （FEISHU_PI_MODEL_PROVIDER 环境变量已移除）
     modelProvider: deriveModelProvider(env.FEISHU_PI_MODEL_NAME ?? "claude-sonnet-4-6"),
     modelBaseUrl: env.FEISHU_PI_MODEL_BASE_URL,
-    // 思考档位默认 high（观察思考对回复质量/耗时的实际影响）：pi 默认 off（显式发 thinking:disabled），
-    // 想关思考配 off，各模型自动适配等效等级
+    // 思考档位默认 off（关闭思考，pi 会显式发 thinking:disabled）：想开思考配 low/high/max
     thinkingLevel: parseThinkingLevel(env.FEISHU_PI_THINKING_LEVEL),
     // 智能体审核（策略外调用的综合判断）：OpenAI 兼容接口，支持逗号分隔多模型取安全交集
     guardBaseUrl: env.FEISHU_GUARD_BASE_URL || undefined,

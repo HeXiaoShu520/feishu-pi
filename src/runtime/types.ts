@@ -35,7 +35,7 @@ export interface FeishuPiConfig {
   modelProvider: string;
   modelName: string;
   modelBaseUrl?: string;
-  /** 思考档位：off=关闭思考，low/high/max 各模型自动适配等效等级（默认 high） */
+  /** 思考档位：off=关闭思考，low/high/max 各模型自动适配等效等级（默认 off） */
   thinkingLevel: ThinkingLevelConfig;
   /** 系统提示（身份 + 行为规则）由 Pi 自动发现 <agentDir>/SYSTEM.md（即 .agent/SYSTEM.md）注入，此处不再透传 */
   /** 统一权限策略（.agent/permissions.json）：工具注册、调用判定、可读范围全部由它驱动 */

@@ -411,7 +411,7 @@ export class FeishuPiRuntime {
       cwd: this.config.cwd,
       sessionManager,
       model,
-      // 思考档位：默认 high（DeepSeek 官方默认）；pi 默认 off 会显式发 thinking:disabled 关思考
+      // 思考档位：默认 off（关闭思考，pi 显式发 thinking:disabled）；FEISHU_PI_THINKING_LEVEL 可开
       thinkingLevel: this.config.thinkingLevel,
       tools: builtinNames,
       customTools: sessionTools,
