@@ -118,6 +118,8 @@ export class PolicyJudge {
             { role: "user", content: instruction },
           ],
           temperature: 0,
+          // 审核是简单分类判定，思考模式显式关闭（DeepSeek 服务端默认开+high，不关则每次审核白等思维链）
+          thinking: { type: "disabled" },
         }),
       });
       if (!response.ok) {
