@@ -6,7 +6,7 @@ import { FeishuPiRuntime } from "./runtime/feishu-pi-runtime.ts";
 import { FeishuAgentBridge } from "./feishu/agent-bridge.ts";
 import { LarkTransport } from "./feishu/lark-transport.ts";
 import { loadConfig } from "./config.ts";
-import { ConversationStore } from "./runtime/conversation-store.ts";
+import { SessionStore } from "./runtime/session-store.ts";
 import { MessageStore } from "./feishu/message-store.ts";
 import { DataCleaner } from "./runtime/data-cleaner.ts";
 import { resolveAdminOpenId, persistUserProfile, resolveAdminFromLogins } from "./feishu/admin-resolver.ts";
@@ -19,7 +19,7 @@ import { PeopleRoster } from "./feishu/people-roster.ts";
 import { createIdentityBashTool } from "./runtime/identity-bash.ts";
 import { runSetupWizard } from "./feishu/setup-wizard.ts";
 import { createCliSearchUser, resolveLarkCliBinary } from "./feishu/lark-cli-search.ts";
-import { delimiter, dirname, join } from "node:path";
+import { delimiter, join } from "node:path";
 import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { Client, LoggerLevel } from "@larksuiteoapi/node-sdk";
@@ -31,7 +31,6 @@ import { ToolGuard } from "./guard/tool-guard.ts";
 import { PolicyJudge } from "./guard/judge.ts";
 import { buildNoticeCard } from "./guard/card.ts";
 import { AskBroker, createAskUserTool } from "./feishu/ask-broker.ts";
-import { WorkspaceManager } from "./feishu/workspace.ts";
 import { createLocalOcrRunner } from "./feishu/local-ocr.ts";
 import type { CleanupStats } from "./runtime/data-cleaner.ts";
 
@@ -41,10 +40,8 @@ const APPROVAL_STALE_NOTICE = "⚠️ 该授权请求已失效（服务已重启
 /** 打印一轮清理的统计（有删除动作才逐项输出，避免每日空转刷屏）。 */
 async function logCleanupStats(cleanup: Promise<CleanupStats>): Promise<void> {
   const stats = await cleanup;
-  if (stats.sessionsDeleted === 0 && stats.attachmentsDeleted === 0 && stats.imagesDeleted === 0 && stats.messagesCleaned === 0) return;
-  logger.info(`[DataCleaner] 会话: ${stats.sessionsDeleted}/${stats.sessionsChecked} 已删除`);
-  logger.info(`[DataCleaner] 附件: ${stats.attachmentsDeleted}/${stats.attachmentsChecked} 已删除`);
-  logger.info(`[DataCleaner] 图片: ${stats.imagesDeleted}/${stats.imagesChecked} 已删除`);
+  if (stats.sessionsDeleted === 0 && stats.messagesCleaned === 0) return;
+  logger.info(`[DataCleaner] 会话目录: ${stats.sessionsDeleted}/${stats.sessionsChecked} 已删除`);
   logger.info(`[DataCleaner] 消息: ${stats.messagesCleaned}/${stats.messagesChecked} 已清理`);
 }
 
@@ -75,17 +72,15 @@ export async function main(): Promise<void> {
   const projectBinDir = join(config.cwd, "node_modules", ".bin");
   process.env.PATH = `${projectBinDir}${delimiter}${process.env.PATH ?? ""}`;
 
-  const messages = new MessageStore(join(config.sessionDir, "messages.json"));
+  const messages = new MessageStore(config.messagesFile);
 
-  // 启动时清理过期数据和卡住的消息
+  // 启动时清理过期数据和卡住的消息。清理以「会话目录」为单位：
+  // 整个目录超过保留期就整体删除（历史 jsonl、图片、附件、OCR 过程文件同属一个会话，不拆开删）
   const cleaner = new DataCleaner({
-    sessionDir: config.sessionDir,
-    imagesDir: join(config.dataDir, "cache", "images"),
+    sessionsRoot: config.sessionsRoot,
+    messagesFile: config.messagesFile,
     retentionDays: 7,
   });
-
-  // 工作区根目录（work_space/）用同一套保留期清理：会话 jsonl、files 附件、空目录回收
-  const workspaceCleaner = new DataCleaner({ sessionDir: config.workspaceRoot, retentionDays: 7 });
 
   logger.info("[DataCleaner] 清理卡住的消息...");
   const stuckCount = await cleaner.cleanupStuckMessages();
@@ -93,15 +88,13 @@ export async function main(): Promise<void> {
     logger.info(`[DataCleaner] 已清理 ${stuckCount} 条卡住的消息`);
   }
 
-  logger.info("[DataCleaner] 清理过期数据（保留 7 天）...");
+  logger.info("[DataCleaner] 清理过期会话目录（保留 7 天）...");
   await logCleanupStats(cleaner.cleanup());
-  await logCleanupStats(workspaceCleaner.cleanup());
 
   // 定期清理（每天一次）；conversations 在下方声明，回调首次触发时早已初始化
   const cleanupTimer = setInterval(async () => {
     logger.info("[DataCleaner] 执行定期清理...");
     await logCleanupStats(cleaner.cleanup());
-    await logCleanupStats(workspaceCleaner.cleanup());
     // 空闲超过 24 小时的会话驱逐出内存（历史在磁盘，下次消息自动恢复），防长驻内存增长
     await conversations.evictIdle(24 * 60 * 60 * 1000);
   }, 24 * 60 * 60 * 1000); // 24 小时
@@ -170,8 +163,9 @@ export async function main(): Promise<void> {
     vaultKeyFile,
     "meegle",
   );
-  // 会话工作区：会话的第一句话就建立专属文件夹，图片/附件等产物全部归拢于此
-  const workspace = new WorkspaceManager(config.workspaceRoot);
+  // 会话注册表：会话的第一句话就为它建立一个专属目录，jsonl/图片/附件/OCR 过程文件全部在里面；
+  // `/new` 换代 = 新会话 id + 新目录，旧目录留在磁盘上等过期清理
+  const sessions = new SessionStore(config.sessionsFile, config.sessionsRoot);
   // 用户飞书身份授权（Device Flow，RFC 8628）：按 openId 加密存取 user_access_token；
   // 未登录/失效时由 CLI 调用链路自动弹出授权链接（见 identityBash.onNotLoggedIn / 启动 3.5 步）。
   // 先于 transport 创建（冷启动管理员识别要在 transport 装配前完成）；
@@ -206,7 +200,7 @@ export async function main(): Promise<void> {
   // 存量会话清洗（后台）：用凭证库已知密钥值扫描历史会话 jsonl，命中的明文替换为 ***
   void (async () => {
     const secrets = [...(await userAuth.exportSecretValues())];
-    const replaced = await scrubSecretsInDir(config.sessionDir, secrets);
+    const replaced = await scrubSecretsInDir(config.sessionsRoot, secrets);
     if (replaced > 0) logger.info(`[Main] 已清洗历史会话文件中的明文凭证（处理 ${replaced} 个文件）`);
   })().catch((error) => logger.warn("[Main] 会话清洗失败:", error));
 
@@ -311,19 +305,16 @@ export async function main(): Promise<void> {
     appSecret: config.feishuAppSecret,
     botOpenId,
     client,
-    workspace,
+    sessions,
 
-    // 本地 OCR 兜底（模型无视觉能力时启用）：下载图片 → tesseract.js 识别 → 文字并入消息
-    // 语言包缓存（首次联网下载，约 7.4MB，全局共用）放工作区的 tmp/ 下：
-    // 它只是可重建的缓存，不该混进 data/（会话、用户、凭证、团队记忆所在处）；
-    // work_space/ 已被 .gitignore 排除，且 DataCleaner 不会删掉非空的 tmp/ 目录
+    // 本地 OCR 兜底（模型无视觉能力时启用）：下载图片 → tesseract.js 识别 → 文字并入消息。
+    // 语言包工作副本放当前会话目录的 ocr/（随会话一起清理），首次下载后回存到
+    // data/assets/ocr/ 共享缓存，后续会话直接本地复制，不再联网
     useExtraOcr: config.useExtraOcr,
-    ocrImage: createLocalOcrRunner({ cacheDir: join(config.workspaceRoot, "tmp", "ocr") }),
+    ocrImage: createLocalOcrRunner({ langCacheDir: join(config.assetsDir, "ocr") }),
     modelHasVision: () => getModel(config.modelProvider as never, config.modelName as never)?.input?.includes("image") === true,
-    // 图片下载缓存：纯排查用途（只写不读），放 cache/ 与会话数据分家
-    sessionDataDir: config.sessionDir,
     adminOpenId,
-    topicRootsFile: join(config.sessionDir, "topic-roots.json"),
+    topicRootsFile: config.topicRootsFile,
     // lark-cli 用户态搜索通道（contact +search-user）：部门信息的主要来源，不依赖需审核权限；
     // 优先用查询目标本人的 token（查自己必然可见），其次管理员的
     searchUserProfile: createCliSearchUser({
@@ -377,7 +368,7 @@ export async function main(): Promise<void> {
   const policy = new PermissionPolicy(policyFile, {
     adminId: adminOpenId ?? "",
     groupMembership: config.groupMembership,
-    usersFile: join(dirname(config.sessionDir), "users", `${config.feishuAppId}_users.json`),
+    usersFile: join(config.dataDir, "users", `${config.feishuAppId}_users.json`),
     cwd: config.cwd,
   });
   // bridge 在下方创建，先用闭包引用（授权卡撤回需查询该会话的详细模式开关）
@@ -431,7 +422,7 @@ export async function main(): Promise<void> {
       operatorOpenId: action.operatorOpenId,
     });
     if (result.accepted) {
-      logger.info(`[Main] 授权回调已处理: ${result.detail}（点击者 ${action.operatorOpenId}）`);
+      logger.info(`[CardAction] 授权: ${result.detail}（点击者 ${action.operatorOpenId}）`);
     } else {
       logger.warn(`[Main] 授权回调被拒绝: ${result.detail}（点击者 ${action.operatorOpenId}）`);
       // 失效点击就地更新卡片提示（服务重启后旧授权卡会命中这里）
@@ -464,7 +455,7 @@ export async function main(): Promise<void> {
 
 
 
-  const dataDir = dirname(config.sessionDir);
+  const dataDir = config.dataDir;
 
   // 定时任务：持久化（data/schedules.json）+ cron 调度；触发时以创建者身份跑智能体并推送结果卡片
   // 注意：runTask 闭包引用下方才声明的 conversations（前向引用），仅在任务触发（启动完成后）才会执行
@@ -505,13 +496,12 @@ ${trimmed}` }] },
   // 第二个参数：项目内置交互工具（随会话注册，调用者身份由 runtime 派发时注入）
   runtime = new FeishuPiRuntime({
     cwd: config.cwd,
-    sessionDir: config.sessionDir,
     modelProvider: config.modelProvider,
     modelName: config.modelName,
     modelBaseUrl: config.modelBaseUrl,
     thinkingLevel: config.thinkingLevel,
-    // Pi 会话 jsonl 落进会话工作区（与图片/附件同在一个文件夹）
-    workspaceFor: (conversationId) => workspace.dirFor(conversationId),
+    // 会话目录的唯一事实来源：Pi 会话 jsonl 与图片/附件/OCR 过程文件同在一个会话目录
+    sessions,
     permissionPolicy: policy,
     toolGuard: (groupPolicy, params, signal) => toolGuard.check(groupPolicy, params, signal),
     scheduleService,
@@ -564,7 +554,7 @@ ${trimmed}` }] },
   // 启动时打印可用的 Skills 和 Tools（管理员视角）
   await runtime.printAvailableResources();
 
-  const conversations = new ConversationManager(runtime, new ConversationStore(join(config.sessionDir, "conversations.json")));
+  const conversations = new ConversationManager(runtime, sessions);
 
   const bridge = new FeishuAgentBridge(
     conversations,

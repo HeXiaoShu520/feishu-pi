@@ -5,11 +5,11 @@ import { TopicRootStore } from "./topic-root-store.ts";
 import { LarkImageProcessor } from "./image-processor.ts";
 import { formatLogText } from "./log-utils.ts";
 import { logger } from "../utils/logger.ts";
-import { attachmentsDir, sanitizeFileName } from "../utils/session-paths.ts";
+import { attachmentsDirOfSession, imagesDirOfSession, ocrDirOfSession, sanitizeFileName } from "../utils/session-paths.ts";
 import { upsertEnvLine } from "../utils/env-file.ts";
 import { toBuffer } from "./resource-buffer.ts";
 import { mentionedUserIds } from "./people-roster.ts";
-import { WorkspaceManager } from "./workspace.ts";
+import { SessionStore } from "../runtime/session-store.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -34,19 +34,16 @@ export interface LarkTransportConfig {
   pingTimeout?: number;
   /** 飞书 Client 实例（消息发送、卡片更新、资源下载等 API 调用） */
   client: Client;
-  /** 会话数据根目录（可选，提供后支持 file/audio/video 附件下载，存放在 {根目录}/{会话}/files/） */
-  sessionDataDir?: string;
+  /** 会话注册表：一次会话一个目录，图片/附件/OCR 过程文件全部落在那里面 */
+  sessions: SessionStore;
   /** 管理员 Open ID（可选） */
   adminOpenId?: string;
   /** 话题根持久化文件路径（话题群会话收敛用） */
   topicRootsFile?: string;
-  /** 会话工作区根目录（可选，默认 work_space/）：每个会话一个文件夹收纳其文件 */
-  /** 会话工作区管理器（每个会话一个子文件夹，图片/附件归拢） */
-  workspace?: WorkspaceManager;
   /** 本地 OCR 兜底开关：模型无视觉能力时，把下载图片 OCR 成文字一并交给模型 */
   useExtraOcr?: boolean;
-  /** 本地 OCR 执行器（识别图片 Buffer → 文本） */
-  ocrImage?: (image: Buffer) => Promise<string | undefined>;
+  /** 本地 OCR 执行器（图片 Buffer + 本会话的 OCR 过程目录 → 文本） */
+  ocrImage?: (image: Buffer, scratchDir: string) => Promise<string | undefined>;
   /** 当前模型是否支持视觉（支持则不做 OCR，直接传图） */
   modelHasVision?: () => boolean;
   /** lark-cli 用户态搜索通道（contact +search-user，见 lark-cli-search.ts）：部门信息的来源 */
@@ -85,14 +82,11 @@ export class LarkTransport implements FeishuTransport {
   private readonly chatModeCache = new Map<string, "p2p" | "group" | "topic">();
   /** 话题根持久化（chatId -> 待定话题根 messageId） */
   private readonly topicRoots?: TopicRootStore;
-  private readonly workspace?: WorkspaceManager;
+  private readonly sessions: SessionStore;
   /** 本地 OCR 兜底开关与执行器（模型无视觉能力时启用） */
   private readonly useExtraOcr?: boolean;
-  private readonly ocrImage?: (image: Buffer) => Promise<string | undefined>;
+  private readonly ocrImage?: (image: Buffer, scratchDir: string) => Promise<string | undefined>;
   private readonly modelHasVision?: () => boolean;
-  /** 会话数据根目录（附件下载到 {根目录}/{会话}/files/） */
-  private readonly sessionDataDir?: string;
-  /** 图片缓存目录（供附件下载参考） */
 
   constructor(config: LarkTransportConfig) {
     this.appId = config.appId;
@@ -104,11 +98,10 @@ export class LarkTransport implements FeishuTransport {
     this.adminOpenId = config.adminOpenId;
     this.onModelSwitch = config.onModelSwitch;
     this.client = config.client;
-    this.sessionDataDir = config.sessionDataDir;
+    this.sessions = config.sessions;
     if (config.topicRootsFile) {
       this.topicRoots = new TopicRootStore(config.topicRootsFile);
     }
-    this.workspace = config.workspace;
     this.useExtraOcr = config.useExtraOcr;
     this.ocrImage = config.ocrImage;
     this.modelHasVision = config.modelHasVision;
@@ -148,7 +141,6 @@ export class LarkTransport implements FeishuTransport {
       "card.action.trigger": async (raw: Record<string, unknown>) => {
         const evt = normalizeCardAction(raw as object, { includeRaw: true });
         if (evt) {
-          logger.info(`[CardAction] 收到卡片回调: ${evt.operator.openId}`);
           void this.handleCardAction(evt).catch((error) => logger.error("[CardAction] 处理卡片回调失败:", error));
         }
         return { toast: { type: "info", content: "✅ 已收到，处理中…" } };
@@ -205,11 +197,12 @@ export class LarkTransport implements FeishuTransport {
       // 未 @ 的消息静默忽略（不查资料、不入会话，避免群聊刷屏误触发）。
       if (chatMode !== "p2p" && !message.mentionedBot) return;
 
-      // 会话 ID + 工作区文件夹最先就位：消息一旦开始处理，
-      // 归属与落盘位置即已确定（先于资料查询与模型思考）
+      // 会话 ID + 会话目录最先就位：消息一旦开始处理，
+      // 归属与落盘位置即已确定（先于资料查询与模型思考）。
+      // 会话目录由会话注册表给出（/new 之后拿到的是新会话目录）
       const threadId = message.threadId;
       const conversationId = await this.buildConversationId(chatId, chatMode, threadId, message.messageId);
-      const workspaceDir = this.workspace ? await this.workspace.dirFor(conversationId) : undefined;
+      const sessionDir = await this.sessions.dirFor(conversationId);
 
       const profile = await this.larkCli.getUserProfile(message.senderId);
       const displayName = profile.name || profile.en_name || message.senderId;
@@ -236,8 +229,8 @@ export class LarkTransport implements FeishuTransport {
           const processed = await this.imageProcessor?.processImages(
             message.messageId,
             imageKeys,
-            workspaceDir ? join(workspaceDir, "images") : undefined,
-            wantOcr ? this.ocrImage : undefined,
+            imagesDirOfSession(sessionDir),
+            wantOcr && this.ocrImage ? (image: Buffer) => this.ocrImage!(image, ocrDirOfSession(sessionDir)) : undefined,
           );
           if (processed && processed.length > 0) {
             // 图片 base64 不写入会话记录（易失内容不落盘，见 runtime 的 disableVolatilePersistence），
@@ -255,11 +248,11 @@ export class LarkTransport implements FeishuTransport {
       // 过滤消息中的 @ 机器人标记（normalize 已按占位符替换，这里兜底清洗）
       let cleanedText = stripBotMentions(message.content, this.botOpenId);
 
-      // 下载文件类附件（file/audio/video/media），保存到会话文件夹并把路径写进消息文本，
+      // 下载文件类附件（file/audio/video/media），保存到本会话目录的 files/ 并把路径写进消息文本，
       // Agent 可用 read/bash 直接访问
-      if (this.sessionDataDir) {
+      {
         const attachmentNote = await downloadFileAttachments(
-          workspaceDir ?? join(this.sessionDataDir, conversationId),
+          attachmentsDirOfSession(sessionDir),
           resources,
           (fileKey, type) => this.downloadResource(message.messageId, fileKey, type),
         );
@@ -609,10 +602,9 @@ export class LarkTransport implements FeishuTransport {
 }
 
 /**
- * 下载文件类附件（file/audio/video/media）到会话文件夹的 files/ 子目录
- * （`{sessionDataDir}/{会话目录}/files/`），返回要追加到消息文本的附件说明（无附件时为空串）。
+ * 下载文件类附件（file/audio/video/media）到本会话目录的 files/ 子目录
+ * （`{会话目录}/files/`），返回要追加到消息文本的附件说明（无附件时为空串）。
  *
- * 附件落盘到指定的目标目录（会话工作区/files）。
  * 文件名带时间戳前缀，同一会话先后传同名文件不互相覆盖；单个下载失败只记 warn，不影响其余附件。
  */
 export async function downloadFileAttachments(

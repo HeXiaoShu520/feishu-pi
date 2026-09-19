@@ -133,7 +133,7 @@ export class ToolGuard {
     const command = params.toolName === "bash" ? extractCommand(params.args) : undefined;
     const selfApprove = command !== undefined && matchesUserIdentityCli(command);
     const mode = selfApprove ? "self" : "admin";
-    logger.info(`[ToolGuard] 需要授权 (${reason})，发送${selfApprove ? "用户卡" : "管理员卡"}: ${params.toolName}`);
+    // 发授权卡：点击结果由 [CardAction] 授权 单行记录，这里不再打"需要授权"一行
     const { allowed, detail } = await this.broker.requestApproval(
       {
         toolName: params.toolName,
