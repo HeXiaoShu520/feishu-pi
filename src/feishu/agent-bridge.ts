@@ -70,7 +70,7 @@ export class FeishuAgentBridge {
       (chatId: string) => this.detailMode.get(chatId) === true,
     ));
     // /new /stop 操作会话（换代/中断），实际逻辑由指令自身完成（见 commands.ts）
-    this.commandRegistry.register(new NewCommand((id) => this.conversations.reset(id)));
+    this.commandRegistry.register(new NewCommand((id, openId) => this.conversations.reset(id, openId)));
     this.commandRegistry.register(new StopCommand((id) => this.conversations.abort(id)));
     for (const command of options?.extraCommands ?? []) {
       this.commandRegistry.register(command);
@@ -323,7 +323,7 @@ export class FeishuAgentBridge {
           await this.messages?.complete(message.messageId);
           return;
         }
-        await this.conversations.reset(message.context.conversationId);
+        await this.conversations.reset(message.context.conversationId, message.context.userOpenId);
         logger.info(`[Command] 已开启新会话: ${message.context.conversationId}`);
         await this.sendCommandCard(message, markdownCard("✅ 已开启新会话（历史已归档，新对话从新会话目录开始）。"));
         await this.messages?.complete(message.messageId);

@@ -48,10 +48,10 @@ export class SessionStore extends JsonMapStore<SessionRecord> {
   }
 
   /** 该会话当前的记录；不存在（或目录已被清理掉）时新建一个会话。 */
-  async getOrCreate(conversationId: string): Promise<SessionRecord> {
+  async getOrCreate(conversationId: string, callerOpenId?: string): Promise<SessionRecord> {
     const inflight = this.pending.get(conversationId);
     if (inflight) return inflight;
-    const task = this.getOrCreateInner(conversationId).finally(() => {
+    const task = this.getOrCreateInner(conversationId, callerOpenId).finally(() => {
       if (this.pending.get(conversationId) === task) this.pending.delete(conversationId);
     });
     this.pending.set(conversationId, task);
@@ -59,8 +59,8 @@ export class SessionStore extends JsonMapStore<SessionRecord> {
   }
 
   /** 会话目录绝对路径（需要时先建目录）。传输层下载图片/附件前调用。 */
-  async dirFor(conversationId: string): Promise<string> {
-    return (await this.getOrCreate(conversationId)).dir;
+  async dirFor(conversationId: string, callerOpenId?: string): Promise<string> {
+    return (await this.getOrCreate(conversationId, callerOpenId)).dir;
   }
 
   /**
@@ -77,32 +77,34 @@ export class SessionStore extends JsonMapStore<SessionRecord> {
   }
 
   /** `/new`：为该会话开一代新会话（新 id + 新目录 + 空历史），旧目录留在磁盘等过期清理。 */
-  async rotate(conversationId: string): Promise<SessionRecord> {
+  async rotate(conversationId: string, callerOpenId?: string): Promise<SessionRecord> {
     // 等价于 getOrCreate 的首次创建：先等在建的那一代落定，避免换代被它覆盖
     await this.pending.get(conversationId)?.catch(() => undefined);
     await this.ensureLoaded();
     const previous = this.records.get(conversationId);
-    const record = await this.createRecord(conversationId);
+    const record = await this.createRecord(conversationId, callerOpenId);
     if (previous) logger.info(`[Session] 会话已换代: ${conversationId} → ${record.sessionId}（旧目录 ${previous.sessionId} 留待过期清理）`);
     return record;
   }
 
-  private async getOrCreateInner(conversationId: string): Promise<SessionRecord> {
+  private async getOrCreateInner(conversationId: string, callerOpenId?: string): Promise<SessionRecord> {
     await this.ensureLoaded();
     const existing = this.records.get(conversationId);
     // 目录可能已被保留期清理删掉：历史不在了就当新会话重建（每次取会话只多一次 stat）
     if (existing && (await dirExists(existing.dir))) return existing;
     if (existing) logger.warn(`[Session] 会话目录已不存在，重建会话: ${conversationId}（${existing.sessionId}）`);
-    return this.createRecord(conversationId);
+    return this.createRecord(conversationId, callerOpenId);
   }
 
   /** 新建一代会话：分配不重名的会话 id、建目录、写自述文件、登记路由。 */
-  private async createRecord(conversationId: string): Promise<SessionRecord> {
+  private async createRecord(conversationId: string, callerOpenId?: string): Promise<SessionRecord> {
     // mkdir 非递归 = 文件系统级原子创建：即便并发拿到同一 id（查盘与建目录之间的竞态窗口），
     // 也只有一个成功，另一个 EEXIST 后换 id 重试——构造上排除两代会话共用一个目录
     await mkdir(this.root, { recursive: true });
+    // 目录尾段 = 发起人 openId 后 6 位（一眼可见归属）；无身份时退回随机
+    const tail = callerOpenId ? callerOpenId.slice(-6).replace(/[^A-Za-z0-9]/g, "") || undefined : undefined;
     for (let attempt = 0; attempt < 50; attempt++) {
-      const sessionId = attempt < 5 ? await this.allocateSessionId() : `${newSessionId()}-${Math.random().toString(36).slice(2, 8)}`;
+      const sessionId = attempt < 5 ? await this.allocateSessionId(tail) : `${newSessionId()}-${Math.random().toString(36).slice(2, 8)}`;
       const dir = join(this.root, sessionId);
       try {
         await mkdir(dir);
@@ -127,9 +129,9 @@ export class SessionStore extends JsonMapStore<SessionRecord> {
   }
 
   /** 分配一个磁盘上尚不存在的会话 id（同一秒内多次调用也不会撞名）。 */
-  private async allocateSessionId(): Promise<string> {
+  private async allocateSessionId(tail?: string): Promise<string> {
     for (let attempt = 0; attempt < 5; attempt++) {
-      const candidate = newSessionId();
+      const candidate = newSessionId(undefined, tail);
       if (!(await dirExists(join(this.root, candidate)))) return candidate;
     }
     // 极端情况下（时间被冻结）退化为随机名，保证不覆盖已存在的会话目录

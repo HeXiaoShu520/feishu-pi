@@ -234,9 +234,9 @@ export class HelpCommand implements CommandHandler {
  * 换代操作经构造注入（ConversationManager.reset）；话题内共享会话，禁止换代。
  */
 export class NewCommand implements CommandHandler {
-  private readonly reset: (conversationId: string) => Promise<void>;
+  private readonly reset: (conversationId: string, callerOpenId?: string) => Promise<void>;
 
-  constructor(reset: (conversationId: string) => Promise<void>) {
+  constructor(reset: (conversationId: string, callerOpenId?: string) => Promise<void>) {
     this.reset = reset;
   }
 
@@ -246,12 +246,13 @@ export class NewCommand implements CommandHandler {
 
   async execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
     const conversationId = message.context.conversationId;
+    const callerOpenId = message.context.userOpenId;
     // 话题会话为所有人共享，不允许单人换代
     if (conversationId.startsWith("topic:")) {
       logger.info(`[Command] 话题内禁止 /new: ${conversationId}`);
       return { card: markdownCard("❌ 话题内禁止使用 /new（话题会话为所有人共享），请在群聊或私聊中使用。") };
     }
-    await this.reset(conversationId);
+    await this.reset(conversationId, callerOpenId);
     logger.info(`[Command] 已开启新会话: ${conversationId}`);
     return { card: markdownCard("✅ 已开启新会话（历史已归档，新对话从新会话目录开始）。") };
   }

@@ -86,7 +86,7 @@ export class ConversationManager {
     const userId = context?.userOpenId ?? conversationId.split("-")[0];
 
     // 会话目录由注册表给定：/new 之后拿到的是新会话（新 id + 新目录 + 空历史）
-    const record = await this.sessions.getOrCreate(conversationId);
+    const record = await this.sessions.getOrCreate(conversationId, context?.userOpenId);
     let session = record.sessionFile
       ? await this.runtime.createSession(record.sessionFile, userId, context).catch(() => undefined)
       : undefined;
@@ -160,12 +160,12 @@ export class ConversationManager {
    * `/new`：换一代会话（新会话 id + 新目录 + 空历史），旧目录留在磁盘上等过期清理。
    * 在途任务会跑完（回复仍送达），但已 detached，且代次不符——不会把旧会话文件写回新记录。
    */
-  async reset(conversationId: string): Promise<void> {
+  async reset(conversationId: string, callerOpenId?: string): Promise<void> {
     const statePromise = this.conversations.get(conversationId);
     this.conversations.delete(conversationId);
 
     const task = (async () => {
-      await this.sessions.rotate(conversationId);
+      await this.sessions.rotate(conversationId, callerOpenId);
       if (statePromise) {
         const state = await statePromise.catch(() => undefined);
         if (state) {

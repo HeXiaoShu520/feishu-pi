@@ -367,7 +367,7 @@ export class FeishuPiRuntime {
     // 供 Pi 内部 /new、分支等操作在正确位置建新文件
     // 会话目录：由会话注册表给出——一次会话一个目录，Pi 会话文件（jsonl）
     // 与用户图片/附件同居其中；/new 换代后这里自然拿到新目录
-    const convDir = await this.config.sessions.dirFor(context?.conversationId ?? "default");
+    const convDir = await this.config.sessions.dirFor(context?.conversationId ?? "default", context?.userOpenId);
     const sessionManager = sessionFile
       ? SessionManager.open(sessionFile, convDir, this.config.cwd)
       : SessionManager.create(this.config.cwd, convDir);

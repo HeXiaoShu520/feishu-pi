@@ -30,12 +30,12 @@ export function sanitizeFileName(name: string): string {
 }
 
 /**
- * 生成会话 id（同时也是会话目录名）：`{YYYYMMDD}-{HHmmss}-{随机 4 位}`。
- * 时间戳在前便于按时间排序与人工辨识，随机尾避免同一秒内撞车。
+ * 生成会话 id（同时也是会话目录名）：`{YYYYMMDD}-{HHmmss}-{尾段}`。
+ * 时间戳在前便于按时间排序与人工辨识；尾段默认 4 位随机（防同秒撞名），
+ * 可传用户 openId 后 6 位，让目录名直接可见归属。
  */
-export function newSessionId(now: Date = new Date()): string {
+export function newSessionId(now: Date = new Date(), tail = Math.random().toString(36).slice(2, 6).padEnd(4, "0")): string {
   const pad = (n: number) => String(n).padStart(2, "0");
   const stamp = `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}-${pad(now.getHours())}${pad(now.getMinutes())}${pad(now.getSeconds())}`;
-  const tail = Math.random().toString(36).slice(2, 6).padEnd(4, "0");
   return `${stamp}-${tail}`;
 }

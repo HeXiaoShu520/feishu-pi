@@ -198,7 +198,7 @@ export class LarkTransport implements FeishuTransport {
       // 会话目录由会话注册表给出（/new 之后拿到的是新会话目录）
       const threadId = message.threadId;
       const conversationId = await this.buildConversationId(chatId, chatMode, threadId, message.messageId);
-      const sessionDir = await this.sessions.dirFor(conversationId);
+      const sessionDir = await this.sessions.dirFor(conversationId, message.senderId);
 
       const profile = await this.larkCli.getUserProfile(message.senderId);
       const displayName = profile.name || profile.en_name || message.senderId;
