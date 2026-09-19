@@ -1,5 +1,6 @@
 import { join } from "node:path";
 import { readFileSync } from "node:fs";
+import { logger } from "./utils/logger.ts";
 export interface FeishuPiAppConfig {
   feishuAppId: string;
   feishuAppSecret: string;
@@ -67,12 +68,19 @@ function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
 const THINKING_LEVELS = ["off", "low", "high", "max"] as const;
 export type ThinkingLevelConfig = (typeof THINKING_LEVELS)[number];
 
-/** 思考档位归一：只认 off/low/high/max；旧超集档位就近折算（minimal→low、medium→high、xhigh→max），其余回退默认 off。 */
+/** 思考档位归一：只认 off/low/high/max；旧超集档位就近折算（minimal→low、medium/xhigh→high，xhigh 按 DeepSeek 官方映射表等价于 high），其余回退默认 off。 */
 function parseThinkingLevel(value: string | undefined): ThinkingLevelConfig {
   const raw = (value ?? "").trim().toLowerCase();
   if ((THINKING_LEVELS as readonly string[]).includes(raw)) return raw as ThinkingLevelConfig;
-  const equivalents: Record<string, ThinkingLevelConfig> = { minimal: "low", medium: "high", xhigh: "max" };
-  return equivalents[raw] ?? "off";
+  if (raw === "") return "off";
+  const equivalents: Record<string, ThinkingLevelConfig> = { minimal: "low", medium: "high", xhigh: "high" };
+  const folded = equivalents[raw];
+  if (folded) {
+    logger.warn(`[Config] FEISHU_PI_THINKING_LEVEL="${raw}" 不是公开档位，已折算为 ${folded}`);
+    return folded;
+  }
+  logger.warn(`[Config] FEISHU_PI_THINKING_LEVEL="${raw}" 无法识别（可选 off/low/high/max），已按默认 off 处理`);
+  return "off";
 }
 
 /** 主团队组名：FEISHU_PI_GROUP（无后缀）落到这里（与 permissions.json 的 group 对应） */
