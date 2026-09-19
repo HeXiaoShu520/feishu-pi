@@ -209,12 +209,16 @@ export class FeishuPiRuntime {
     // 当前模型的名字与解析后的使用配置（协议/地址/上下文/视觉/思维链/计价/密钥变量）
     try {
       const model = this.resolveModel();
+      // 未收录、继承目录语义的模型在名字后追加一句说明，不单独打日志
+      const inheritedNote = (model as { inheritedFrom?: string }).inheritedFrom
+        ? `（未收录，已继承 ${(model as { inheritedFrom?: string }).inheritedFrom} 目录语义）`
+        : "";
       const inputDesc = model.input?.includes("image") ? "文本+图片" : "文本";
       const keyEnv = findEnvKeys(this.config.modelProvider as never, process.env as Record<string, string>)?.[0]
         ?? `${this.config.modelProvider.toUpperCase().replace(/-/g, "_")}_API_KEY`;
       const thinking = (model.compat as { thinkingFormat?: string } | undefined)?.thinkingFormat;
       logger.info(
-        `[Runtime] 当前模型 ${colors.cyan}${model.provider}/${model.id}${colors.reset}: ` +
+        `[Runtime] 当前模型 ${colors.cyan}${model.provider}/${model.id}${colors.reset}${inheritedNote}: ` +
           `地址 ${model.baseUrl ?? "官方默认"} · 上下文 ${model.contextWindow ?? "?"} · 输出上限 ${model.maxTokens ?? "?"} · 输入 ${inputDesc} · ${thinking ? `思维链 ${thinking} · ` : ""}定价 ${model.cost?.input ?? 0}/${model.cost?.output ?? 0} per M · 密钥注入 ${keyEnv}`,
       );
     } catch (error) {
@@ -292,15 +296,8 @@ export class FeishuPiRuntime {
     }
     if (template) {
       const withBase = baseUrl ? { ...template, baseUrl } : template;
-      const model = { ...withBase } as NonNullable<ReturnType<typeof getModel>>;
-      if (inheritedFrom) {
-        const compat = (template as { compat?: { thinkingFormat?: string } }).compat;
-        logger.info(
-          `[Runtime] 模型 ${provider}/${name} 未收录，已继承 ${provider}/${inheritedFrom} 目录语义` +
-            `（thinkingFormat=${compat?.thinkingFormat ?? "默认"}，ctx=${template.contextWindow}）`,
-        );
-      }
-      return model;
+      // 继承来的模型在对象上带 inheritedFrom 标记，由启动属性行合并展示（不单独刷一行日志）
+      return { ...withBase, inheritedFrom } as NonNullable<ReturnType<typeof getModel>> & { inheritedFrom?: string };
     }
     const anthropicCompatible = provider === "anthropic";
     logger.info(
