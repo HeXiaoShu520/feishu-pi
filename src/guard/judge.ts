@@ -98,12 +98,21 @@ export class PolicyJudge {
   /**
    * 单模型的审核调用：OpenAI 兼容 chat/completions，temperature 0 保证判定稳定。
    * 任何异常（接口错误/超时/输出无法解析）一律按 ask 处理——审核失败宁可问人。
+   * 无论结果如何，命令+结论只打一行日志。
    */
   private async judgeWithSingleModel(model: string, input: JudgeInput): Promise<JudgeVerdict> {
+    const verdict = await this.callJudgeModel(model, input);
+    logger.info(
+      `[Judge] 审核: ${verdict.decision} 内容: ${input.toolName}: ${singleLine(JSON.stringify(input.args) ?? "", 600)}`,
+    );
+    return verdict;
+  }
+
+  private async callJudgeModel(model: string, input: JudgeInput): Promise<JudgeVerdict> {
     const { baseUrl, apiKey, timeoutMs } = this.options;
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
-    // 审核指令 = 固定系统提示 + 权限配置等上下文（不再逐条打印）；日志只记原始被审指令
+    // 审核指令 = 固定系统提示 + 权限配置等上下文（不打印，/perm 可查完整策略）
     const instruction = JSON.stringify({
       权限配置: input.overview ?? null,
       调用者身份组: input.group,
@@ -115,7 +124,6 @@ export class PolicyJudge {
       },
       本次调用: { 工具: input.toolName, 参数: input.args },
     });
-    logger.info(`[Judge] → ${model} 审核 ${input.toolName}: ${singleLine(JSON.stringify(input.args) ?? "", 600)}`);
     try {
       const response = await fetch(`${baseUrl!.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",
@@ -139,7 +147,6 @@ export class PolicyJudge {
       }
       const data = (await response.json()) as { choices?: Array<{ message?: { content?: string } }> };
       const content = data.choices?.[0]?.message?.content ?? "";
-      logger.info(`[Judge] ← ${model} 审核结果: ${singleLine(content, 600)}`);
       const match = content.match(/\{[\s\S]*\}/);
       if (!match) return { decision: "ask", reason: "审核模型输出无法解析" };
       const parsed = JSON.parse(match[0]) as { decision?: string; reason?: string };

@@ -75,18 +75,12 @@ export class ToolGuard {
       }
     }
 
-    // ① 组策略命中 → 免审放行（确定性判定）；未命中只记一行原因（命令与结果由 Judge 日志记录，不重复打印）
+    // ① 组策略命中 → 免审放行（确定性判定）；未命中的日志由 Judge 单行记录（命令+结论），此处不再重复
     if (toolName === "bash") {
       const command = extractCommand(args);
       if (command !== undefined && policy.bashAllowed(command)) {
         logger.info(`[ToolGuard] bash 命中策略名单，放行: ${command}`);
         return undefined;
-      }
-      if (command !== undefined) {
-        const why = SHELL_META.test(command)
-          ? "含拼接符防逃逸不参与名单匹配"
-          : "不在 bash 允许名单";
-        logger.info(`[ToolGuard] bash 未命中名单（${why}），转智能体审核`);
       }
     } else if (toolName === "write" || toolName === "edit") {
       const path = extractPath(args);
