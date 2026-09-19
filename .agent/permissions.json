@@ -51,6 +51,7 @@
       "Bash(lark-cli mail:*)",
       "Bash(lark-cli okr:*)",
       "Bash(lark-cli meeting:*)",
+      "Bash(meegle:*)",
       "Bash(lark-cli --help)"
     ],
     "group": [

@@ -14,6 +14,7 @@ import { ScheduleService } from "./schedule/service.ts";
 import { PermissionPolicy } from "./permission/policy.ts";
 import { PermCommand, markdownCard } from "./feishu/commands.ts";
 import { LoginCommand, LogoutCommand, UserAuthService } from "./feishu/user-auth.ts";
+import { MeegleDeviceLogin, MEEGLE_DEFAULT_HOST, StaticCredentialService } from "./feishu/meegle-auth.ts";
 import { PeopleRoster } from "./feishu/people-roster.ts";
 import { createIdentityBashTool } from "./runtime/identity-bash.ts";
 import { runSetupWizard } from "./feishu/setup-wizard.ts";
@@ -162,6 +163,13 @@ export async function main(): Promise<void> {
 
   const credentialsDir = join(config.dataDir, "credentials");
   const vaultKeyFile = join(config.dataDir, ".vault-key");
+  // Meegle（飞书项目）静态凭证：/login meegle Device Flow 授权后 token 加密入库，
+  // 会话 bash 命中 meegle 命令时注入（MEEGLE_USER_ACCESS_TOKEN / MEEGLE_HOST）
+  const meegleAuth = new StaticCredentialService(
+    join(credentialsDir, "meegle.vault.json"),
+    vaultKeyFile,
+    "meegle",
+  );
   // 会话工作区：会话的第一句话就建立专属文件夹，图片/附件等产物全部归拢于此
   const workspace = new WorkspaceManager(config.workspaceRoot);
   // 用户飞书身份授权（Device Flow，RFC 8628）：/login 指令 + 按 openId 加密存取 user_access_token。
@@ -182,6 +190,13 @@ export async function main(): Promise<void> {
       else pendingLoginBound.push([info]);
     },
   });
+
+  // Meegle Device Flow 登录：发授权链接卡 → 后台轮询 meegle CLI → token 加密入库 → 原地更新卡片
+  const meegleDeviceLogin = new MeegleDeviceLogin(
+    meegleAuth,
+    (messageId, card) => transport.updateCardById(messageId, card),
+    config.cwd,
+  );
 
   // 存量会话清洗（后台）：用凭证库已知密钥值扫描历史会话 jsonl，命中的明文替换为 ***
   void (async () => {
@@ -513,6 +528,16 @@ ${trimmed}` }] },
           logger.info(`[Main] lark-cli 缺少用户 scope，已发起增量授权: ${scopes.join(", ")}（用户 ${uid}）`);
           return `【补充授权已发起】本次调用缺少用户授权 scope：${scopes.join("、")}。已向你的飞书私聊发送补充授权卡片，请完成授权后重试本命令；授权完成后无需其他操作。`;
         },
+        // Meegle（飞书项目）：/login meegle 授权的静态 token，命令命中 meegle 时注入；
+        // 站点固定为飞书项目（MEEGLE_DEFAULT_HOST）
+        extraInjections: [
+          {
+            commandPattern: /meegle/,
+            envToken: "MEEGLE_USER_ACCESS_TOKEN",
+            staticEnv: { MEEGLE_HOST: MEEGLE_DEFAULT_HOST },
+            getToken: () => meegleAuth.peekToken(userId),
+          },
+        ],
 
       });
     },
@@ -535,7 +560,7 @@ ${trimmed}` }] },
       // /perm 查看身份、双组策略与工具档位（仅管理员）；/login /logout 用户飞书身份授权（Device Flow）
       extraCommands: [
         new PermCommand(() => policy.describe()),
-        new LoginCommand(userAuth),
+        new LoginCommand(userAuth, { meegle: meegleAuth, meegleDevice: meegleDeviceLogin }),
         new LogoutCommand(userAuth),
       ],
       // 回复末尾的模型统计小字开关（工具过程状态不受影响）

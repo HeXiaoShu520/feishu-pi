@@ -573,19 +573,38 @@ export class UserAuthService {
   }
 }
 
-/** 登录 provider 目录：/login <provider> 的可接入清单（当前仅 lark）。 */
+/** 登录 provider 目录：/login <provider> 的可接入清单。 */
 interface ProviderEntry {
   label: string;
 }
 
 const LOGIN_PROVIDERS: Record<string, ProviderEntry> = {
   lark: { label: "飞书 CLI（lark-cli）" },
+  meegle: { label: "飞书项目（meegle-cli）" },
 };
+
+/** Meegle 凭证提交/清除/查询的最小接口（由 StaticCredentialService 实现）。 */
+export interface MeegleLoginHandler {
+  submitToken(openId: string, token: string): Promise<void>;
+  logout(openId: string): Promise<boolean>;
+  /** 同步查询是否已有凭证（/login 状态总览用，不返回内容） */
+  peekToken?(openId: string): string | undefined;
+}
+
+/** Meegle Device Flow 登录的最小接口（由 MeegleDeviceLogin 实现；结构化类型便于测试注入）。 */
+export interface MeegleDeviceStarter {
+  startLogin(message: FeishuInboundMessage): Promise<{ card: object; afterSend?: (messageId?: string) => void }>;
+}
 
 export class LoginCommand implements CommandHandler {
   private readonly auth: UserAuthService;
-  constructor(auth: UserAuthService) {
+  private readonly meegle?: MeegleLoginHandler;
+  private readonly meegleDevice?: MeegleDeviceStarter;
+
+  constructor(auth: UserAuthService, options?: { meegle?: MeegleLoginHandler; meegleDevice?: MeegleDeviceStarter }) {
     this.auth = auth;
+    this.meegle = options?.meegle;
+    this.meegleDevice = options?.meegleDevice;
   }
 
   match(text: string): boolean {
@@ -602,6 +621,15 @@ export class LoginCommand implements CommandHandler {
     if (!entry) {
       const known = Object.entries(LOGIN_PROVIDERS).map(([id, e]) => `- \`/login ${id}\`：${e.label}`).join("\n");
       return { card: markdownCard(`❓ 未知的应用「${provider}」。当前支持：\n${known}`) };
+    }
+    if (provider === "meegle") {
+      if (message.context.chatMode !== "p2p") {
+        return { card: markdownCard("❌ Meegle 授权仅支持在**私聊**中进行。请私聊机器人发送 /login meegle。") };
+      }
+      // Device Flow：发链接卡，后台轮询，同意后 token 加密入库
+      if (!this.meegleDevice) return { card: markdownCard("⏳ Meegle 授权服务未就绪，请稍后重试。") };
+      const login = await this.meegleDevice.startLogin(message);
+      return { card: login.card, afterSend: login.afterSend };
     }
 
     return this.auth.startLogin(message);
@@ -620,6 +648,11 @@ export class LoginCommand implements CommandHandler {
       const validUntil = new Date(status.refreshExpiresAt).toLocaleString("zh-CN");
       lines.push(`- **lark**（飞书 CLI）：🟢 已登录（scope：${status.scope || "默认"}，有效期至 ${validUntil}）`);
     }
+
+    const meegleReady = this.meegle?.peekToken?.(openId) !== undefined;
+    lines.push(meegleReady
+      ? "- **meegle**（飞书项目）：🟢 已配置凭证"
+      : "- **meegle**（飞书项目）：⚪ 未配置 —— `/login meegle` 开启");
 
     lines.push("", "发起登录：`/login <应用名>`，如 `/login lark`。");
     return { card: markdownCard(lines.join("\n")) };
