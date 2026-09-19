@@ -36,6 +36,13 @@ export function buildPermissionCard(params: PermissionCardParams): object {
   const self = mode === "self";
 
   const summary = summarizeArgs(args);
+  // 与流式工具段同形态：统一渲染为代码块——bash 带 bash 语言标注，
+  // 其余工具代码块首行带工具名（授权场景需明确动作，路径类也不例外）；
+  // 围栏内出现 ``` 会破坏渲染，替换为三单引号
+  const safe = summary.replace(/```/g, "'''");
+  const lang = toolName === "bash" ? "bash" : "";
+  const body = toolName === "bash" ? safe : `${toolName}\n${safe}`;
+  const toolBlock = "```" + `${lang}\n${body}\n` + "```";
   const button = (text: string, type: string, value: Record<string, unknown>) => ({
     tag: "button",
     width: "fill",
@@ -61,8 +68,7 @@ export function buildPermissionCard(params: PermissionCardParams): object {
     header: { title: { tag: "plain_text", content: self ? "🔑 用户身份操作确认" : "🛡 工具调用授权请求" } },
     body: {
       elements: [
-        { tag: "markdown", content: `**${toolName}**` },
-        ...(summary ? [{ tag: "markdown", content: `\`\`\`\n${summary}\n\`\`\`` }] : []),
+        { tag: "markdown", content: toolBlock },
         {
           tag: "markdown",
           content: self
