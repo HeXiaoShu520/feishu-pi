@@ -32,7 +32,7 @@ describe("授权卡双模式（管理员卡 / 用户卡）", () => {
   it("用户卡（self）：发起者本人可批", async () => {
     const { broker, start } = makeBroker();
     const { approvalId, token, messageId } = await start({
-      toolName: "bash", args: { command: "meegle mywork todo" }, chatId: "oc_chat",
+      toolName: "bash", args: { command: "lark-cli calendar +agenda" }, chatId: "oc_chat",
       reason: "测试", mode: "self", requesterOpenId: "ou_requester",
     });
     const result = await broker.handleCallback({
@@ -45,7 +45,7 @@ describe("授权卡双模式（管理员卡 / 用户卡）", () => {
   it("用户卡：管理员（非发起者）点击被拒绝", async () => {
     const { broker, start } = makeBroker();
     const { approvalId, token, messageId } = await start({
-      toolName: "bash", args: { command: "bbt pr list" }, chatId: "oc_chat",
+      toolName: "bash", args: { command: "lark-cli im +send" }, chatId: "oc_chat",
       reason: "测试", mode: "self", requesterOpenId: "ou_requester",
     });
     const result = await broker.handleCallback({
@@ -77,7 +77,7 @@ describe("授权卡双模式（管理员卡 / 用户卡）", () => {
   });
 
   it("用户卡构建：无转发按钮，标题为用户身份确认；管理员卡含转发按钮", () => {
-    const self = buildPermissionCard({ toolName: "bash", args: { command: "meegle todo" }, approvalId: "a", token: "t", mode: "self" });
+    const self = buildPermissionCard({ toolName: "bash", args: { command: "lark-cli okr list" }, approvalId: "a", token: "t", mode: "self" });
     const selfStr = JSON.stringify(self);
     expect(selfStr).toContain("用户身份操作确认");
     expect(selfStr).toContain("你的个人凭证");

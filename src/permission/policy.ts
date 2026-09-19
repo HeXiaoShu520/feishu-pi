@@ -1,6 +1,6 @@
 import { readFile, stat } from "node:fs/promises";
 import { matchGlobs } from "../utils/path-glob.ts";
-import { logger } from "../utils/logger.ts";
+import { colors, logger } from "../utils/logger.ts";
 
 /**
  * 统一权限策略：一个文件（.agent/permissions.json）只有两个输入——
@@ -65,7 +65,7 @@ const UNGROUPED_READ = [".agent/skills/**"];
 
 /** bash 命令里的 shell 链接符：命中即不参与前缀/精确匹配（防 `npm run test; rm -rf /` 逃逸）。
  *  换行符必须包含：多行命令的第二行不被前缀规则覆盖（`git status\nrm -rf /` 会整段放行）。 */
-const SHELL_META = /[;&|`]|\$\(|[\r\n]/;
+export const SHELL_META = /[;&|`]|\$\(|[\r\n]/;
 
 export class PermissionPolicy {
   private readonly filePath: string;
@@ -243,6 +243,23 @@ export class PermissionPolicy {
       }
       this.loadedMtimeMs = mtimeMs;
       logger.info(`[Policy] 已加载权限策略（${this.filePath}），deny 保护 ${this.denyPatterns.length} 条模式`);
+      // 打印全部规则明细（按规则类型着色）：让"为什么没命中/为什么弹卡"在控制台可直接自查
+      const kindStyle: Record<keyof GroupFields | "deny" | "name", (s: string) => string> = {
+        name: (s) => `${colors.bright}${colors.magenta}${s}${colors.reset}`,
+        read: (s) => `${colors.green}${s}${colors.reset}`,
+        write: (s) => `${colors.yellow}${s}${colors.reset}`,
+        bash: (s) => `${colors.cyan}${s}${colors.reset}`,
+        tools: (s) => `${colors.magenta}${s}${colors.reset}`,
+        deny: (s) => `${colors.red}${s}${colors.reset}`,
+      };
+      const dump = (name: string, fields: GroupFields): void => {
+        const entries = (Object.keys(fields) as (keyof GroupFields)[])
+          .flatMap((kind) => (fields[kind] ?? []).map((pattern) => kindStyle[kind](`${kind}(${pattern})`)));
+        logger.info(`[Policy]   ${kindStyle.name(name)}: ${entries.length > 0 ? entries.join("  ") : "(空)"}`);
+      };
+      dump("common", this.common);
+      for (const [name, fields] of Object.entries(this.groups)) dump(name, fields);
+      logger.info(`[Policy]   ${kindStyle.name("deny")}: ${this.denyPatterns.map((p) => kindStyle.deny(p)).join("  ")}`);
     } catch (error) {
       if (!this.warned) {
         this.warned = true;

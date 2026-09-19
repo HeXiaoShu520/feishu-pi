@@ -1,6 +1,7 @@
 import type { GroupPolicy } from "../permission/policy.ts";
+import { SHELL_META } from "../permission/policy.ts";
 import type { PermissionBroker } from "./broker.ts";
-import type { PolicyJudge } from "./judge.ts";
+import type { PolicyJudge, PermissionOverview } from "./judge.ts";
 import { matchesUserIdentityCli } from "../runtime/identity-bash.ts";
 import { logger } from "../utils/logger.ts";
 
@@ -26,7 +27,7 @@ export interface ToolGuardCheckParams {
  *        allow → 放行；ask → 授权卡
  *      （覆盖复合命令等规则永远命中不了的调用；未配置智能体时直接授权卡）
  *   ③ 智能体 ask → 授权卡，按身份分流：
- *        bash 使用发起者的用户身份 CLI 凭证（lark-cli 用户态/meegle/bbt）→ 用户卡，本人单次确认；
+ *        bash 使用发起者的用户身份 CLI 凭证（lark-cli 用户态）→ 用户卡，本人单次确认；
  *        其余 → 管理员卡，负责人单次确认；拒绝/超时/无会话发卡 → 拦截
  *
  * read 的可读范围判定在 runtime 的 read 分支先行处理，不会到这里。
@@ -35,10 +36,17 @@ export interface ToolGuardCheckParams {
 export class ToolGuard {
   private readonly broker: PermissionBroker;
   private readonly judge?: PolicyJudge;
+  /** 全量权限配置提供器（供智能体审核时把整份 permission 交给审核模型） */
+  private readonly getOverview?: () => Promise<PermissionOverview | undefined>;
 
-  constructor(broker: PermissionBroker, judge?: PolicyJudge) {
+  constructor(
+    broker: PermissionBroker,
+    judge?: PolicyJudge,
+    getOverview?: () => Promise<PermissionOverview | undefined>,
+  ) {
     this.broker = broker;
     this.judge = judge;
+    this.getOverview = getOverview;
   }
 
   async check(policy: GroupPolicy, params: ToolGuardCheckParams, signal?: AbortSignal): Promise<{ block: true; reason: string } | undefined> {
@@ -67,12 +75,21 @@ export class ToolGuard {
       }
     }
 
-    // ① 组策略命中 → 免审放行（确定性判定）
+    // ① 组策略命中 → 免审放行（确定性判定）；未命中把命令与生效名单打进日志，便于自查
     if (toolName === "bash") {
       const command = extractCommand(args);
       if (command !== undefined && policy.bashAllowed(command)) {
         logger.info(`[ToolGuard] bash 命中策略名单，放行: ${command}`);
         return undefined;
+      }
+      if (command !== undefined) {
+        const why = SHELL_META.test(command)
+          ? "含拼接符（; | && $( 换行等），防逃逸不参与名单匹配"
+          : "不在 bash 允许名单";
+        logger.info(
+          `[ToolGuard] bash 未命中名单（${why}）: ${singleLine(command, 200)}；` +
+            `生效名单: ${policy.describe().bash.join(" / ") || "(空)"}`,
+        );
       }
     } else if (toolName === "write" || toolName === "edit") {
       const path = extractPath(args);
@@ -86,10 +103,11 @@ export class ToolGuard {
       return undefined;
     }
 
-    // ② 策略未命中 → 智能体综合判断（以该组授权策略为参考）
+    // ② 策略未命中 → 智能体综合判断（把整份权限配置交给审核模型参考）
     if (this.judge?.enabled) {
       const fields = policy.describe();
-      const verdict = await this.judge.judge({ group: policy.groups.join(","), fields, toolName, args });
+      const overview = this.getOverview ? await this.getOverview().catch(() => undefined) : undefined;
+      const verdict = await this.judge.judge({ group: policy.groups.join(","), fields, toolName, args, overview });
       if (verdict.decision === "allow") {
         logger.info(`[ToolGuard] 策略外调用，智能体综合判断放行: ${toolName}（${verdict.reason}）`);
         return undefined;
@@ -99,18 +117,22 @@ export class ToolGuard {
     }
 
     // ③ 智能体未配置 → 名单外调用直接授权卡
-    return this.requireApproval(params, this.defaultReason(policy, toolName), signal);
+    return this.requireApproval(params, this.defaultReason(policy, toolName, args), signal);
   }
 
   /** 未启用智能体时的兜底理由。 */
-  private defaultReason(policy: GroupPolicy, toolName: string): string {
-    if (toolName === "bash") return "命令不在 bash 允许名单内";
+  private defaultReason(policy: GroupPolicy, toolName: string, args?: unknown): string {
+    if (toolName === "bash") {
+      const command = extractCommand(args);
+      if (command !== undefined && SHELL_META.test(command)) return "命令含拼接符（; | && $( 换行等），为防逃逸需人工确认";
+      return "命令不在 bash 允许名单内";
+    }
     if (toolName === "write" || toolName === "edit") return "写入路径不在允许范围内";
     return `工具 ${toolName} 不在你的可用清单内`;
   }
 
   /** 走授权卡流程；无会话无法发卡时按拒绝处理。
-   *  分流：bash 命令使用发起者的用户身份 CLI 凭证（lark-cli 用户态 / meegle / bbt）→
+   *  分流：bash 命令使用发起者的用户身份 CLI 凭证（lark-cli 用户态）→
    *  弹"用户卡"由本人确认（无需管理员）；其余弹管理员卡。 */
   private async requireApproval(
     params: ToolGuardCheckParams,
@@ -158,4 +180,10 @@ function extractCommand(args: unknown): string | undefined {
   if (typeof args !== "object" || args === null) return undefined;
   const command = (args as Record<string, unknown>).command;
   return typeof command === "string" ? command : undefined;
+}
+
+/** 日志用单行化：压平换行并截断，避免多行命令刷屏。 */
+function singleLine(text: string, maxLength: number): string {
+  const flat = text.replace(/\s+/g, " ").trim();
+  return flat.length > maxLength ? `${flat.slice(0, maxLength)}…` : flat;
 }
