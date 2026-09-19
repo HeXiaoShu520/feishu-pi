@@ -235,7 +235,7 @@ FEISHU_PI_MODEL_API_KEY=sk-ant-xxx
 
 
 # 自定义人格
-编辑仓库根目录的 PERSONA.md（内容即系统提示，置于提示词最前；删除该文件则使用内置默认人格）。
+编辑 .agent/SYSTEM.md（系统提示本体：身份 + 行为规则）。Pi 自动发现并注入，删除该文件会回落到 Pi 内置人格。
 
 # 团队成员（可选，用于权限控制）
 （已废弃——两档身份下没有成员名单，FEISHU_PI_ADMIN 即全部配置）
@@ -443,6 +443,8 @@ call check_health() → ✅ 服务健康
 
 ```
 .agent/
+├── SYSTEM.md         # 系统提示本体（身份 + 行为规则，Pi 自动发现）
+├── permissions.json  # 权限策略（deny + 各组 allow）
 ├── skills/           # Skill 定义（Markdown）
 │   ├── hello.md         - 通用技能
 │   ├── code-review.md   - 团队技能
@@ -454,7 +456,7 @@ call check_health() → ✅ 服务健康
 ```
 
 **设计原则：**
-- `.agent/` 目录存放**用户定义**的 Skills 和 Tools
+- `.agent/` 目录存放**用户定义**的 Skills、Tools 与系统提示（`SYSTEM.md`，由 Pi 自动发现并注入）
 - Skills 和 Tools 都支持 `permission` 字段进行权限控制
 - Tool 的 `description` 就是它的说明书，无需额外文档
 - Skill 可以引导 AI 使用 Tools，但不需要解释 Tool 本身
@@ -475,7 +477,7 @@ call check_health() → ✅ 服务健康
 - `.agent/permissions.json` 只有两个输入：`deny`（全局禁止读写的路径清单）与 `allow`（各身份组的放行规则，含 common/admin/group_*）——每条规则用类型前缀标明范围
 - 组成员在 `.env` 中配置：`FEISHU_PI_GROUP=成员1,成员2` 对应主团队组 `group`；`FEISHU_PI_GROUP_1=成员1` 对应组 `group_1`（扩展 `FEISHU_PI_GROUP_2` → `group_2`）；非数字组名用全名 `FEISHU_PI_GROUP_<组名>`；`FEISHU_PI_ADMIN` 自动属于 admin 组
 - 每次工具调用时，先过 deny 规则（.env 等敏感路径一律禁止读写，对所有人含管理员生效），再过白名单闸门（匹配即放行），未命中交智能体闸门综合判断，再不行弹授权卡交管理员
-- **密钥防护双轨**：执行侧由 deny 规则硬拦（.env 等内置默认 + `permissions.json` 顶层 `deny` 可扩展，read/write/bash 全覆盖）；模型侧由系统提示注入「密钥安全规则」（确需返回密钥之类的值时，一定要加 `*` 遮蔽）
+- **密钥防护双轨**：执行侧由 deny 规则硬拦（.env 等内置默认 + `permissions.json` 顶层 `deny` 可扩展，read/write/bash 全覆盖）；模型侧由 `.agent/SYSTEM.md` 注入「密钥安全规则」（确需返回密钥之类的值时，一定要加 `*` 遮蔽）
 
 ### 策略文件
 

@@ -4,7 +4,7 @@ import { getBuiltinModels, getBuiltinProviders } from "@earendil-works/pi-ai/pro
 import type { FeishuPiConfig, FeishuPiEvent, FeishuPiPrompt, FeishuPiSession, FeishuPiTool } from "./types.ts";
 import type { FeishuContext } from "../context/types.ts";
 import { DEFAULT_BUILTIN_TOOLS, createToolRegistryAsync } from "../tools/registry.ts";
-import { join } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { logger, colors } from "../utils/logger.ts";
 import { conversationDir } from "../utils/session-paths.ts";
 import { createScheduleManagerTool } from "../schedule/tool.ts";
@@ -101,47 +101,10 @@ class SessionWrapper implements FeishuPiSession {
  */
 
 /**
- * 精简模式的配套规则（注入系统提示）：卡片只保留"最后一次工具调用之后"的正文作为最终答复，
- * 因此要求模型每次工具调用后输出完整独立的结论——这是使用侧保证，否则终态不可读。
+ * 系统提示（身份 + 行为规则）不再由代码拼装：统一放在 .agent/SYSTEM.md，
+ * 由 Pi 的 ResourceLoader 自动发现并作为系统提示本体注入（agentDir = <仓库>/.agent）。
+ * 加载结果由 printAvailableResources 打印，缺失会显式告警；改动该文件后需重启进程生效。
  */
-const NL = String.fromCharCode(10);
-const FINAL_REPLY_RULE = [
-  "【最终答复规则】每轮对话的最后一次输出（最后一次工具调用之后）必须是语义完整、可独立阅读的最终答复——无论过程信息以何种方式展示，用户都以这段答复为准。",
-  "要求：",
-  "1. 直接给出结论或答案，不使用「如上」「承接上文」等依赖中间过程的表述；",
-  "2. 若本轮调用过工具，用简短篇幅总结过程：做了什么、关键结果如何，让用户不看过程也能掌握全貌；",
-  "3. 有未完成的事项或过程中发现的问题，一并列出。",
-  "未调用工具的普通问答无需套用以上结构，正常回答即可。",
-].join(NL);
-
-/**
- * 密钥安全规则（注入系统提示，模型侧约束）：
- * 不主动读取/输出密钥凭据；确需返回敏感值时必须加星号遮蔽。
- * bash 指令另有执行前过滤兜底（src/guard/tool-guard.ts）。
- */
-const SECRET_RULE = [
-  "【密钥安全规则】不要读取、引用或输出 .env、密钥/证书/私钥/凭据类敏感文件（如 *.key、*.pem、id_rsa、credentials 等）的内容。",
-  "如果某些时候任务确实需要返回密钥、令牌之类的敏感值，返回时一定要用星号遮蔽（只保留前几位，其余用 * 代替），不允许明文输出。",
-].join(NL);
-
-/**
- * 内置默认人格：PERSONA.md 未配置时生效（配置后由其替换此段）。
- * 没有它，系统提示开头就是安全规则，模型不知道自己是谁、以什么口吻说话。
- */
-const DEFAULT_PERSONA = [
-  "你是部署在飞书里的智能助手，通过飞书与用户对话，可以使用工具（bash、读写文件、lark-cli 等）帮助用户完成查询与操作。",
-  "默认使用中文交流，用户使用其他语言时跟随用户语言；回答先给结论、简洁直接，必要时分点。",
-  "不确定的信息如实说明，不编造；操作受权限策略与授权卡约束，按流程执行即可，无需向用户复述这些约束。",
-].join(NL);
-
-/**
- * 长期记忆规则（注入系统提示）：memory 工具读写 data/memory/MEMORY.md（团队共享）。
- * 会话历史 7 天即清，跨会话的事实/偏好/约定靠它留存。
- */
-const MEMORY_RULE = [
-  "【长期记忆】工具 memory 是团队的持久记忆（所有人可见）。当用户交代需要长期记住的事实、偏好或约定，或对话中沉淀出值得保留的结论时，调用 memory(action=\"append\", text=一句话要点) 记下；当任务可能与既往背景相关时，先 memory(action=\"read\") 回忆，避免重复询问。",
-  "记忆要经常维护：条目重复、过时或 read 时提示超限时，用 rewrite 用去重合并后的精简版整体覆盖（拒绝空内容）。记忆对团队全员可见，禁止写入密码等敏感信息。",
-].join(NL);
 
 /**
  * 思考过程不落盘：包一层 SessionManager.appendMessage，写入会话文件前剔除 assistant 消息的
@@ -193,10 +156,26 @@ export class FeishuPiRuntime {
 
   /** 创建并 reload 基础 ResourceLoader（必须 reload 后才能加载 skills）。 */
   private async createBaseLoader(): Promise<DefaultResourceLoader> {
+    // 系统提示不在这里传：Pi 会自动发现 <agentDir>/SYSTEM.md（即 .agent/SYSTEM.md）作为系统提示本体，
+    // 并把项目上下文（AGENTS.md 等）追加到系统提示末尾——全部由 Pi 原生加载，本工程不自写加载逻辑。
     const loader = new DefaultResourceLoader({
       cwd: this.config.cwd,
       agentDir: `${this.config.cwd}/.agent`,
-      systemPrompt: [this.config.systemPrompt ?? DEFAULT_PERSONA, MEMORY_RULE.trim(), SECRET_RULE.trim(), FINAL_REPLY_RULE.trim()].filter(Boolean).join(NL),
+      // 项目上下文白名单：只接受本工程目录内的文件。
+      // Pi 默认会从 cwd 一路向上遍历到盘根收集 AGENTS.md / CLAUDE.md，且不经任何信任检查——
+      // 也就是说任何祖先目录（含盘根）放一个 AGENTS.md 都能进入系统提示，构成外部可控的提示注入面。
+      // 这里用 Pi 提供的过滤钩子做准入（加载仍是 Pi 原生行为，本工程只做筛选），丢弃项打日志，不静默。
+      agentsFilesOverride: ({ agentsFiles }) => {
+        const root = resolve(this.config.cwd) + sep;
+        const kept = agentsFiles.filter((file) => resolve(file.path).startsWith(root));
+        const dropped = agentsFiles.filter((file) => !resolve(file.path).startsWith(root));
+        if (dropped.length > 0) {
+          logger.warn(
+            `[Runtime] 已忽略工程外的项目上下文文件: ${dropped.map((file) => file.path).join("、")}`,
+          );
+        }
+        return { agentsFiles: kept };
+      },
     });
     await loader.reload();
     return loader;
@@ -215,6 +194,21 @@ export class FeishuPiRuntime {
       logger.info(`[Runtime] 已加载 ${colors.bright}${colors.magenta}${skills.length}${colors.reset} 个 Skills`);
     } else {
       logger.warn(`[Runtime] 未找到任何 Skills`);
+    }
+
+    // 系统提示来源：Pi 自动发现 <agentDir>/SYSTEM.md（agentDir 指向 <仓库>/.agent）。
+    // 读不到时 Pi 会静默回落到内置的编码助手人格，助手身份/口吻将不受本仓库控制，故必须显式告警。
+    const promptSource = baseResourceLoader.getSystemPromptSource();
+    if (promptSource) {
+      logger.info(`[Runtime] 系统提示来源 ${colors.cyan}${promptSource.path}${colors.reset}`);
+    } else {
+      logger.warn(`[Runtime] 未发现 .agent/SYSTEM.md —— 将使用 Pi 内置默认人格（编码助手），助手身份不受本仓库控制`);
+    }
+
+    // 项目上下文（AGENTS.md / CLAUDE.md 等）：Pi 自动发现并追加到系统提示末尾
+    const { agentsFiles } = baseResourceLoader.getAgentsFiles();
+    if (agentsFiles.length > 0) {
+      logger.info(`[Runtime] 项目上下文 ${colors.cyan}${agentsFiles.map((file) => file.path).join("、")}${colors.reset}`);
     }
 
     // 自定义 Tools：Skills 之后加载，逐行打印（与 Skills 同款格式；描述超长截断）

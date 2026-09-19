@@ -1,5 +1,3 @@
-import { join } from "node:path";
-import { readFileSync } from "node:fs";
 import { logger } from "./utils/logger.ts";
 export interface FeishuPiAppConfig {
   feishuAppId: string;
@@ -20,8 +18,6 @@ export interface FeishuPiAppConfig {
   workspaceRoot: string;
   /** 本地 OCR 兜底：模型无视觉能力时，把下载图片 OCR 成文字一并交给模型（FEISHU_USE_EXTRA_OCR） */
   useExtraOcr: boolean;
-  /** 自定义人格（PERSONA.md 全文，置于系统提示最前）；缺失 = 使用内置默认人格 */
-  systemPrompt?: string;
   /** 智能体审核接口（OpenAI 兼容）；未配置则策略外调用直接弹卡 */
   guardBaseUrl?: string;
   /** 审核模型列表（多个时全部 allow 才放行，任一 ask 即弹卡） */
@@ -35,19 +31,6 @@ export interface FeishuPiAppConfig {
   approvalTimeoutMs: number;
   /** 回复卡末尾是否显示模型统计小字（模型 · token · ctx · 费用 · 耗时 · 会话别名）；工具过程状态不受影响 */
   showModelStats: boolean;
-}
-
-/**
- * 自定义人格：读取仓库根目录 PERSONA.md 全文（trim 后），作为系统提示最前置的人格段。
- * 文件缺失或为空 → undefined（使用内置默认人格）。
- */
-function readPersona(cwd: string): string | undefined {
-  try {
-    const text = readFileSync(join(cwd, "PERSONA.md"), "utf8").trim();
-    return text || undefined;
-  } catch {
-    return undefined;
-  }
 }
 
 /** 由模型名推断供应商：带 claude → anthropic，带 deepseek → deepseek，其余 → openai。 */
@@ -68,12 +51,12 @@ function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
 const THINKING_LEVELS = ["off", "low", "high", "max"] as const;
 export type ThinkingLevelConfig = (typeof THINKING_LEVELS)[number];
 
-/** 思考档位归一：只认 off/low/high/max；旧超集档位就近折算（minimal→low、medium/xhigh→high，xhigh 按 DeepSeek 官方映射表等价于 high），其余回退默认 high。 */
+/** 思考档位归一：只认 off/low/high/max；旧超集档位按服务端映射表就近折算（minimal→low；medium/xhigh→high；ultra→max），其余回退默认 high。 */
 function parseThinkingLevel(value: string | undefined): ThinkingLevelConfig {
   const raw = (value ?? "").trim().toLowerCase();
   if ((THINKING_LEVELS as readonly string[]).includes(raw)) return raw as ThinkingLevelConfig;
   if (raw === "") return "high";
-  const equivalents: Record<string, ThinkingLevelConfig> = { minimal: "low", medium: "high", xhigh: "high" };
+  const equivalents: Record<string, ThinkingLevelConfig> = { minimal: "low", medium: "high", xhigh: "high", ultra: "max" };
   const folded = equivalents[raw];
   if (folded) {
     logger.warn(`[Config] FEISHU_PI_THINKING_LEVEL="${raw}" 不是公开档位，已折算为 ${folded}`);
@@ -156,8 +139,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     // 思考档位默认 high（观察思考对回复质量/耗时的实际影响）：pi 默认 off（显式发 thinking:disabled），
     // 想关思考配 off，各模型自动适配等效等级
     thinkingLevel: parseThinkingLevel(env.FEISHU_PI_THINKING_LEVEL),
-    // 自定义人格：独立文件 PERSONA.md（不入 .env），缺失 = 内置默认人格
-    systemPrompt: readPersona(process.cwd()),
     // 智能体审核（策略外调用的综合判断）：OpenAI 兼容接口，支持逗号分隔多模型取安全交集
     guardBaseUrl: env.FEISHU_GUARD_BASE_URL || undefined,
     guardModels: (env.FEISHU_GUARD_MODELS ?? "").split(",").map((m) => m.trim()).filter(Boolean),

@@ -37,7 +37,7 @@ export interface FeishuPiConfig {
   modelBaseUrl?: string;
   /** 思考档位：off=关闭思考，low/high/max 各模型自动适配等效等级（默认 high） */
   thinkingLevel: ThinkingLevelConfig;
-  systemPrompt?: string;
+  /** 系统提示（身份 + 行为规则）由 Pi 自动发现 <agentDir>/SYSTEM.md（即 .agent/SYSTEM.md）注入，此处不再透传 */
   /** 统一权限策略（.agent/permissions.json）：工具注册、调用判定、可读范围全部由它驱动 */
   /** 会话工作区：返回该会话专属文件夹（jsonl/图片/附件归拢于此）；未配置则用 data/sessions 传统布局 */
   workspaceFor?: (conversationId: string) => Promise<string>;
