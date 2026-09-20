@@ -22,6 +22,8 @@ describe("buildQrLink（扫码链接组装，对齐官方 SDK 线协议）", () 
     };
     expect(parsed.scopes?.tenant).toContain("im:message");
     expect(parsed.scopes?.tenant).toContain("contact:user.base:readonly");
+    expect(parsed.scopes?.tenant).toContain("application:app_slash_command:read");
+    expect(parsed.scopes?.tenant).toContain("application:app_slash_command:write");
     expect(parsed.events?.items?.tenant).toEqual(["im.message.receive_v1"]);
     expect(parsed.callbacks?.items).toEqual(["card.action.trigger"]);
 

@@ -23,7 +23,7 @@ describe("附件存进统一会话文件夹的 files/ 子目录", () => {
     // 工作区内恰好一个文件：{时间戳}-原始文件名
     const entries = await readdir(wsDir);
     expect(entries).toHaveLength(1);
-    expect(entries[0]).toMatch(/^\d+-报表\.xlsx$/);
+    expect(entries[0]).toMatch(/^\d+-[0-9a-f-]+-报表\.xlsx$/);
     expect(await readFile(join(wsDir, entries[0]), "utf8")).toBe("data");
     expect(await readdir(root)).toEqual(["session-20260917-100000-c_abc"]);
   });

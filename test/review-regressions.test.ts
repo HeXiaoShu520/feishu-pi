@@ -12,6 +12,8 @@ import { PermissionBroker } from "../src/guard/broker.ts";
 import { CardKitStream } from "../src/feishu/cardkit-stream.ts";
 import { LarkImageProcessor } from "../src/feishu/image-processor.ts";
 import { LogoutCommand } from "../src/feishu/user-auth.ts";
+import { toBuffer } from "../src/feishu/resource-buffer.ts";
+import { acquireInstanceLock } from "../src/utils/instance-lock.ts";
 
 it("不同话题根不合并，回复回到自己的根", () => {
   expect(buildConversationId("oc", "topic", undefined, "a")).toBe("topic:oc:a");
@@ -130,4 +132,21 @@ it("首次图片消息创建 images 目录并保存原图", async () => {
   const image = await processor.processImage("m", "image-key", join(dir, "images"));
   expect(image?.mimeType).toBe("image/png");
   expect(await readFile(image!.savedPath!)).toEqual(content);
+});
+
+it("资源超过上限时拒绝读入", async () => {
+  await expect(toBuffer(Buffer.alloc(5), 4)).rejects.toMatchObject({ code: "RESOURCE_TOO_LARGE" });
+});
+
+it("同一数据目录只允许一个实例持有锁", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "instance-lock-"));
+  const file = join(dir, ".instance.lock");
+  const first = await acquireInstanceLock(file);
+  try {
+    await expect(acquireInstanceLock(file)).rejects.toThrow("已有实例正在使用数据目录");
+  } finally {
+    await first.release();
+  }
+  const second = await acquireInstanceLock(file);
+  await second.release();
 });

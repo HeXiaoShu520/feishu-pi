@@ -37,10 +37,13 @@ export class ConversationManager {
   private readonly runtime: FeishuPiRuntime;
   /** 会话注册表：会话目录与 Pi 会话文件都登记在这里（会话目录的唯一事实来源） */
   private readonly sessions: SessionStore;
+  /** 单个会话允许保留的在途/排队消息数，防止突发消息无限堆积。 */
+  private readonly maxPendingMessages: number;
 
-  constructor(runtime: FeishuPiRuntime, sessions: SessionStore) {
+  constructor(runtime: FeishuPiRuntime, sessions: SessionStore, options: { maxPendingMessages?: number } = {}) {
     this.runtime = runtime;
     this.sessions = sessions;
+    this.maxPendingMessages = Math.max(1, options.maxPendingMessages ?? 3);
   }
 
   /** 当前驻留内存的会话数（监控与测试用）。 */
@@ -118,6 +121,10 @@ export class ConversationManager {
     onInterrupted?: () => void,
   ): Promise<FeishuPiSession> {
     const state = await this.getState(message.conversationId, message.context);
+
+    if (state.pending >= this.maxPendingMessages) {
+      throw new Error(`当前会话已有 ${state.pending} 条消息在处理或排队，请稍后再试`);
+    }
 
     // 新消息打断：当前还在思考/执行时，先中断在途请求，本条消息排队后立即开始
     if (state.pending) {

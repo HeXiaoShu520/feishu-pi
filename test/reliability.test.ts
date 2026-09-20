@@ -55,6 +55,15 @@ describe("reliability stores", () => {
     expect(await store.claim("message-1")).toBe(false);
   });
 
+  it("processing 消息可以续租，结束后不再续租", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "feishu-pi-message-lease-"));
+    const store = new MessageStore(join(directory, "messages.json"));
+    expect(await store.claim("message-lease")).toBe(true);
+    expect(await store.touch("message-lease")).toBe(true);
+    await store.complete("message-lease");
+    expect(await store.touch("message-lease")).toBe(false);
+  });
+
   it("/new 换代后重建会话，且落在新的会话目录", async () => {
     const sessions = await makeSessions();
     const runtime = new FakeRuntime();
@@ -172,5 +181,22 @@ describe("会话并发与身份回归", () => {
     await second;
     gates[2].resolve();
     await third;
+  });
+
+  it("单会话排队达到上限后拒绝新消息", async () => {
+    const gate = deferred();
+    const started: string[] = [];
+    const session = new FakeSession();
+    session.prompt = async (input) => {
+      started.push(input.text);
+      await gate.promise;
+    };
+    const manager = new ConversationManager({ createSession: async () => session } as never, await makeSessions(), { maxPendingMessages: 2 });
+    const first = manager.prompt({ conversationId: "chat:limit", prompt: { text: "first" } }, () => {});
+    await vi.waitFor(() => expect(started).toEqual(["first"]));
+    const second = manager.prompt({ conversationId: "chat:limit", prompt: { text: "second" } }, () => {});
+    await expect(manager.prompt({ conversationId: "chat:limit", prompt: { text: "third" } }, () => {})).rejects.toThrow("排队");
+    gate.resolve();
+    await Promise.all([first, second]);
   });
 });

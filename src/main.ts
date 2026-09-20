@@ -14,11 +14,13 @@ import { PermissionPolicy } from "./permission/policy.ts";
 import { LogoutCommand, StatusCommand, UserAuthService } from "./feishu/user-auth.ts";
 import { MeegleDeviceLogin, MEEGLE_DEFAULT_HOST, StaticCredentialService } from "./feishu/meegle-auth.ts";
 import { PeopleRoster } from "./feishu/people-roster.ts";
+import { RestartCommand } from "./feishu/commands.ts";
+import { toggleTrailingBlankLine } from "./utils/restart-toggle.ts";
 import { createIdentityBashTool } from "./runtime/identity-bash.ts";
 import { runSetupWizard } from "./feishu/setup-wizard.ts";
 import { createCliSearchUser, resolveLarkCliBinary } from "./feishu/lark-cli-search.ts";
 import { delimiter, join } from "node:path";
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { Client, LoggerLevel } from "@larksuiteoapi/node-sdk";
 import qr from "qrcode-terminal";
@@ -30,10 +32,17 @@ import { PolicyJudge } from "./guard/judge.ts";
 import { buildNoticeCard } from "./guard/card.ts";
 import { AskBroker, createAskUserTool } from "./feishu/ask-broker.ts";
 import { createMemoryTool } from "./feishu/memory-tool.ts";
+import { SlashCommandRegistrar } from "./feishu/slash-command.ts";
 import type { CleanupStats } from "./runtime/data-cleaner.ts";
+import { acquireInstanceLock } from "./utils/instance-lock.ts";
 
 /** 授权请求失效（服务重启/已处理）时就地更新的提示卡文案。 */
 const APPROVAL_STALE_NOTICE = "⚠️ 该授权请求已失效（服务已重启或已处理），请重新发起任务。";
+
+function formatCardOperator(action: { operatorOpenId: string; operatorName?: string }): string {
+  const name = action.operatorName?.trim();
+  return name ? `${name}（${action.operatorOpenId}）` : action.operatorOpenId;
+}
 
 /** 打印一轮清理的统计（有删除动作才逐项输出，避免每日空转刷屏）。 */
 async function logCleanupStats(cleanup: Promise<CleanupStats>): Promise<void> {
@@ -64,6 +73,7 @@ export async function main(): Promise<void> {
   }
 
   const config = loadConfig();
+  const instanceLock = await acquireInstanceLock(join(config.dataDir, ".instance.lock"));
 
   // 项目内预制 CLI（lark-cli）：把 node_modules/.bin 前插到 PATH，
   // Agent 的 bash 子进程继承后可直接调用，且优先于全局同名命令（npm install 即自带，不依赖全局安装）
@@ -138,6 +148,12 @@ export async function main(): Promise<void> {
         "请检查网络与应用状态后重启；应用未创建时重新运行会进入扫码开通。",
     );
   }
+
+  // 上电同步 Slash Command。应用未发布对应权限时只告警，不阻断机器人主链路；
+  // 运行 `npm run setup` 为已有应用补权限并发布新版本后，下一次启动会自动重试。
+  await new SlashCommandRegistrar(client).sync().catch((error) => {
+    logger.warn(`[Main] Slash Command 同步失败（请确认应用已开通并发布 application:app_slash_command:* 权限）: ${error instanceof Error ? error.message : String(error)}`);
+  });
 
   // —— 启动第 2 步前置：管理员 openId 在第 3 步登录完成后解析 ——
   let adminOpenId: string | undefined;
@@ -306,6 +322,9 @@ export async function main(): Promise<void> {
     botOpenId,
     client,
     sessions,
+    messages,
+    maxResourceBytes: config.maxResourceBytes,
+    maxMessageResourceBytes: config.maxMessageResourceBytes,
 
     adminOpenId,
     // lark-cli 用户态搜索通道（contact +search-user）：部门信息的主要来源，不依赖需审核权限；
@@ -392,9 +411,9 @@ export async function main(): Promise<void> {
     if (value.action === "forward_approval") {
       const result = await broker.forwardToAdmin({ approvalId, token, messageId: action.messageId, chatId: action.chatId });
       if (result.accepted) {
-        logger.info(`[Main] 授权请求已转发给管理员私聊（点击者 ${action.operatorOpenId}）`);
+        logger.info(`[Main] 授权请求已转发给管理员私聊（点击者 ${formatCardOperator(action)}）`);
       } else {
-        logger.warn(`[Main] 转发请求被拒绝: ${result.detail}（点击者 ${action.operatorOpenId}）`);
+        logger.warn(`[Main] 转发请求被拒绝: ${result.detail}（点击者 ${formatCardOperator(action)}）`);
         // 请求确实已失效（服务重启/已处理）才提示失效；转发通道类失败给出真实原因——
         // 此时请求仍有效，管理员仍可在原卡上直接授权
         const stale = result.detail.includes("不存在") || result.detail.includes("已转发过");
@@ -414,9 +433,9 @@ export async function main(): Promise<void> {
       operatorOpenId: action.operatorOpenId,
     });
     if (result.accepted) {
-      logger.info(`[CardAction] 授权: ${result.detail}（点击者 ${action.operatorOpenId}）`);
+      logger.info(`[CardAction] 授权: ${result.detail}（点击者 ${formatCardOperator(action)}）`);
     } else {
-      logger.warn(`[Main] 授权回调被拒绝: ${result.detail}（点击者 ${action.operatorOpenId}）`);
+      logger.warn(`[Main] 授权回调被拒绝: ${result.detail}（点击者 ${formatCardOperator(action)}）`);
       // 失效点击就地更新卡片提示（服务重启后旧授权卡会命中这里）
       if (result.detail.includes("不存在")) {
         await transport.updateCardById(action.messageId, buildNoticeCard(APPROVAL_STALE_NOTICE)).catch(() => {});
@@ -439,9 +458,9 @@ export async function main(): Promise<void> {
       messageId: action.messageId,
     });
     if (outcome) {
-      logger.info(`[Main] 选项卡已作答: ${outcome.choice}（点击者 ${action.operatorOpenId}）`);
+      logger.info(`[Main] 选项卡已作答: ${outcome.choice}（点击者 ${formatCardOperator(action)}）`);
     } else {
-      logger.warn(`[Main] 选项卡点击被忽略（非提问对象或请求已失效，点击者 ${action.operatorOpenId}）`);
+      logger.warn(`[Main] 选项卡点击被忽略（非提问对象或请求已失效，点击者 ${formatCardOperator(action)}）`);
     }
   });
 
@@ -550,7 +569,7 @@ ${trimmed}` }] },
   // 启动时打印可用的 Skills 和 Tools（管理员视角）
   await runtime.printAvailableResources();
 
-  const conversations = new ConversationManager(runtime, sessions);
+  const conversations = new ConversationManager(runtime, sessions, { maxPendingMessages: config.maxPendingMessages });
 
   const bridge = new FeishuAgentBridge(
     conversations,
@@ -560,6 +579,19 @@ ${trimmed}` }] },
       client,
       // /status 查看用户与 CLI 凭证状态；/logout 清除飞书用户授权
       extraCommands: [
+        new RestartCommand(() => {
+          // 先让 /restart 回执卡发出去，再修改入口文件触发 tsx watch 重启。
+          setTimeout(() => {
+            const mainFile = join(config.cwd, "src", "main.ts");
+            void readFile(mainFile, "utf8")
+              .then((content) => {
+                const result = toggleTrailingBlankLine(content);
+                return writeFile(mainFile, result.content, "utf8").then(() => result);
+              })
+              .then((result) => logger.info(`[Command] main.ts 末尾空行 ${result.before} → ${result.after}（${result.action}），等待 npm run dev 自动重启`))
+              .catch((error) => logger.error("[Command] 触发开发服务重启失败:", error));
+          }, 250);
+        }),
         new StatusCommand(
           userAuth,
           [
@@ -628,6 +660,7 @@ ${trimmed}` }] },
     clearInterval(cleanupTimer);
     clearInterval(tokenRefresher);
     scheduleService.stop();
+    await instanceLock.release();
 
     // 断开在后台进行，不 await——挂住也不影响退出
     void transport.disconnect().then(

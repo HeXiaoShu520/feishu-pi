@@ -32,6 +32,12 @@ export interface FeishuPiAppConfig {
   approvalTimeoutMs: number;
   /** 回复卡末尾是否显示模型统计小字（模型 · token · ctx · 费用 · 耗时 · 会话别名）；工具过程状态不受影响 */
   showModelStats: boolean;
+  /** 单个图片/附件允许的最大字节数 */
+  maxResourceBytes: number;
+  /** 一条消息所有图片/附件允许的最大总字节数 */
+  maxMessageResourceBytes: number;
+  /** 单个会话最多保留的在途/排队消息数 */
+  maxPendingMessages: number;
 }
 
 /** 由模型名推断供应商：带 claude → anthropic，带 deepseek → deepseek，其余 → openai。 */
@@ -46,6 +52,14 @@ export function deriveModelProvider(modelName: string): string {
 function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined || value.trim() === "") return fallback;
   return ["1", "true", "on", "yes"].includes(value.trim().toLowerCase());
+}
+
+/** 读取正整数配置；非法值回退默认值，避免启动阶段因可选参数失败。 */
+function parsePositiveIntEnv(value: string | undefined, fallback: number, max = Number.MAX_SAFE_INTEGER): number {
+  if (value === undefined || value.trim() === "") return fallback;
+  const parsed = Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > max) return fallback;
+  return parsed;
 }
 
 /** 思考档位：off=关闭思考，low/high/max 三档由各模型自动适配等效等级（pi 按模型目录夹取）。 */
@@ -151,5 +165,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     approvalTimeoutMs: 5 * 60_000,
     // 回复末尾的模型统计小字：默认显示；FEISHU_SHOW_MODEL_STATS=0/false/off 关闭（工具过程状态不受影响）
     showModelStats: parseBoolEnv(env.FEISHU_SHOW_MODEL_STATS, true),
+    // 资源和会话背压：单位分别为 MiB、MiB、条；默认值适合普通内部机器人，可按部署调整。
+    maxResourceBytes: parsePositiveIntEnv(env.FEISHU_PI_MAX_RESOURCE_MB, 20, 1024) * 1024 * 1024,
+    maxMessageResourceBytes: parsePositiveIntEnv(env.FEISHU_PI_MAX_MESSAGE_RESOURCE_MB, 40, 2048) * 1024 * 1024,
+    maxPendingMessages: parsePositiveIntEnv(env.FEISHU_PI_MAX_PENDING_MESSAGES, 3, 100),
   };
 }

@@ -18,6 +18,8 @@ export interface CardKitReplyOptions {
   /** 是否以话题形式回复（由会话模式决定，见 resolveReplyInThread） */
   replyInThread?: boolean;
   onError?: (err: unknown) => void;
+  /** CardKit 初始化或最终更新失败时的一次性普通文本兜底。 */
+  fallbackText?: (text: string) => Promise<void>;
   /** 单张卡片的正文字符上限，超过后分新卡（默认 10000，保证可读性） */
   maxCardChars?: number;
 }
@@ -67,10 +69,13 @@ export class CardKitReply implements FeishuReply {
   private sentMessageId?: string;
   private readonly replyInThread: boolean;
   private readonly onError?: (err: unknown) => void;
+  private readonly fallbackText?: (text: string) => Promise<void>;
   private readonly maxCardChars: number;
 
   private stream?: CardKitStream;
   private closed = false;
+  private closing = false;
+  private fallbackSent = false;
   private initialization?: Promise<void>;
   /** 当前卡片内容在全文中的起始偏移（分卡时推进） */
   private offset = 0;
@@ -83,6 +88,7 @@ export class CardKitReply implements FeishuReply {
     this.messageId = options.messageId;
     this.replyInThread = options.replyInThread ?? false;
     this.onError = options.onError;
+    this.fallbackText = options.fallbackText;
     this.maxCardChars = options.maxCardChars ?? 10000;
   }
 
@@ -146,21 +152,40 @@ export class CardKitReply implements FeishuReply {
 
   /** 关闭回复；statsText 可选，正文渲染完成后写入小字 */
   async close(text: string, statsText?: string): Promise<void> {
-    if (this.closed) return;
-    this.closed = true;
-
-    if (!this.stream) {
-      // 没有初始化过，创建后立即走关闭流程
-      await this.initializeCardKit(text);
-    }
-
+    if (this.closed || this.closing) return;
+    this.closing = true;
     try {
+      if (!this.stream) {
+        // 没有初始化过，创建后立即走关闭流程
+        await this.initializeCardKit(text);
+      }
+
       // 最后一张卡只关闭自己承载的那段内容（前面几张已在分卡时收尾）
       const stream = this.stream!;
       await stream.finalize(text.slice(this.offset), statsText);
+      this.closed = true;
     } catch (err) {
       this.onError?.(err);
-      throw err;
+      const fallbackSent = await this.sendFallback(text);
+      this.closed = true;
+      if (!fallbackSent) throw err;
+    } finally {
+      this.closing = false;
+    }
+  }
+
+  /** 只尝试一次普通文本兜底，避免错误处理再次 close 时重复发消息。 */
+  private async sendFallback(text: string): Promise<boolean> {
+    if (this.fallbackSent || !this.fallbackText) return false;
+    this.fallbackSent = true;
+    try {
+      await this.fallbackText(text || "处理完成，但卡片消息更新失败。请重试。");
+      logger.warn("[CardKit] CardKit 失败，已发送普通文本兜底");
+      return true;
+    } catch (error) {
+      this.fallbackSent = false;
+      logger.error("[CardKit] 普通文本兜底也失败:", error);
+      return false;
     }
   }
 

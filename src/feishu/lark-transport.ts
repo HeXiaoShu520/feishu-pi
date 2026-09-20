@@ -2,6 +2,7 @@ import { EventDispatcher, LoggerLevel, normalize, normalizeCardAction, WSClient,
 import type { FeishuInboundMessage, FeishuTransport } from "./types.ts";
 import { LarkCli } from "./lark-cli.ts";
 import { LarkImageProcessor } from "./image-processor.ts";
+import { MessageStore } from "./message-store.ts";
 import { formatLogText } from "./log-utils.ts";
 import { logger } from "../utils/logger.ts";
 import { attachmentsDirOfSession, imagesDirOfSession, sanitizeFileName } from "../utils/session-paths.ts";
@@ -11,13 +12,14 @@ import { mentionedUserIds } from "./people-roster.ts";
 import { SessionStore } from "../runtime/session-store.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { randomUUID } from "node:crypto";
 
 /** 卡片回调的统一参数：按钮 value 载荷 + 回调来源（卡片消息与点击者） */
 export interface CardCallbackParams {
   /** 按钮 behaviors.value 载荷（action/qid/token/decision 等，结构随卡片而定） */
   value: Record<string, unknown>;
   /** 回调来源：被点击的卡片消息 ID、所在会话与点击者 */
-  action: { messageId: string; chatId: string; operatorOpenId: string };
+  action: { messageId: string; chatId: string; operatorOpenId: string; operatorName?: string };
 }
 
 /** 会话模式缓存条目上限（超出驱逐最久未用） */
@@ -39,6 +41,11 @@ export interface LarkTransportConfig {
   adminOpenId?: string;
   /** lark-cli 用户态搜索通道（contact +search-user，见 lark-cli-search.ts）：部门信息的来源 */
   searchUserProfile?: (openId: string) => Promise<{ name?: string; en_name?: string; department_name?: string[] } | undefined>;
+  /** 单个资源和单条消息资源总大小限制 */
+  maxResourceBytes?: number;
+  maxMessageResourceBytes?: number;
+  /** 消息处理状态持久化，用于在预处理前去重 */
+  messages?: MessageStore;
   /** 模型切换回调（/model 指令确认后触发，用于运行时热切换） */
   onModelSwitch?: (modelName: string) => void;
 }
@@ -50,7 +57,7 @@ export interface LarkTransportConfig {
  *  1. 分发时丢弃 handler 返回值，ACK 帧没有数据体，客户端弹「目标回调服务超时未响应」
  *  2. 去重层对 10 分钟内重复点击静默吞事件（连 ACK 都不发）
  * 底层方式下 handler 返回值原样进 ACK（与 Go 官方 SDK 行为一致），
- * 消息去重由 MessageStore.claim 保证，会话内顺序由 ConversationManager 保证。
+ * 消息去重由传输层在预处理前调用 MessageStore.claim 保证，会话内顺序由 ConversationManager 保证。
  */
 export class LarkTransport implements FeishuTransport {
   private wsClient?: WSClient;
@@ -72,6 +79,9 @@ export class LarkTransport implements FeishuTransport {
   /** 会话模式缓存（p2p/group/topic），话题群与普通群的会话隔离策略不同 */
   private readonly chatModeCache = new Map<string, "p2p" | "group" | "topic">();
   private readonly sessions: SessionStore;
+  private readonly messages?: MessageStore;
+  private readonly maxResourceBytes: number;
+  private readonly maxMessageResourceBytes: number;
 
   constructor(config: LarkTransportConfig) {
     this.appId = config.appId;
@@ -84,10 +94,16 @@ export class LarkTransport implements FeishuTransport {
     this.onModelSwitch = config.onModelSwitch;
     this.client = config.client;
     this.sessions = config.sessions;
+    this.messages = config.messages;
+    this.maxResourceBytes = config.maxResourceBytes ?? 20 * 1024 * 1024;
+    this.maxMessageResourceBytes = config.maxMessageResourceBytes ?? this.maxResourceBytes * 2;
     this.larkCli = new LarkCli(config.appId, config.userProfileDir, {
       searchUser: config.searchUserProfile,
     });
-    this.imageProcessor = new LarkImageProcessor(config.client);
+    this.imageProcessor = new LarkImageProcessor(config.client, {
+      maxResourceBytes: this.maxResourceBytes,
+      maxMessageResourceBytes: this.maxMessageResourceBytes,
+    });
   }
 
   /** 建立飞书长连接并开始接收事件。 */
@@ -163,7 +179,7 @@ export class LarkTransport implements FeishuTransport {
    * 分发一条归一化后的消息给 handler。
    * 关键：不能 await 完整处理——若在此等待整个 Agent 流程（可能卡在等授权卡点击），
    * SDK 的事件处理会被阻塞。交给 handler 后台处理，
-   * 会话内的顺序由 ConversationManager 保证，消息去重由 MessageStore.claim 保证。
+   * 会话内的顺序由 ConversationManager 保证，消息去重在附件预处理前完成。
    */
   private async dispatchMessage(message: {
     messageId: string;
@@ -177,6 +193,8 @@ export class LarkTransport implements FeishuTransport {
   }): Promise<void> {
     if (this.botOpenId && message.senderId === this.botOpenId) return;
     const chatId = message.chatId;
+    let claimed = false;
+    let stopLease: (() => void) | undefined;
     try {
       // 会话模式先行：决定响应资格（群聊需 @）与 conversationId 归属
       const chatMode = await this.getChatModeCached(chatId);
@@ -184,6 +202,10 @@ export class LarkTransport implements FeishuTransport {
       // 群聊/话题群只响应 @机器人 的消息；私聊全响应。
       // 未 @ 的消息静默忽略（不查资料、不入会话，避免群聊刷屏误触发）。
       if (chatMode !== "p2p" && !message.mentionedBot) return;
+
+      claimed = this.messages ? await this.messages.claim(message.messageId) : true;
+      if (!claimed) return;
+      stopLease = this.messages?.startLease(message.messageId);
 
       // 会话 ID + 会话目录最先就位：消息一旦开始处理，
       // 归属与落盘位置即已确定（先于资料查询与模型思考）。
@@ -205,6 +227,7 @@ export class LarkTransport implements FeishuTransport {
       // 处理图片附件（含 post 富文本里的图片：SDK 会把它们放进 resources）
       let images;
       let imageCount = 0;
+      let imageBytes = 0;
       let imageNotes: string[] = [];
       const resources = (message as unknown as { resources?: Array<{ type: string; fileKey: string; fileName?: string }> }).resources ?? [];
       if (resources.length > 0) {
@@ -221,6 +244,7 @@ export class LarkTransport implements FeishuTransport {
             // 这里把落盘路径写进消息文本，需要时可用 read 工具按路径取回原图
             imageNotes = processed.map((img) => img.savedPath).filter((p): p is string => !!p);
             images = processed;
+            imageBytes = processed.reduce((sum, image) => sum + image.data.byteLength, 0);
           }
         }
       }
@@ -235,6 +259,10 @@ export class LarkTransport implements FeishuTransport {
           attachmentsDirOfSession(sessionDir),
           resources,
           (fileKey, type) => this.downloadResource(message.messageId, fileKey, type),
+          {
+            maxResourceBytes: this.maxResourceBytes,
+            maxTotalBytes: Math.max(0, this.maxMessageResourceBytes - imageBytes),
+          },
         );
         if (attachmentNote) cleanedText += attachmentNote;
       }
@@ -252,7 +280,9 @@ export class LarkTransport implements FeishuTransport {
       const isAdmin = this.adminOpenId ? message.senderId === this.adminOpenId : false;
 
       // fire-and-forget：后台处理，失败仅记日志
-      void this.handler?.({
+      const handler = this.handler;
+      if (!handler) throw new Error("消息处理器未注册");
+      void handler({
         messageId: message.messageId,
         chatId,
         context: {
@@ -270,8 +300,11 @@ export class LarkTransport implements FeishuTransport {
         images,
       }).catch((error) => {
         logger.error(`[LarkTransport] 消息处理失败: ${error instanceof Error ? error.message : error}`);
-      });
+      }).finally(() => stopLease?.());
     } catch (error) {
+      stopLease?.();
+      // claim 成功但预处理失败时允许后续投递重试；AgentBridge 自己的失败路径仍负责标记 Agent 错误。
+      if (claimed) await this.messages?.fail(message.messageId).catch(() => undefined);
       const detail = error instanceof Error ? error.message : String(error);
       logger.error(`[LarkTransport] 消息预处理失败: ${detail}`);
     }
@@ -300,7 +333,12 @@ export class LarkTransport implements FeishuTransport {
       if (typeof value === "object" && (value?.action === "tool_approval" || value?.action === "forward_approval")) {
         await this.approvalHandler?.({
           value,
-          action: { messageId: action.messageId, chatId: action.chatId, operatorOpenId: action.operator.openId },
+          action: {
+            messageId: action.messageId,
+            chatId: action.chatId,
+            operatorOpenId: action.operator.openId,
+            operatorName: action.operator.name,
+          },
         });
         return;
       }
@@ -309,7 +347,12 @@ export class LarkTransport implements FeishuTransport {
       if (typeof value === "object" && value?.action === "ask_user") {
         await this.askHandler?.({
           value,
-          action: { messageId: action.messageId, chatId: action.chatId, operatorOpenId: action.operator.openId },
+          action: {
+            messageId: action.messageId,
+            chatId: action.chatId,
+            operatorOpenId: action.operator.openId,
+            operatorName: action.operator.name,
+          },
         });
         return;
       }
@@ -419,7 +462,7 @@ export class LarkTransport implements FeishuTransport {
       path: { message_id: messageId, file_key: fileKey },
       params: { type: type === "image" ? "image" : "file" },
     });
-    return toBuffer(res);
+    return toBuffer(res, this.maxResourceBytes);
   }
 
   /** 关闭飞书长连接。 */
@@ -544,12 +587,16 @@ export class LarkTransport implements FeishuTransport {
  * 下载文件类附件（file/audio/video/media）到本会话目录的 files/ 子目录
  * （`{会话目录}/files/`），返回要追加到消息文本的附件说明（无附件时为空串）。
  *
- * 文件名带时间戳前缀，同一会话先后传同名文件不互相覆盖；单个下载失败只记 warn，不影响其余附件。
+ * 文件名带时间戳 + 随机前缀，同一会话先后传同名文件不互相覆盖；单个下载失败只记 warn，不影响其余附件。
  */
 export async function downloadFileAttachments(
   targetDir: string,
   resources: ReadonlyArray<{ type: string; fileKey: string; fileName?: string }>,
   download: (fileKey: string, type: string) => Promise<Buffer>,
+  limits: { maxResourceBytes: number; maxTotalBytes: number } = {
+    maxResourceBytes: 20 * 1024 * 1024,
+    maxTotalBytes: 40 * 1024 * 1024,
+  },
 ): Promise<string> {
   const fileResources = resources.filter((r) => ["file", "audio", "video", "media"].includes(r.type) && r.fileKey);
   if (fileResources.length === 0) return "";
@@ -558,12 +605,20 @@ export async function downloadFileAttachments(
   await mkdir(targetDir, { recursive: true });
 
   let attachmentNote = "";
+  let totalBytes = 0;
   for (const resource of fileResources.slice(0, 5)) {
     try {
       const buffer = await download(resource.fileKey, resource.type);
+      if (buffer.length > limits.maxResourceBytes) {
+        throw new Error(`附件超过单文件大小限制（${limits.maxResourceBytes} 字节）`);
+      }
+      if (totalBytes + buffer.length > limits.maxTotalBytes) {
+        throw new Error(`附件超过单条消息总大小限制（${limits.maxTotalBytes} 字节）`);
+      }
       const fileName = sanitizeFileName(resource.fileName || resource.fileKey);
-      const filePath = join(targetDir, `${Date.now()}-${fileName}`);
+      const filePath = join(targetDir, `${Date.now()}-${randomUUID()}-${fileName}`);
       await writeFile(filePath, buffer);
+      totalBytes += buffer.length;
       attachmentNote += `\n[附件] ${fileName} 已保存到: ${filePath}`;
     } catch (error) {
       logger.warn(`[LarkTransport] 下载附件失败 ${resource.fileKey}: ${error instanceof Error ? error.message : error}`);

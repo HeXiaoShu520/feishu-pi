@@ -27,8 +27,12 @@ npm start
 | `FEISHU_GUARD_BASE_URL` / `FEISHU_GUARD_MODELS` / `FEISHU_GUARD_API_KEY` | 可选审核模型；未配置时策略外调用走授权卡 |
 | `FEISHU_USER_AUTH_SCOPES` | 覆盖默认用户授权 scope，以空格或逗号分隔 |
 | `FEISHU_SHOW_MODEL_STATS` | 回复统计小字开关，默认开启，设 `0` 关闭 |
+| `FEISHU_PI_MAX_RESOURCE_MB` / `FEISHU_PI_MAX_MESSAGE_RESOURCE_MB` | 单个资源 / 单条消息附件总大小上限，默认 20 / 40 MiB |
+| `FEISHU_PI_MAX_PENDING_MESSAGES` | 单会话在途与排队消息上限，默认 3 |
 
-应用需要启用机器人与长连接，订阅 `im.message.receive_v1` 和 `card.action.trigger`。初始化向导提供预置权限；应用实际生效的权限以飞书后台发布状态为准。
+应用需要启用机器人与长连接，订阅 `im.message.receive_v1` 和 `card.action.trigger`。初始化向导提供预置权限（含 Slash Command 的读写权限）；服务启动时会幂等注册内置快捷指令，应用实际生效的权限以飞书后台发布状态为准。
+
+已有应用补开 Slash Command：运行 `npm run setup`，扫码确认新增的两个 `application:app_slash_command:*` 权限，并在飞书开放平台创建、发布新版本；随后重启服务，启动日志会显示指令同步结果。
 
 ## 当前能力
 

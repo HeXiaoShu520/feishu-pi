@@ -1,5 +1,5 @@
 /**
- * 机器人指令（/model /help /new /stop /detail）。
+ * 机器人指令（/model /help /new /stop /restart /detail）。
  *
  * 设计：每个指令一个 CommandHandler 实现，依赖一律构造注入（会话操作、策略查询、
  * 模型信息提供器），指令本身不读全局配置、不持有可变状态——便于单测与复用。
@@ -222,6 +222,7 @@ export class HelpCommand implements CommandHandler {
 \`/help\` - 显示此帮助信息
 \`/new\` - 开始新会话（换新的会话 id 与会话目录）
 \`/stop\` - 停止当前 AI 响应
+\`/restart\` - 管理员重启开发服务
 \`/detail on\` - 开启详细模式（工具调用保留在正文）
 \`/detail off\` - 开启精简模式（工具调用临时显示后清除，默认）`),
     };
@@ -276,6 +277,31 @@ export class StopCommand implements CommandHandler {
     await this.abort(message.context.conversationId);
     logger.info(`[Command] 已中断会话: ${message.context.conversationId}`);
     return { card: markdownCard("⏸️ 已停止当前响应。") };
+  }
+}
+
+/** /restart - 仅管理员可用；实际重启触发器由 main 注入，避免指令层直接依赖文件系统。 */
+export class RestartCommand implements CommandHandler {
+  private readonly trigger: () => void;
+
+  constructor(trigger: () => void) {
+    this.trigger = trigger;
+  }
+
+  match(text: string): boolean {
+    return text.trim() === "/restart";
+  }
+
+  async execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
+    if (message.context.isAdmin !== true) {
+      return { card: markdownCard("❌ 只有管理员可以重启服务。") };
+    }
+
+    return {
+      card: markdownCard("🔄 已收到重启指令，正在重启开发服务…"),
+      // 由 bridge 在回执卡成功发出后调用，避免源码变更抢在回执发送之前。
+      afterSend: () => this.trigger(),
+    };
   }
 }
 

@@ -10,6 +10,7 @@
 // - 机器人收发消息最小集（im:message / im:chat / im:resource / 群消息 / 表情回执）
 // - 通讯录只读（上电用机器人身份预取管理员资料：中英文名 + 部门）
 // - 事件 im.message.receive_v1（WS 长连接收消息）+ 卡片回调 card.action.trigger
+// - Slash Command 管理权限（上电同步 /help、/model 等快捷指令）
 import { gzipSync } from "node:zlib";
 import { readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join } from "node:path";
@@ -34,6 +35,9 @@ export function buildAddons(): Record<string, unknown> {
         "contact:contact.base:readonly",
         "contact:user.base:readonly",
         "contact:department.base:readonly",
+        // Slash Command 列表的查询与创建/更新能力
+        "application:app_slash_command:read",
+        "application:app_slash_command:write",
       ],
     },
     events: { items: { tenant: ["im.message.receive_v1"] } },

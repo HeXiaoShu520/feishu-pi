@@ -12,6 +12,7 @@ interface MessageRecord {
 
 /** processing 状态超过该时长视为卡住，允许重新认领 */
 const PROCESSING_TTL_MS = 10 * 60 * 1000;
+const PROCESSING_RENEW_INTERVAL_MS = 60 * 1000;
 
 /** 使用 JSON 保存消息处理状态，避免重复投递重复执行 Agent。 */
 export class MessageStore extends JsonMapStore<MessageRecord> {
@@ -28,6 +29,28 @@ export class MessageStore extends JsonMapStore<MessageRecord> {
     this.records.set(messageId, { status: "processing", updatedAt: Date.now() });
     await this.persist();
     return true;
+  }
+
+  /**
+   * 续租一条仍在处理中的消息。返回 false 表示该消息已经不再属于当前处理流程。
+   * 续租由传输层持有，覆盖附件预处理和 Agent 长任务，避免固定 TTL 期间被重复认领。
+   */
+  async touch(messageId: string): Promise<boolean> {
+    await this.ensureLoaded();
+    const existing = this.records.get(messageId);
+    if (!existing || existing.status !== "processing") return false;
+    existing.updatedAt = Date.now();
+    await this.persist();
+    return true;
+  }
+
+  /** 启动处理租约心跳，返回停止函数。 */
+  startLease(messageId: string, intervalMs = PROCESSING_RENEW_INTERVAL_MS): () => void {
+    const timer = setInterval(() => {
+      void this.touch(messageId).catch(() => undefined);
+    }, intervalMs);
+    timer.unref?.();
+    return () => clearInterval(timer);
   }
 
   /** 标记消息处理完成。 */

@@ -69,7 +69,7 @@ export class FeishuAgentBridge {
       (chatId: string, enabled: boolean) => this.detailMode.set(chatId, enabled),
       (chatId: string) => this.detailMode.get(chatId) === true,
     ));
-    // /new /stop 操作会话（换代/中断），实际逻辑由指令自身完成（见 commands.ts）
+    // /new /stop 操作会话，实际逻辑由指令自身完成（见 commands.ts）；/restart 由 main 注入。
     this.commandRegistry.register(new NewCommand((id, openId) => this.conversations.reset(id, openId)));
     this.commandRegistry.register(new StopCommand((id) => this.conversations.abort(id)));
     for (const command of options?.extraCommands ?? []) {
@@ -84,7 +84,6 @@ export class FeishuAgentBridge {
 
   /** 处理一条入站消息。 */
   async handle(message: FeishuInboundMessage): Promise<void> {
-    if (this.messages && !(await this.messages.claim(message.messageId))) return;
     const conversationId = message.context.conversationId;
     const userName = message.context.userName;
     const requestStartedAt = Date.now();
@@ -109,6 +108,16 @@ export class FeishuAgentBridge {
       messageId: message.messageId,
       replyInThread: resolveReplyInThread(message.context.chatMode, message.context.threadId),
       onError: (err) => logger.error("[CardKit]", err),
+      fallbackText: async (text) => {
+        await this.client!.im.message.reply({
+          path: { message_id: message.messageId },
+          data: {
+            msg_type: "text",
+            content: JSON.stringify({ text }),
+            reply_in_thread: resolveReplyInThread(message.context.chatMode, message.context.threadId),
+          },
+        });
+      },
     });
 
     // 动画定时器句柄提级声明：无论 prompt 成功或抛错，finally 都要清掉，避免句柄泄漏

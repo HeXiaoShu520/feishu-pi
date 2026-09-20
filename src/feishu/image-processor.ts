@@ -10,7 +10,7 @@ import type { Client } from "@larksuiteoapi/node-sdk";
 import { mkdir, writeFile } from "node:fs/promises";
 import { sanitizeFileName } from "../utils/session-paths.ts";
 import { join } from "node:path";
-import { toBuffer } from "./resource-buffer.ts";
+import { DEFAULT_MAX_RESOURCE_BYTES, toBuffer } from "./resource-buffer.ts";
 import { logger } from "../utils/logger.ts";
 
 /** Pi 使用的图片格式 */
@@ -28,21 +28,33 @@ export interface FeishuImageProcessor {
   processImages(messageId: string, imageKeys: string[], cacheDir?: string): Promise<ProcessedImage[]>;
 }
 
+export interface LarkImageProcessorOptions {
+  maxResourceBytes?: number;
+  maxMessageResourceBytes?: number;
+  maxImages?: number;
+}
+
 export class LarkImageProcessor implements FeishuImageProcessor {
   private readonly client: Client;
+  private readonly maxResourceBytes: number;
+  private readonly maxMessageResourceBytes: number;
+  private readonly maxImages: number;
 
-  constructor(client: Client) {
+  constructor(client: Client, options: LarkImageProcessorOptions = {}) {
     this.client = client;
+    this.maxResourceBytes = options.maxResourceBytes ?? DEFAULT_MAX_RESOURCE_BYTES;
+    this.maxMessageResourceBytes = options.maxMessageResourceBytes ?? this.maxResourceBytes * 2;
+    this.maxImages = options.maxImages ?? 10;
   }
 
   /** 下载单张图片：失败返回 undefined（不阻断其余图片/消息处理）。 */
-  async processImage(messageId: string, imageKey: string, cacheDir?: string): Promise<ProcessedImage | undefined> {
+  async processImage(messageId: string, imageKey: string, cacheDir?: string, maxBytes = this.maxResourceBytes): Promise<ProcessedImage | undefined> {
     try {
       const response = await this.client.im.v1.messageResource.get({
         path: { message_id: messageId, file_key: imageKey },
         params: { type: "image" },
       });
-      const imageData = await toBuffer(response);
+      const imageData = await toBuffer(response, maxBytes);
 
       // 可选：落盘到指定目录（会话工作区/images；供排查，失败不影响返回）
       // 落盘路径回填 savedPath：图片 base64 不再写入会话记录，靠消息文本里的路径指回原图
@@ -65,14 +77,20 @@ export class LarkImageProcessor implements FeishuImageProcessor {
     }
   }
 
-  /** 并发处理多张图片；单张失败自动跳过（allSettled + 过滤 undefined）。
+  /** 按顺序处理图片，单张失败自动跳过，并限制单条消息的图片总大小。
    *  cacheDir 传入时把图片落盘到该目录（会话工作区/images），不传则不落盘。 */
   async processImages(messageId: string, imageKeys: string[], cacheDir?: string): Promise<ProcessedImage[]> {
-    const results = await Promise.allSettled(imageKeys.map((key) => this.processImage(messageId, key, cacheDir)));
-    return results
-      .filter((r): r is PromiseFulfilledResult<ProcessedImage | undefined> => r.status === "fulfilled")
-      .map((r) => r.value)
-      .filter((img): img is ProcessedImage => img !== undefined);
+    const results: ProcessedImage[] = [];
+    let totalBytes = 0;
+    for (const key of imageKeys.slice(0, this.maxImages)) {
+      const remaining = this.maxMessageResourceBytes - totalBytes;
+      if (remaining <= 0) break;
+      const image = await this.processImage(messageId, key, cacheDir, Math.min(this.maxResourceBytes, remaining));
+      if (!image) continue;
+      totalBytes += image.data.byteLength;
+      results.push(image);
+    }
+    return results;
   }
 
   /** 根据文件头魔数检测 MIME 类型（识别不出时按最常见的 JPEG 兜底）。 */

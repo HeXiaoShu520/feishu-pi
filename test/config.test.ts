@@ -12,6 +12,23 @@ describe("loadConfig 模型统计小字开关", () => {
     expect(loadConfig(baseEnv).showModelStats).toBe(true);
   });
 
+  it("资源和队列限制使用安全默认值，也支持环境变量覆盖", () => {
+    const defaults = loadConfig(baseEnv);
+    expect(defaults.maxResourceBytes).toBe(20 * 1024 * 1024);
+    expect(defaults.maxMessageResourceBytes).toBe(40 * 1024 * 1024);
+    expect(defaults.maxPendingMessages).toBe(3);
+
+    const custom = loadConfig({
+      ...baseEnv,
+      FEISHU_PI_MAX_RESOURCE_MB: "8",
+      FEISHU_PI_MAX_MESSAGE_RESOURCE_MB: "16",
+      FEISHU_PI_MAX_PENDING_MESSAGES: "5",
+    });
+    expect(custom.maxResourceBytes).toBe(8 * 1024 * 1024);
+    expect(custom.maxMessageResourceBytes).toBe(16 * 1024 * 1024);
+    expect(custom.maxPendingMessages).toBe(5);
+  });
+
   it("FEISHU_SHOW_MODEL_STATS：0/false/off 关闭；1/true/on 开启", () => {
     expect(loadConfig({ ...baseEnv, FEISHU_SHOW_MODEL_STATS: "0" }).showModelStats).toBe(false);
     expect(loadConfig({ ...baseEnv, FEISHU_SHOW_MODEL_STATS: "false" }).showModelStats).toBe(false);
