@@ -337,7 +337,8 @@ export async function main(): Promise<void> {
       appId: config.feishuAppId,
       cwd: config.cwd,
       tokenCandidates: (target) => [target, adminOpenId],
-      peekToken: (openId) => userAuth?.peekUserAccessToken(openId),
+      getToken: (openId) => userAuth?.getUserAccessToken(openId) ?? Promise.resolve(undefined),
+      refreshToken: (openId) => userAuth?.refreshUserAccessToken(openId) ?? Promise.resolve(undefined),
     }),
     // /model 切换时通知运行时热切换（持久化到 .env 仍在 transport 内完成）
     onModelSwitch: (name) => {

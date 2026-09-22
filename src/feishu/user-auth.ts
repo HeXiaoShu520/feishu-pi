@@ -261,6 +261,22 @@ export class UserAuthService {
     return task;
   }
 
+  /**
+   * 强制轮换一次 access token。仅供下游已收到“token 无效”这类确定认证失败时重试；
+   * 普通调用仍使用 getUserAccessToken，避免每次查询都消耗 refresh token。
+   */
+  async refreshUserAccessToken(openId: string): Promise<string | undefined> {
+    const token = await this.store.get(openId);
+    if (!token) return undefined;
+    const inflight = this.refreshInflight.get(openId);
+    if (inflight) return inflight;
+    const task = this.refreshByStoreToken(openId, token).finally(() => {
+      this.refreshInflight.delete(openId);
+    });
+    this.refreshInflight.set(openId, task);
+    return task;
+  }
+
   /** 实际刷新流程（per-openId 串行，经 getUserAccessToken 的 singleflight 进入）。 */
   private async refreshByStoreToken(openId: string, token: StoredUserToken): Promise<string | undefined> {
     if (token.refreshExpiresAt - 60_000 <= this.now()) {

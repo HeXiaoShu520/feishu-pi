@@ -1,52 +1,41 @@
 import { describe, expect, it } from "vitest";
-import { parseSearchUserOutput } from "../src/feishu/lark-cli-search.ts";
+import { createCliSearchUser } from "../src/feishu/lark-cli-search.ts";
 
-/** 真实命令输出（lark-cli contact +search-user --user-ids ou_x --as user）的形状 */
-const SAMPLE = JSON.stringify({
-  ok: true,
-  identity: "user",
-  data: {
-    users: [
-      {
-        open_id: "ou_0xx",
-        localized_name: "张三",
-        email: "",
-        enterprise_email: "zhangsan@example.com",
-        is_activated: true,
-        is_cross_tenant: false,
-        p2p_chat_id: "oc_x",
-        has_chatted: true,
-        department: "自动驾驶研发部-系统工程交付部-基础功能部",
-        chat_recency_hint: "",
-        match_segments: [],
+const success = JSON.stringify({ data: { users: [{ localized_name: "何小书", department: "研发部" }] } });
+
+describe("createCliSearchUser", () => {
+  it("认证失败后强制刷新一次 token，并用新 token 重试同一资料查询", async () => {
+    const tokens: string[] = [];
+    let calls = 0;
+    const search = createCliSearchUser({
+      appId: "cli_test",
+      cwd: process.cwd(),
+      tokenCandidates: () => ["ou_user"],
+      getToken: async () => "old-token",
+      refreshToken: async () => "new-token",
+      run: async (_exe, _args, env) => {
+        tokens.push(env.LARKSUITE_CLI_USER_ACCESS_TOKEN!);
+        calls += 1;
+        if (calls === 1) throw new Error("lark-cli 退出码 3：token_invalid");
+        return success;
       },
-    ],
-  },
-});
-
-describe("parseSearchUserOutput（用户态搜索结果解析）", () => {
-  it("标准 JSON 输出：姓名 + 现成中文部门路径", () => {
-    const profile = parseSearchUserOutput(SAMPLE);
-    expect(profile?.name).toBe("张三");
-    expect(profile?.department_name).toEqual(["自动驾驶研发部-系统工程交付部-基础功能部"]);
-  });
-
-  it("输出夹杂非 JSON 提示行时仍可解析（取最外层大括号）", () => {
-    const noisy = `notice: something\n${SAMPLE}\ndone.`;
-    expect(parseSearchUserOutput(noisy)?.name).toBe("张三");
-  });
-
-  it("users 为对象形式时取第一个值；ok:false 视为未命中", () => {
-    const objectForm = JSON.stringify({
-      ok: true,
-      data: { users: { ou_0xx: { localized_name: "李四", department: "质量部" } } },
     });
-    expect(parseSearchUserOutput(objectForm)?.name).toBe("李四");
-    expect(parseSearchUserOutput(JSON.stringify({ ok: false, data: { users: [] } }))).toBeUndefined();
+
+    await expect(search("ou_user")).resolves.toEqual({ name: "何小书", department_name: ["研发部"] });
+    expect(tokens).toEqual(["old-token", "new-token"]);
   });
 
-  it("无姓名无部门 → 未命中（undefined）", () => {
-    expect(parseSearchUserOutput(JSON.stringify({ ok: true, data: { users: [{ open_id: "ou_x" }] } }))).toBeUndefined();
-    expect(parseSearchUserOutput("not json at all")).toBeUndefined();
+  it("本人就是管理员时，对同一候选只查询一次", async () => {
+    let calls = 0;
+    const search = createCliSearchUser({
+      appId: "cli_test",
+      cwd: process.cwd(),
+      tokenCandidates: () => ["ou_user", "ou_user"],
+      getToken: async () => "token",
+      run: async () => { calls += 1; return success; },
+    });
+
+    await expect(search("ou_user")).resolves.toEqual({ name: "何小书", department_name: ["研发部"] });
+    expect(calls).toBe(1);
   });
 });

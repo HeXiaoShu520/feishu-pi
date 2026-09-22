@@ -25,8 +25,10 @@ export interface CliSearchUserOptions {
    * 返回值里的 undefined 项跳过。
    */
   tokenCandidates: (targetOpenId: string) => Array<string | undefined>;
-  /** 同步取某用户的有效 user token（读内存缓存，不触发刷新）；无则跳过该候选 */
-  peekToken: (openId: string) => string | undefined;
+  /** 取得有效 user token；实现可从凭证库加载并按到期时间刷新。 */
+  getToken: (openId: string) => Promise<string | undefined>;
+  /** CLI 明确认证失败后的单次强制刷新；刷新后会重试同一查询。 */
+  refreshToken?: (openId: string) => Promise<string | undefined>;
   /** 单次 CLI 调用超时（毫秒），默认 20s */
   timeoutMs?: number;
   /** 测试注入：执行 lark-cli 并返回 stdout */
@@ -122,22 +124,37 @@ export function createCliSearchUser(options: CliSearchUserOptions): CliSearchUse
     // 查询对象就是管理员时两个候选相同；同一 token 无需重复执行一次 CLI。
     const candidates = [...new Set(options.tokenCandidates(targetOpenId).filter((candidate): candidate is string => Boolean(candidate)))];
     for (const candidate of candidates) {
-      const token = options.peekToken(candidate);
+      let token = await options.getToken(candidate);
       if (!token) continue;
-      try {
-        const stdout = await run(exe, ["contact", "+search-user", "--user-ids", targetOpenId, "--as", "user"], {
-          ...process.env,
-          LARKSUITE_CLI_USER_ACCESS_TOKEN: token,
-          LARKSUITE_CLI_APP_ID: options.appId,
-        }, timeoutMs);
-        const profile = parseSearchUserOutput(stdout);
-        if (profile) {
-          logger.info(`[CliSearch] 用户态搜索命中 ${targetOpenId}（以 ${candidate === targetOpenId ? "本人" : "管理员"} token 查询）：${profile.name ?? "无名"}, 部门=${profile.department_name?.join(" / ") ?? "无"}`);
-          return profile;
+      let retriedAfterRefresh = false;
+      while (token) {
+        try {
+          const stdout = await run(exe, ["contact", "+search-user", "--user-ids", targetOpenId, "--as", "user"], {
+            ...process.env,
+            LARKSUITE_CLI_USER_ACCESS_TOKEN: token,
+            LARKSUITE_CLI_APP_ID: options.appId,
+          }, timeoutMs);
+          const profile = parseSearchUserOutput(stdout);
+          if (profile) {
+            logger.info(`[CliSearch] 用户态搜索命中 ${targetOpenId}（以 ${candidate === targetOpenId ? "本人" : "管理员"} token 查询）：${profile.name ?? "无名"}, 部门=${profile.department_name?.join(" / ") ?? "无"}`);
+            return profile;
+          }
+          logger.info(`[CliSearch] 用户态搜索未命中 ${targetOpenId}（以 ${candidate} token 查询）`);
+          break;
+        } catch (error) {
+          // CLI 用退出码 3 统一表达认证/API 错误；先强制刷新一次 token 再重试。
+          if (!retriedAfterRefresh && options.refreshToken) {
+            retriedAfterRefresh = true;
+            const refreshed = await options.refreshToken(candidate).catch(() => undefined);
+            if (refreshed && refreshed !== token) {
+              logger.info(`[CliSearch] ${candidate === targetOpenId ? "本人" : "管理员"} token 查询失败，已刷新并重试`);
+              token = refreshed;
+              continue;
+            }
+          }
+          logger.warn(`[CliSearch] 用户态搜索失败（${candidate} token）：${error instanceof Error ? error.message : String(error)}`);
+          break;
         }
-        logger.info(`[CliSearch] 用户态搜索未命中 ${targetOpenId}（以 ${candidate} token 查询）`);
-      } catch (error) {
-        logger.warn(`[CliSearch] 用户态搜索失败（${candidate} token）：${error instanceof Error ? error.message : String(error)}`);
       }
     }
     return undefined;
