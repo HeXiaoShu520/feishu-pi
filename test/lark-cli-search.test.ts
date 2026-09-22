@@ -38,4 +38,22 @@ describe("createCliSearchUser", () => {
     await expect(search("ou_user")).resolves.toEqual({ name: "何小书", department_name: ["研发部"] });
     expect(calls).toBe(1);
   });
+
+  it("按候选顺序优先使用管理员 token，管理员不可见时才回退目标本人", async () => {
+    const tokens: string[] = [];
+    const search = createCliSearchUser({
+      appId: "cli_test",
+      cwd: process.cwd(),
+      tokenCandidates: () => ["ou_admin", "ou_sender"],
+      getToken: async (openId) => openId === "ou_admin" ? "admin-token" : "sender-token",
+      run: async (_exe, _args, env) => {
+        tokens.push(env.LARKSUITE_CLI_USER_ACCESS_TOKEN!);
+        if (env.LARKSUITE_CLI_USER_ACCESS_TOKEN === "admin-token") throw new Error("permission denied");
+        return success;
+      },
+    });
+
+    await expect(search("ou_sender")).resolves.toEqual({ name: "何小书", department_name: ["研发部"] });
+    expect(tokens).toEqual(["admin-token", "sender-token"]);
+  });
 });

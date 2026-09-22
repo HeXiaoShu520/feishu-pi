@@ -17,7 +17,7 @@
 
 access token 临近到期时刷新；同用户并发刷新合并，后台每 30 分钟预热所有已登录用户。refresh token 过期需重新授权，实际有效期以接口返回为准，不保证永久续期。
 
-`ensureScopes` 合并已有和新 scope 发起增量授权。资料查询使用 `lark-cli contact +search-user`，按目标本人 token、管理员 token 的顺序尝试；遇到飞书拒绝当前 token 时会强制刷新一次并自动重试。
+`ensureScopes` 合并已有和新 scope 发起增量授权。资料查询使用 `lark-cli contact +search-user`，默认按管理员 token、目标本人已登录 token 的顺序尝试，因此普通用户不需要登录；遇到飞书拒绝当前 token 时会强制刷新一次并自动重试。
 
 ## 执行与存储
 

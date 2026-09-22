@@ -8,7 +8,8 @@
  *
  * 身份注入：与技能里的约定一致——通过环境变量 LARKSUITE_CLI_USER_ACCESS_TOKEN /
  * LARKSUITE_CLI_APP_ID 注入，token 不经过 shell，多用户并发互不可见。
- * 查询目标本人的 token 优先（查自己必然可见），其次管理员的 token。
+ * 普通用户不需要先登录：优先使用管理员已授权的 token；仅在管理员不可用/不可见时，
+ * 才尝试目标用户自己已经登录的 token。
  */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -21,7 +22,7 @@ export interface CliSearchUserOptions {
   /** 项目根（定位 node_modules 内的 lark-cli 原生二进制） */
   cwd?: string;
   /**
-   * 查询用 user token 的候选 openId 列表（按优先级）：通常为 [目标本人, 管理员]。
+   * 查询用 user token 的候选 openId 列表（按优先级）：通常为 [管理员, 目标本人]。
    * 返回值里的 undefined 项跳过。
    */
   tokenCandidates: (targetOpenId: string) => Array<string | undefined>;

@@ -59,7 +59,7 @@ export class LarkCli {
   /**
    * 查询用户资料，带缓存和过期机制。
    * 唯一通道：lark-cli 用户态搜索（需要目标本人或管理员已 /login；token 优先级见
-   * createCliSearchUser）。未命中也落盘冷却档案（1 天后自动重试），避免重复打 CLI；
+   * createCliSearchUser）。普通用户无需先登录，默认由管理员 token 查询；未命中也落盘冷却档案（1 天后自动重试），避免重复打 CLI；
    * 消费方自行判断空字段并做兜底展示（如 openId 直显）。
    */
   async getUserProfile(openId: string): Promise<LarkUserProfile> {

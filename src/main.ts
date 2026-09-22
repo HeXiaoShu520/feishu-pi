@@ -332,11 +332,12 @@ export async function main(): Promise<void> {
 
     adminOpenId,
     // lark-cli 用户态搜索通道（contact +search-user）：部门信息的主要来源，不依赖需审核权限；
-    // 优先用查询目标本人的 token（查自己必然可见），其次管理员的
+    // 普通消息发送者不需要先 /login，优先使用管理员已授权的 user token；
+    // 目标用户已登录时才作为管理员不可用/不可见时的兜底。
     searchUserProfile: createCliSearchUser({
       appId: config.feishuAppId,
       cwd: config.cwd,
-      tokenCandidates: (target) => [target, adminOpenId],
+      tokenCandidates: (target) => [adminOpenId, target],
       getToken: (openId) => userAuth?.getUserAccessToken(openId) ?? Promise.resolve(undefined),
       refreshToken: (openId) => userAuth?.refreshUserAccessToken(openId) ?? Promise.resolve(undefined),
     }),
