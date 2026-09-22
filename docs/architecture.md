@@ -37,30 +37,28 @@ Pi 事件的异步处理按顺序排空后才结算回复。初始化失败不�
 
 ## 权限
 
-`.agent/permissions.json` 是路径禁止规则和组权限的来源：
+`.agent/permissions.json` 是全局 hard deny 和两层白名单的来源。规则格式统一为 `Bash(命令glob)`、`Read(路径glob)`、`Write(路径glob)`、`Tools(工具名glob)`：
 
 ```json
 {
-  "deny": [".env", "data/credentials/**", "data/.vault-key"],
+  "deny": ["Read(**/.env*)", "Write(data/credentials/**)", "Bash(**.env*)"],
   "allow": {
-    "common": ["Read(.agent/skills/**)", "Tools(memory)"],
     "admin": ["Read(**)", "Write(.agent/**)", "Tools(*)"],
-    "group": ["Bash(git status:*)"]
+    "group": ["Read(docs/**)", "Tools(memory)", "Bash(git status:*)"]
   }
 }
 ```
 
-所有人叠加 `common`，再合并所属组。管理员也只获得显式配置的权限，配置缺失、损坏或字段未配置不会补全权限。无可读规则时仅允许读取技能目录。`deny` 完全来自配置，没有隐藏的内置禁止清单。
+身份只有两层：`admin` 由 `FEISHU_PI_ADMIN` 解析出的 open_id 识别；`group` 是唯一团队，由 `FEISHU_PI_GROUP` 配置成员（open_id、中英文名或部门名）。访客不具有白名单。管理员也只获得显式配置的权限；配置缺失、损坏或字段未配置不会补全权限。`deny` 完全来自配置，没有隐藏的内置禁止清单。
 
-内置 `read/write/edit/bash` 和自定义工具注册到会话，执行时检查权限，而不是按组隐藏技能说明。`ask_user_question` 是所有人可用的交互工具；其他自定义工具必须命中 `Tools(...)`。
+内置 `read/write/edit/bash` 和自定义工具注册到会话，执行时统一检查权限，而不是按组隐藏技能说明。`ask_user_question` 是所有人可用的交互工具。
 
 调用判定顺序：
 
-1. `deny` 命中直接拒绝；`read` 超出可读范围直接拒绝。
-2. 自定义工具不在 `Tools` 范围则拒绝；`risk: "high"` 强制人工授权。
-3. Bash 命令或写入路径命中规则则放行。命令前缀要求参数边界，复杂 shell 构造不直接按前缀放行。
-4. 未命中时，可选审核模型仅判断是否为当前身份显式授权操作的等价写法；无法确认、异常或超时进入授权卡。
-5. 单条直接 `lark-cli` 用户态调用可由本人确认，其余由管理员确认；拒绝、超时、中断或无法发卡均不执行。
+1. `deny` 按工具类型和参数通配命中即直接拒绝；不能申请授权绕过。
+2. Bash、读写路径或自定义工具命中调用者白名单直接放行。命令前缀要求参数边界，复杂 shell 构造不直接按前缀放行。
+3. 一切白名单未命中（包括 `read` 和自定义工具）都交给审核模型。模型收到完整策略、调用者角色、是否管理员、有效白名单和高风险标记，输出 `allow`、`admin` 或 `user`。
+4. `allow` 直接执行；`admin` 发管理员单次授权卡；`user` 仅由当前请求者本人确认。未配置审核模型、超时、异常或无法解析一律回退管理员卡；拒绝、超时、中断或无法发卡均不执行。
 
 这是应用级审核，**不是操作系统沙箱**。Bash 授权涵盖该命令的全部行为，`Read` 规则不限制已获准执行的 shell 子进程；符号链接、脚本及 CLI 扩展也不能靠命令文本过滤彻底隔离。只为受信任用户配置广泛的 Bash/Write 权限。审核模型也不是确定性的安全边界。
 

@@ -23,8 +23,8 @@ npm start
 | `FEISHU_PI_MODEL_BASE_URL` | 模型接口地址，可选 |
 | `FEISHU_PI_THINKING_LEVEL` | `off` / `low` / `high` / `max`，默认 `off` |
 | `FEISHU_PI_ADMIN` | 管理员标识，推荐使用稳定的 openId |
-| `FEISHU_PI_GROUP` / `FEISHU_PI_GROUP_<组名>` | 身份组成员 |
-| `FEISHU_GUARD_BASE_URL` / `FEISHU_GUARD_MODELS` / `FEISHU_GUARD_API_KEY` | 可选审核模型；未配置时策略外调用走授权卡 |
+| `FEISHU_PI_GROUP` | 唯一团队成员（仅有管理员与团队两层身份） |
+| `FEISHU_GUARD_BASE_URL` / `FEISHU_GUARD_MODELS` / `FEISHU_GUARD_API_KEY` | 白名单未命中的智能门禁；未配置时回退管理员授权卡 |
 | `FEISHU_USER_AUTH_SCOPES` | 覆盖默认用户授权 scope，以空格或逗号分隔 |
 | `FEISHU_SHOW_MODEL_STATS` | 回复统计小字开关，默认开启，设 `0` 关闭 |
 | `FEISHU_PI_MAX_RESOURCE_MB` / `FEISHU_PI_MAX_MESSAGE_RESOURCE_MB` | 单个资源 / 单条消息附件总大小上限，默认 20 / 40 MiB |
@@ -41,7 +41,7 @@ npm start
 - 文本、图片和文件附件；CardKit 2.0 流式回复、工具状态、详细/精简显示。
 - 私聊按 chatId 保存历史，普通群全群共享，话题群按话题共享。共享历史中的工具身份始终属于本轮发言人。
 - 用户飞书授权与飞书项目授权，按 openId 加密保存凭证。
-- `deny` + 身份组 `allow` 策略、审核模型与单次人工授权。
+- 通配型 `deny`、管理员/唯一团队白名单、智能门禁与单次人工授权。
 - 个人文件记忆、定时任务和 Markdown 技能；TS/JS/Python 自定义工具。
 - 消息去重、会话恢复、空闲驱逐与过期目录清理。
 

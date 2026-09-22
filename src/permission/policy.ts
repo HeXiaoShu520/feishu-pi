@@ -2,41 +2,7 @@ import { readFile, stat } from "node:fs/promises";
 import { matchGlobs } from "../utils/path-glob.ts";
 import { logger } from "../utils/logger.ts";
 
-/**
- * 统一权限策略：一个文件（.agent/permissions.json）只有两个输入——
- *
- *   {
- *     "deny":  ["禁止读写的路径 glob，第 0 层，对所有人含管理员生效"],
- *     "allow": {
- *       "common":  ["Read(.agent/skills/**)"],
- *       "admin":   ["Bash(git status:*)", "Read(**)", "Write(.agent/**)", "Tools(*)"],
- *       "group_1": ["Bash(npm run test:*)", "Read(docs/**)"]
- *     }
- *   }
- *
- * allow 里每组为规则数组，前导词：
- *   - Bash(命令)   — 命令精确匹配、`cmd:*` 前缀匹配或 "*"（该组可执行的 bash 命令）
- *   - Read(路径glob) — 该组可读的路径范围
- *   - Write(路径glob) — 该组可写的路径范围
- *   - Tools(工具名)  — 该组可调用的自定义工具，精确名称或 "*"（全部）
- *
- * allow 里的保留组名：
- *   - common——所有人默认拥有的基础权限（每个用户自动叠加，无需归属）；
- *   - admin——管理员组，FEISHU_PI_ADMIN 自动属于；权限只来自显式规则。
- *   其余组名任取（团队组如 group、group_1、group_2……）。
- *
- * 组成员在 .env 中通过 FEISHU_PI_GROUP_<组名>=成员1,成员2,... 配置；
- * 纯数字后缀简写为团队组：FEISHU_PI_GROUP_1 → group_1、FEISHU_PI_GROUP_2 → group_2。
- *
- * 生效范围 = common ∪ 所属各组并集。组文件 mtime 热重载，每次工具调用生效。
- * 名单之外的调用一律交授权卡（非允许即 ask）；read 范围外交直接拦截（能力问题不问人）。
- * 文件缺失或解析失败时按保守默认处理（仅技能目录可读、无工具、无命令）。
- *
- * deny（第 0 层）：完全来自配置文件的显式模式，
- * 先于一切 allow 规则判定，对所有人（含管理员）生效——
- * 敏感配置不允许经智能体读或写（read 路径 / write·edit 路径 / bash 命令引用均拦截）。
- */
-
+/** 白名单中的四类能力。 */
 export interface GroupFields {
   bash?: string[];
   read?: string[];
@@ -44,48 +10,47 @@ export interface GroupFields {
   tools?: string[];
 }
 
-/** 编译后的组策略：各类调用的判定函数 */
+type RoleName = "admin" | "group";
+type DenyKind = "bash" | "read" | "write" | "tools";
+
+interface DenyRule {
+  kind: DenyKind;
+  pattern: string;
+  raw: string;
+}
+
+/** 已编译的调用者权限。白名单只负责确定性放行，未命中统一交给 LLM 门禁。 */
 export interface GroupPolicy {
-  /** 命中的组名（含 admin） */
-  groups: string[];
+  groups: RoleName[];
   isAdmin: boolean;
+  isTeam: boolean;
   bashAllowed(command: string): boolean;
   readAllowed(path: string): boolean;
   writeAllowed(path: string): boolean;
-  /** 自定义工具（.agent/tools/ 中的 Python/TS 脚本）是否对该组可用 */
   toolsAllowed(name: string): boolean;
-  /** deny 规则（第 0 层）：路径引用命中禁止清单时返回命中的模式，未命中返回 undefined */
-  deniedPath(pathRef: string): string | undefined;
-  /** 生效范围（/perm 展示用） */
+  /** 顶层 deny：按工具类型和参数通配匹配，命中即对所有角色硬拦截。 */
+  denied(toolName: string, args: unknown): string | undefined;
   describe(): Required<Omit<GroupFields, "tools">> & { tools: string[] };
 }
 
-/** 不在任何组时的保守缺省：仅技能目录可读（零配置行为） */
-const UNGROUPED_READ = [".agent/skills/**"];
+const ROLE_NAMES: RoleName[] = ["admin", "group"];
 
-/** 统计一组的规则总数（read/write/tools/bash 之和，日志汇总用）。 */
-function countRules(fields: GroupFields): number {
-  return (Object.keys(fields) as (keyof GroupFields)[]).reduce((sum, kind) => sum + (fields[kind]?.length ?? 0), 0);
-}
-
-/** bash 命令里的 shell 链接符：命中即不参与前缀/精确匹配（防 `npm run test; rm -rf /` 逃逸）。
- *  换行符必须包含：多行命令的第二行不被前缀规则覆盖（`git status\nrm -rf /` 会整段放行）。 */
-export const SHELL_META = /[;&|`$<>\\()\r\n]/;
+/** shell 拼接命令不能走确定性 Bash 白名单；会进入 LLM 门禁。 */
+export const SHELL_META = /[;&|`$<>\()\r\n]/;
 
 export class PermissionPolicy {
   private readonly filePath: string;
   private readonly adminId?: string;
   private readonly usersFile?: string;
   private readonly cwd: string;
+  private readonly groupMembership: Record<string, string[]>;
 
-  private groups: Record<string, GroupFields> = {};
-  /** common 默认层：所有人自动叠加的基础权限 */
-  private common: GroupFields = {};
-  /** deny 模式（permissions.json 顶层 "deny"，第 0 层的唯一来源） */
-  private denyExtras: string[] = [];
-  private groupMembership: Record<string, string[]>;
+  private groups: Record<RoleName, GroupFields> = { admin: {}, group: {} };
+  private denyRules: DenyRule[] = [];
   private loadedMtimeMs = -1;
   private warned = false;
+  private profileCache = new Map<string, { name?: string; en_name?: string; department_name?: string[] }>();
+  private profileMtimeMs = -1;
 
   constructor(filePath: string, options: { adminId?: string; groupMembership?: Record<string, string[]>; usersFile?: string; cwd?: string } = {}) {
     this.filePath = filePath;
@@ -95,137 +60,103 @@ export class PermissionPolicy {
     this.cwd = options.cwd ?? process.cwd();
   }
 
-  /** 当前生效的 deny 模式全集（完全来自 permissions.json 顶层 "deny"，无内置默认）。 */
-  private get denyPatterns(): string[] {
-    return this.denyExtras;
-  }
-
-  /**
-   * 解析调用者所属的组集合：FEISHU_PI_ADMIN → admin；
-   * 其余按环境变量 FEISHU_PI_GROUP_<NAME> 配置的成员匹配
-   * （全套标识：openId + 中文名 + 英文名 + 组织架构部门名，姓名/部门从用户缓存补充——
-   * 成员项写部门名（如 系统工程部）时，用户缓存中的部门路径包含该名称即视为命中）。
-   * 不在任何组 → 空集合（保守：仅技能目录可读）。
-   */
-  async groupsFor(userId: string, userName?: string): Promise<string[]> {
+  /** 只有管理员和唯一团队两个角色；管理员身份只认 FEISHU_PI_ADMIN。 */
+  async groupsFor(userId: string, userName?: string): Promise<RoleName[]> {
     await this.ensureLoaded();
-
-    const groups = new Set<string>();
+    const groups = new Set<RoleName>();
     if (this.adminId && userId === this.adminId) groups.add("admin");
 
-    const identifiers = new Set<string>([userId]);
-    if (userName) identifiers.add(userName);
-    const profile = await this.loadProfile(userId);
-    if (profile?.name) identifiers.add(profile.name);
-    if (profile?.en_name) identifiers.add(profile.en_name);
-
-    for (const [name, members] of Object.entries(this.groupMembership)) {
+    const members = this.groupMembership.group ?? [];
+    if (members.length > 0) {
+      const identifiers = new Set<string>([userId]);
+      if (userName) identifiers.add(userName);
+      const profile = await this.loadProfile(userId);
+      if (profile?.name) identifiers.add(profile.name);
+      if (profile?.en_name) identifiers.add(profile.en_name);
       if (members.some((member) => identifiers.has(member))) {
-        groups.add(name);
-        continue;
-      }
-      // 部门名匹配：成员项不是 open_id，且用户缓存的任一部门路径包含该名称（大小写不敏感）
-      const departmentPaths = profile?.department_name ?? [];
-      if (departmentPaths.some((path) =>
-        members.some((member) =>
-          !member.startsWith("ou_") && member.length >= 2 && path.toLowerCase().includes(member.toLowerCase()),
-        ),
+        groups.add("group");
+      } else if ((profile?.department_name ?? []).some((path) =>
+        members.some((member) => !member.startsWith("ou_") && member.length >= 2 && path.toLowerCase().includes(member.toLowerCase())),
       )) {
-        groups.add(name);
+        groups.add("group");
       }
     }
-    return [...groups];
+    return ROLE_NAMES.filter((name) => groups.has(name));
   }
 
-  /** 所有身份只获得显式配置的权限；管理员也不隐式补全。 */
-  private fieldsFor(name: string): Required<Omit<GroupFields, "tools">> & { tools: string[] } {
-    return { ...ungroupedDefaults(), ...(this.groups[name] ?? {}) };
-  }
-
-  /** 逐字段并集；read 空 → 技能目录（保守缺省），bash/write/tools 空保持空（保守） */
-  private mergeFields(sources: GroupFields[]): Required<Omit<GroupFields, "tools">> & { tools: string[] } {
-    const keys = ["bash", "read", "write", "tools"] as const;
-    const merged: Record<(typeof keys)[number], string[]> = {
-      bash: [], read: [], write: [], tools: [],
-    };
-    for (const key of keys) {
-      const set = new Set<string>();
-      for (const fields of sources) for (const item of fields[key] ?? []) set.add(item);
-      merged[key] = [...set];
-    }
-    if (merged.read.length === 0) merged.read = [...UNGROUPED_READ];
-    return merged;
-  }
-
-  /** 启动预加载：上电即读取策略文件（避免首条消息才触发加载日志）。 */
   async preload(): Promise<void> {
     await this.ensureLoaded();
   }
 
-  /** 合并编译多组策略（common ∪ 各组并集；无 admin 时保守缺省）。 */
-  async forGroups(groups: string[]): Promise<GroupPolicy> {
+  async forGroups(requested: string[]): Promise<GroupPolicy> {
     await this.ensureLoaded();
-    const cwd = this.cwd;
+    const groups = ROLE_NAMES.filter((name) => requested.includes(name));
     const isAdmin = groups.includes("admin");
-
-    // 合并顺序：common（人人默认）→ 所属各组
-    const sources: GroupFields[] = [this.common];
-    for (const g of groups) sources.push(this.fieldsFor(g));
-    const merged = this.mergeFields(sources);
-
+    const isTeam = groups.includes("group");
+    const merged = this.mergeFields(groups.map((name) => this.groups[name]));
     const bashAll = merged.bash.includes("*");
-    const bashRules = merged.bash.filter((r) => r !== "*").map((r) =>
-      r.endsWith(":*") ? { prefix: r.slice(0, -2).trimEnd() } : { exact: r },
+    const bashRules = merged.bash.filter((rule) => rule !== "*").map((rule) =>
+      rule.endsWith(":*") ? { prefix: rule.slice(0, -2).trimEnd() } : { exact: rule },
     );
-
-    const toolsAll = merged.tools.includes("*");
-    const denyGlobs = this.denyPatterns;
 
     return {
       groups,
       isAdmin,
+      isTeam,
       bashAllowed: (command) => {
         if (bashAll) return true;
-        if (SHELL_META.test(command)) return false; // 拼接逃逸不参与匹配，交授权卡
-        return bashRules.some((rule) =>
-          rule.prefix !== undefined
-            ? command === rule.prefix || command.startsWith(`${rule.prefix} `) || command.startsWith(`${rule.prefix}\t`)
-            : command === rule.exact,
-        );
+        if (SHELL_META.test(command)) return false;
+        return bashRules.some((rule) => rule.prefix !== undefined
+          ? command === rule.prefix || command.startsWith(`${rule.prefix} `) || command.startsWith(`${rule.prefix}\t`)
+          : command === rule.exact);
       },
-      readAllowed: (path) => matchGlobs(merged.read, path, cwd),
-      writeAllowed: (path) => matchGlobs(merged.write, path, cwd),
-      toolsAllowed: (name) => toolsAll || merged.tools.includes(name),
-      deniedPath: (pathRef) => denyGlobs.find((pattern) => matchGlobs([pattern], pathRef, cwd)),
+      readAllowed: (path) => matchGlobs(merged.read, path, this.cwd),
+      writeAllowed: (path) => matchGlobs(merged.write, path, this.cwd),
+      toolsAllowed: (name) => merged.tools.includes("*") || merged.tools.includes(name),
+      denied: (toolName, args) => this.matchDeny(toolName, args),
       describe: () => ({ ...merged }),
     };
   }
 
-  /** 全部组概览（/perm 展示用）：每组生效范围 + deny 模式全集。 */
   async describe(): Promise<{
-    groups: Record<string, GroupFields & { effective: Required<Omit<GroupFields, "tools">> & { tools: string[] } }>;
+    groups: Record<RoleName, GroupFields & { effective: Required<Omit<GroupFields, "tools">> & { tools: string[] } }>;
     deny: string[];
   }> {
     await this.ensureLoaded();
-    const names = new Set<string>(["admin", "common", ...Object.keys(this.groups)]);
-    const out: Record<string, GroupFields & { effective: Required<Omit<GroupFields, "tools">> & { tools: string[] } }> = {};
-    for (const name of names) {
-      const own = name === "common" ? this.common : this.groups[name] ?? {};
-      const sources = name === "common" ? [this.common] : [this.common, this.fieldsFor(name)];
-      out[name] = { ...own, effective: this.mergeFields(sources) };
-    }
-    return { groups: out, deny: this.denyPatterns };
+    const groups = {} as Record<RoleName, GroupFields & { effective: Required<Omit<GroupFields, "tools">> & { tools: string[] } }>;
+    for (const name of ROLE_NAMES) groups[name] = { ...this.groups[name], effective: this.mergeFields([this.groups[name]]) };
+    return { groups, deny: this.denyRules.map((rule) => rule.raw) };
   }
 
-  /** 组文件加载；mtime 变化时重载。缺失/非法时按空组处理（fail-safe）；deny 无隐藏默认。 */
+  private mergeFields(sources: GroupFields[]): Required<Omit<GroupFields, "tools">> & { tools: string[] } {
+    const keys = ["bash", "read", "write", "tools"] as const;
+    const merged: Record<(typeof keys)[number], string[]> = { bash: [], read: [], write: [], tools: [] };
+    for (const key of keys) {
+      const items = new Set<string>();
+      for (const fields of sources) for (const item of fields[key] ?? []) items.add(item);
+      merged[key] = [...items];
+    }
+    return merged;
+  }
+
+  private matchDeny(toolName: string, args: unknown): string | undefined {
+    const command = extractCommand(args);
+    const path = extractPath(args);
+    return this.denyRules.find((rule) => {
+      if (rule.kind === "bash") return toolName === "bash" && command !== undefined && matchGlobs([rule.pattern], command);
+      if (rule.kind === "read") return toolName === "read" && path !== undefined && matchGlobs([rule.pattern], path, this.cwd);
+      if (rule.kind === "write") return (toolName === "write" || toolName === "edit") && path !== undefined && matchGlobs([rule.pattern], path, this.cwd);
+      return matchGlobs([rule.pattern], toolName);
+    })?.raw;
+  }
+
   private async ensureLoaded(): Promise<void> {
     let mtimeMs: number;
     try {
       mtimeMs = (await stat(this.filePath)).mtimeMs;
     } catch {
-      this.groups = {};
-      this.common = {};
-      this.denyExtras = [];
+      this.groups = { admin: {}, group: {} };
+      this.denyRules = [];
       this.loadedMtimeMs = -1;
       return;
     }
@@ -233,43 +164,19 @@ export class PermissionPolicy {
 
     try {
       const raw = JSON.parse(await readFile(this.filePath, "utf8")) as Record<string, unknown>;
-      this.groups = {};
-      this.common = {};
-      this.denyExtras = sanitizeDeny(raw.deny);
-
-      // allow：各身份组的规则数组（保留组名 common/admin + 任意命名用户组）
       const allow = (typeof raw.allow === "object" && raw.allow !== null ? raw.allow : {}) as Record<string, unknown>;
-      for (const [name, fields] of Object.entries(allow)) {
-        if (name.startsWith("_")) continue;  // _ 开头视为注释
-        if (name === "common") {
-          this.common = sanitizeGroup(fields);  // 保留组名：所有人默认叠加
-          continue;
-        }
-        this.groups[name] = sanitizeGroup(fields);
-      }
+      this.groups = { admin: sanitizeGroup(allow.admin), group: sanitizeGroup(allow.group) };
+      this.denyRules = sanitizeDeny(raw.deny);
       this.loadedMtimeMs = mtimeMs;
-      // 一行汇总各组的规则数量（明细看 .agent/permissions.json，那才是唯一事实源）
-      const groupSummary = Object.entries(this.groups)
-        .map(([name, fields]) => `${name}(${countRules(fields)})`)
-        .join(" ");
-      logger.info(
-        `[Policy] 已加载权限策略: common(${countRules(this.common)}) ${groupSummary} deny(${this.denyPatterns.length})`,
-      );
+      logger.info(`[Policy] 已加载权限策略: admin(${countRules(this.groups.admin)}) group(${countRules(this.groups.group)}) deny(${this.denyRules.length})`);
     } catch (error) {
-      if (!this.warned) {
-        this.warned = true;
-        logger.warn(`[Policy] 策略文件解析失败，按保守默认处理: ${error instanceof Error ? error.message : String(error)}`);
-      }
-      this.groups = {};
-      this.common = {};
-      this.denyExtras = [];
+      if (!this.warned) logger.warn(`[Policy] 策略文件解析失败，按空白名单处理: ${error instanceof Error ? error.message : String(error)}`);
+      this.warned = true;
+      this.groups = { admin: {}, group: {} };
+      this.denyRules = [];
       this.loadedMtimeMs = -1;
     }
   }
-
-  /** 用户缓存（openId → 中文名/英文名/部门路径），mtime 缓存，供成员名与部门名匹配。 */
-  private profileCache = new Map<string, { name?: string; en_name?: string; department_name?: string[] }>();
-  private profileMtimeMs = -1;
 
   private async loadProfile(openId: string): Promise<{ name?: string; en_name?: string; department_name?: string[] } | undefined> {
     if (!this.usersFile) return undefined;
@@ -287,34 +194,50 @@ export class PermissionPolicy {
   }
 }
 
-function ungroupedDefaults(): Required<Omit<GroupFields, "tools">> & { tools: string[] } {
-  return { bash: [], read: [".agent/skills/**"], write: [], tools: [] };
+function countRules(fields: GroupFields): number {
+  return (fields.bash?.length ?? 0) + (fields.read?.length ?? 0) + (fields.write?.length ?? 0) + (fields.tools?.length ?? 0);
 }
 
-/** 规则条目正则：Bash(...)、Read(...)、Write(...)、Tools(...) */
-const PREFIX_ENTRY_RE = /^(?<type>[A-Za-z]+)\((?<pattern>.*)\)$/;
+const ENTRY_RE = /^(?<type>[A-Za-z]+)\((?<pattern>.*)\)$/;
 
-/** 解析扁平规则数组：按前导词把条目分流到 bash/read/write/tools 字段，非法条目跳过。 */
-function parseRuleEntries(entries: unknown[], out: GroupFields): void {
-  for (const entry of entries) {
-    if (typeof entry !== "string") continue;
-    const match = entry.match(PREFIX_ENTRY_RE);
-    if (!match) continue;
-    const type = match.groups!.type.toLowerCase();
-    const pattern = match.groups!.pattern;
-    if (!["bash", "read", "write", "tools"].includes(type)) continue;
-    (out[type as keyof GroupFields] ??= []).push(pattern);
-  }
-}
-
-/** deny 清单解析：字符串数组，其余类型忽略。 */
-function sanitizeDeny(fields: unknown): string[] {
-  return Array.isArray(fields) ? fields.filter((item): item is string => typeof item === "string") : [];
-}
-
-/** 组规则解析：条目必须是 "前导词(模式)" 字符串数组，其余形态按空组处理。 */
-function sanitizeGroup(fields: unknown): GroupFields {
+function sanitizeGroup(value: unknown): GroupFields {
   const out: GroupFields = {};
-  if (Array.isArray(fields)) parseRuleEntries(fields, out);
+  if (!Array.isArray(value)) return out;
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const match = item.match(ENTRY_RE);
+    const kind = match?.groups?.type.toLowerCase() as DenyKind | undefined;
+    const pattern = match?.groups?.pattern;
+    if (!kind || !pattern || !["bash", "read", "write", "tools"].includes(kind)) continue;
+    (out[kind] ??= []).push(pattern);
+  }
   return out;
+}
+
+/** deny 和 allow 使用同一套 `Bash(...)` / `Read(...)` / `Write(...)` / `Tools(...)` 通配语法。 */
+function sanitizeDeny(value: unknown): DenyRule[] {
+  if (!Array.isArray(value)) return [];
+  const rules: DenyRule[] = [];
+  for (const item of value) {
+    if (typeof item !== "string") continue;
+    const match = item.match(ENTRY_RE);
+    const kind = match?.groups?.type.toLowerCase() as DenyKind | undefined;
+    const pattern = match?.groups?.pattern;
+    if (!kind || !pattern || !["bash", "read", "write", "tools"].includes(kind)) continue;
+    rules.push({ kind, pattern, raw: item });
+  }
+  return rules;
+}
+
+function extractPath(args: unknown): string | undefined {
+  if (typeof args !== "object" || args === null) return undefined;
+  const record = args as Record<string, unknown>;
+  for (const key of ["path", "file_path"]) if (typeof record[key] === "string" && record[key]) return record[key] as string;
+  return undefined;
+}
+
+function extractCommand(args: unknown): string | undefined {
+  if (typeof args !== "object" || args === null) return undefined;
+  const command = (args as Record<string, unknown>).command;
+  return typeof command === "string" ? command : undefined;
 }

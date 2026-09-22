@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PermissionPolicy } from "../src/permission/policy.ts";
 
-/** 写一份策略文件（新结构：顶层只有 deny + allow 两个输入） */
 async function writePolicy(content: unknown): Promise<{ dir: string; file: string }> {
   const dir = await mkdtemp(join(tmpdir(), "policy-"));
   const file = join(dir, "permissions.json");
@@ -12,234 +11,86 @@ async function writePolicy(content: unknown): Promise<{ dir: string; file: strin
   return { dir, file };
 }
 
-describe("PermissionPolicy deny + allow 两输入", () => {
-  it("组判定：FEISHU_PI_ADMIN → admin；其余按 groupMembership（英文名经用户缓存解析）匹配", async () => {
-    const { dir, file } = await writePolicy({
-      allow: {
-        admin: ["Bash(*)", "Read(**)", "Write(**)", "Tools(*)"],
-        group_1: ["Bash(npm run test:*)", "Read(docs/**)", "Read(.agent/skills/**)", "Tools(query_skill_usage)"],
-        group_2: ["Read(.agent/skills/**)"],
-      },
-    });
+describe("PermissionPolicy：管理员 + 唯一团队", () => {
+  it("管理员只由 FEISHU_PI_ADMIN 解析后的 open_id 识别；团队只存在 group", async () => {
+    const { dir, file } = await writePolicy({ allow: { admin: [], group: [] } });
     const usersFile = join(dir, "users.json");
-    await writeFile(usersFile, JSON.stringify({ ou_x: { openId: "ou_x", en_name: "John" } }), "utf8");
+    await writeFile(usersFile, JSON.stringify({ ou_team: { en_name: "Lee" } }), "utf8");
+    const policy = new PermissionPolicy(file, { adminId: "ou_admin", groupMembership: { group: ["Lee"] }, usersFile });
 
-    const policy = new PermissionPolicy(file, {
-      adminId: "ou_admin",
-      groupMembership: { admin: ["John"], group_1: ["李雷"], group_2: ["韩梅梅"] },
-      usersFile,
-    });
     expect(await policy.groupsFor("ou_admin")).toEqual(["admin"]);
-    // ou_x 不在名单，但其英文名 John（经用户缓存解析）命中 admin
-    expect(await policy.groupsFor("ou_x", "张三")).toContain("admin");
-    expect(await policy.groupsFor("ou_lilei", "李雷")).toContain("group_1");
-    expect(await policy.groupsFor("ou_mm", "韩梅梅")).toContain("group_2");
+    expect(await policy.groupsFor("ou_team")).toEqual(["group"]);
+    expect(await policy.groupsFor("ou_guest", "访客")).toEqual([]);
   });
 
-  it("生效范围 = 所属各组（并集）；组间互不影响", async () => {
-    const { file } = await writePolicy({
-      allow: {
-        group_1: ["Bash(npm run test:*)", "Read(docs/**)", "Read(.agent/skills/**)", "Tools(*)"],
-        group_2: [],
-      },
-    });
-    const policy = new PermissionPolicy(file, { groupMembership: { group_1: ["李雷"], group_2: ["小明"] } });
-
-    const g1 = await policy.forGroups(["group_1"]);
-    expect(g1.bashAllowed("npm run test -- --watch")).toBe(true);
-    expect(g1.bashAllowed("npm run build")).toBe(false);
-    expect(g1.readAllowed("docs/guide.md")).toBe(true);
-    expect(g1.readAllowed(".agent/skills/hello.md")).toBe(true);
-    expect(g1.readAllowed("src/main.ts")).toBe(false);
-    expect(g1.toolsAllowed("query_skill_usage")).toBe(true);
-    expect(g1.toolsAllowed("schedule_manager")).toBe(true);  // Tools(*)
-  });
-
-  it("一人多组：能力取并集", async () => {
-    const { file } = await writePolicy({
-      allow: { group_2: ["Bash(npm run check:*)"] },
-    });
-    const policy = new PermissionPolicy(file, { groupMembership: { group_1: ["李雷"], group_2: ["李雷"] } });
-    const groups = await policy.groupsFor("李雷", "李雷");
-    expect(groups).toEqual(expect.arrayContaining(["group_1", "group_2"]));
-
-    const both = await policy.forGroups(groups);
-    expect(both.bashAllowed("npm run check --silent")).toBe(true);
-  });
-
-  it("无组 → 保守缺省：仅技能目录可读，无命令，无工具", async () => {
-    const { file } = await writePolicy({
-      allow: { group_1: ["Bash(npm run test:*)"] },
-    });
-    const policy = new PermissionPolicy(file, { groupMembership: { group_1: ["李雷"] } });
-    const p = await policy.forGroups([]);   // 不在任何组
-    expect(p.bashAllowed("npm run test")).toBe(false);
-    expect(p.readAllowed(".agent/skills/x.md")).toBe(true);
-    expect(p.readAllowed("src/main.ts")).toBe(false);
-    expect(p.toolsAllowed("anything")).toBe(false);
-    expect(p.isAdmin).toBe(false);
-  });
-
-  it("admin 未显式配置权限时同样使用保守缺省", async () => {
-    const { file } = await writePolicy({ allow: { admin: [] } });
-    const policy = new PermissionPolicy(file, { groupMembership: { admin: ["张三"] } });
-    const admin = await policy.forGroups(["admin"]);
-    expect(admin.isAdmin).toBe(true);
-    expect(admin.bashAllowed("任意命令")).toBe(false);
-    expect(admin.readAllowed("/etc/hosts")).toBe(false);
-    expect(admin.toolsAllowed("任意工具")).toBe(false);
-  });
-
-  it("策略文件缺失：admin 与 user 均使用保守缺省", async () => {
-    const dir = await mkdtemp(join(tmpdir(), "policy-"));
-    const policy = new PermissionPolicy(join(dir, "missing.json"), { adminId: "ou_a" });
-    expect(await policy.groupsFor("ou_a")).toEqual(["admin"]);
-    const admin = await policy.forGroups(["admin"]);
-    expect(admin.bashAllowed("anything")).toBe(false);
-    expect(admin.writeAllowed("src/main.ts")).toBe(false);
-    const p = await policy.forGroups([]);
-    expect(p.readAllowed(".agent/skills/x.md")).toBe(true);
-    expect(p.readAllowed("src/main.ts")).toBe(false);
-  });
-
-  it("策略文件修改后自动重载（mtime）", async () => {
-    const { file } = await writePolicy({
-      allow: { group_1: ["Bash(npm run test:*)"] },
-    });
-    const policy = new PermissionPolicy(file, { groupMembership: { group_1: ["李雷"] } });
-    expect((await policy.forGroups(["group_1"])).bashAllowed("npm run build")).toBe(false);
-
-    await new Promise((r) => setTimeout(r, 25));
-    await writeFile(file, JSON.stringify({ allow: { group_1: ["Bash(npm run test:*)", "Bash(npm run build:*)"] } }), "utf8");
-    expect((await policy.forGroups(["group_1"])).bashAllowed("npm run build --prod")).toBe(true);
-  });
-
-  it("describe 返回各组生效范围 + deny 全集", async () => {
-    const { file } = await writePolicy({
-      deny: ["**/vault/**"],
-      allow: {
-        admin: ["Read(**)", "Tools(*)"],
-        group_1: ["Read(docs/**)", "Read(.agent/skills/**)", "Tools(query_skill_usage)"],
-      },
-    });
-    const policy = new PermissionPolicy(file, { groupMembership: { admin: ["张三"], group_1: ["李雷"] } });
-    const d = await policy.describe();
-    expect(d.groups.admin.effective.read).toContain("**");
-    expect(d.groups.admin.effective.tools).toEqual(expect.arrayContaining(["*"]));
-    // group_1 生效 read = 自身配置
-    expect(d.groups.group_1.effective.read).toEqual(expect.arrayContaining(["docs/**", ".agent/skills/**"]));
-    expect(d.groups.group_1.effective.tools).toEqual(["query_skill_usage"]);
-    // deny 全集 = 完全来自 permissions.json
-    expect(d.deny).toEqual(["**/vault/**"]);
-  });
-
-  it("common 默认层：所有人自动叠加，组在其上追加；admin 并集不受影响", async () => {
-    const { file } = await writePolicy({
-      allow: {
-        common: ["Read(.agent/skills/**)", "Tools(query_skill_usage)"],
-        admin: ["Bash(*)", "Read(**)", "Write(**)", "Tools(*)"],
-        group_1: ["Read(docs/**)"],
-      },
-    });
-    const policy = new PermissionPolicy(file, { groupMembership: { group_1: ["李雷"] } });
-
-    // 无组用户：只有 common（读技能目录 + 指定工具）
-    const none = await policy.forGroups([]);
-    expect(none.readAllowed(".agent/skills/x.md")).toBe(true);
-    expect(none.toolsAllowed("query_skill_usage")).toBe(true);
-    expect(none.readAllowed("docs/guide.md")).toBe(false);
-    expect(none.bashAllowed("npm run test")).toBe(false);
-
-    // group_1：common ∪ 自身（docs 可读来自自身规则）
-    const g1 = await policy.forGroups(["group_1"]);
-    expect(g1.readAllowed(".agent/skills/x.md")).toBe(true);
-    expect(g1.readAllowed("docs/guide.md")).toBe(true);
-    expect(g1.toolsAllowed("query_skill_usage")).toBe(true);
-
-    // admin：common ∪ admin 缺省全量，能力不变
-    const admin = await policy.forGroups(["admin"]);
-    expect(admin.readAllowed("src/main.ts")).toBe(true);
-    expect(admin.toolsAllowed("任意工具")).toBe(true);
-
-    // describe 中包含 common 条目
-    const d = await policy.describe();
-    expect(d.groups.common.effective.read).toContain(".agent/skills/**");
-  });
-
-  it("deny 第 0 层：显式模式对所有人（含 admin）生效，先于 allow 判定", async () => {
-    const { file } = await writePolicy({
-      deny: ["**/.env", ".env.local", ".env.production", "*.key", "**/vault/**"],
-      allow: { admin: ["Bash(*)", "Read(**)", "Write(**)", "Tools(*)"] },
-    });
-    const policy = new PermissionPolicy(file, { groupMembership: { admin: ["张三"] } });
-    const admin = await policy.forGroups(["admin"]);
-
-    // allow 规则全放行，但 deny 清单命中即拦
-    expect(admin.readAllowed(".env")).toBe(true);
-    expect(admin.deniedPath(".env")).toBe("**/.env");
-    expect(admin.deniedPath("config/.env.local")).toBe(".env.local");
-    expect(admin.deniedPath("certs/server.key")).toBe("*.key");
-    // 自定义追加模式生效
-    expect(admin.deniedPath("data/vault/k.txt")).toBe("**/vault/**");
-    // 模板文件不在 deny 清单：天然可读（无需例外机制）
-    expect(admin.deniedPath(".env.example")).toBeUndefined();
-    // 正常路径不误伤
-    expect(admin.deniedPath("docs/guide.md")).toBeUndefined();
-  });
-});
-
-describe("组成员按组织架构部门名匹配", () => {
-  it("用户缓存部门路径包含配置的部门名 → 视为组成员", async () => {
-    const { dir, file } = await writePolicy({
-      allow: { group_1: ["Bash(npm run test:*)", "Read(.agent/skills/**)"] },
-    });
+  it("团队成员可以按部门名命中，open_id 不会被当部门子串匹配", async () => {
+    const { dir, file } = await writePolicy({ allow: { group: [] } });
     const usersFile = join(dir, "users.json");
     await writeFile(usersFile, JSON.stringify({
-      ou_in: { name: "张内部", department_name: ["自动驾驶研发部-系统工程交付部-基础功能部"] },
-      ou_out: { name: "李外部", department_name: ["销售部"] },
-      ou_none: { name: "王无部门" },
+      ou_in: { department_name: ["研发部-平台团队"] },
+      ou_out: { department_name: ["ou_member-子部门"] },
     }), "utf8");
+    const policy = new PermissionPolicy(file, { groupMembership: { group: ["平台团队", "ou_member"] }, usersFile });
+    expect(await policy.groupsFor("ou_in")).toEqual(["group"]);
+    expect(await policy.groupsFor("ou_out")).toEqual([]);
+  });
 
-    const policy = new PermissionPolicy(file, {
-      groupMembership: { group_1: ["系统工程交付部"] },
-      usersFile,
+  it("只有 admin / group 配置会生效；common 和第二团队被忽略", async () => {
+    const { file } = await writePolicy({
+      allow: {
+        common: ["Read(common/**)"],
+        group_2: ["Read(second/**)"],
+        group: ["Read(docs/**)", "Tools(memory)"],
+        admin: ["Bash(git status:*)", "Write(.agent/**)"],
+      },
     });
-    expect(await policy.groupsFor("ou_in")).toContain("group_1");
-    expect(await policy.groupsFor("ou_out")).not.toContain("group_1");
-    expect(await policy.groupsFor("ou_none")).not.toContain("group_1");
-  });
-
-  it("open_id 形式的成员项不做部门名包含匹配（避免误命中）", async () => {
-    const { dir, file } = await writePolicy({ allow: { group_1: [] } });
-    const usersFile = join(dir, "users.json");
-    await writeFile(usersFile, JSON.stringify({
-      ou_x: { department_name: ["ou_member_as_dept-子系统"] },
-    }), "utf8");
-    const policy = new PermissionPolicy(file, {
-      groupMembership: { group_1: ["ou_member_as_dept"] },
-      usersFile,
-    });
-    // ou_x 的部门路径包含字符串 ou_member_as_dept，但成员项以 ou_ 开头 → 只按 openId 精确匹配
-    expect(await policy.groupsFor("ou_x")).not.toContain("group_1");
-  });
-});
-
-describe("权限边界回归", () => {
-  it("命令前缀必须在参数边界结束，重定向和变量展开不能免审", async () => {
-    const { file } = await writePolicy({ allow: { common: ["Bash(cat:*)", "Bash(git log:*)"] } });
-    const policy = await new PermissionPolicy(file).forGroups([]);
-    expect(policy.bashAllowed("catalog secret")).toBe(false);
-    expect(policy.bashAllowed("git logger")).toBe(false);
-    expect(policy.bashAllowed("cat readme > target")).toBe(false);
-    expect(policy.bashAllowed("cat $SECRET_FILE")).toBe(false);
-    expect(policy.bashAllowed("cat README.md")).toBe(true);
-  });
-  it("损坏策略不会给管理员补全权限", async () => {
-    const { file } = await writePolicy({ allow: { admin: ["Bash(*)"] } });
     const policy = new PermissionPolicy(file);
-    expect((await policy.forGroups(["admin"])).bashAllowed("anything")).toBe(true);
-    await new Promise((r) => setTimeout(r, 25));
-    await writeFile(file, "broken");
-    expect((await policy.forGroups(["admin"])).bashAllowed("anything")).toBe(false);
+    const guest = await policy.forGroups([]);
+    const team = await policy.forGroups(["group", "group_2"]);
+    const admin = await policy.forGroups(["admin"]);
+    expect(guest.groups).toEqual([]);
+    expect(guest.isTeam).toBe(false);
+    expect(guest.readAllowed("common/a.md")).toBe(false);
+    expect(team.readAllowed("docs/a.md")).toBe(true);
+    expect(team.readAllowed("second/a.md")).toBe(false);
+    expect(team.toolsAllowed("memory")).toBe(true);
+    expect(admin.bashAllowed("git status --short")).toBe(true);
+    expect(admin.writeAllowed(".agent/SYSTEM.md")).toBe(true);
+  });
+
+  it("deny 使用和 allow 相同的带类型通配规则，且对管理员也硬拦截", async () => {
+    const { file } = await writePolicy({
+      deny: ["Read(**/.env*)", "Write(**/secrets/**)", "Bash(**.env**)", "Tools(admin_*)"],
+      allow: { admin: ["Read(**)", "Write(**)", "Bash(*)", "Tools(*)"] },
+    });
+    const admin = await new PermissionPolicy(file).forGroups(["admin"]);
+    expect(admin.readAllowed(".env.local")).toBe(true);
+    expect(admin.denied("read", { path: ".env.local" })).toBe("Read(**/.env*)");
+    expect(admin.denied("write", { path: "data/secrets/token.txt" })).toBe("Write(**/secrets/**)");
+    expect(admin.denied("bash", { command: "cat config/.env.local && git status" })).toBe("Bash(**.env**)");
+    expect(admin.denied("admin_reset", {})).toBe("Tools(admin_*)");
+    expect(admin.denied("read", { path: "docs/guide.md" })).toBeUndefined();
+  });
+
+  it("白名单命令仍保持边界匹配；组合和元字符不会确定性直通", async () => {
+    const { file } = await writePolicy({ allow: { group: ["Bash(cat:*)", "Read(docs/**)"] } });
+    const team = await new PermissionPolicy(file).forGroups(["group"]);
+    expect(team.bashAllowed("cat README.md")).toBe(true);
+    expect(team.bashAllowed("catalog secret")).toBe(false);
+    expect(team.bashAllowed("cat $SECRET")).toBe(false);
+    expect(team.readAllowed("docs/guide.md")).toBe(true);
+    expect(team.readAllowed("src/main.ts")).toBe(false);
+  });
+
+  it("策略改动会按 mtime 自动重载，损坏策略回退空白名单", async () => {
+    const { file } = await writePolicy({ allow: { group: ["Bash(npm run test:*)"] } });
+    const policy = new PermissionPolicy(file);
+    expect((await policy.forGroups(["group"])).bashAllowed("npm run build")).toBe(false);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await writeFile(file, JSON.stringify({ allow: { group: ["Bash(npm run build:*)"] } }), "utf8");
+    expect((await policy.forGroups(["group"])).bashAllowed("npm run build --silent")).toBe(true);
+    await new Promise((resolve) => setTimeout(resolve, 25));
+    await writeFile(file, "broken", "utf8");
+    expect((await policy.forGroups(["group"])).bashAllowed("npm run build")).toBe(false);
   });
 });

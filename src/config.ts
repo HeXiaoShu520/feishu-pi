@@ -26,7 +26,7 @@ export interface FeishuPiAppConfig {
   /** 未配置时回退主模型 Key */
   guardApiKey?: string;
   guardTimeoutMs: number;
-  /** 各组归属关系：组名 → 成员标识列表（从 FEISHU_PI_GROUP_<NAME> 环境变量解析） */
+  /** 唯一团队成员名单（FEISHU_PI_GROUP）：管理员身份单独由 FEISHU_PI_ADMIN 判定 */
   groupMembership: Record<string, string[]>;
   /** 授权卡片等待管理员点击的超时时间（超时视为拒绝） */
   approvalTimeoutMs: number;
@@ -88,44 +88,10 @@ function parseThinkingLevel(value: string | undefined): ThinkingLevelConfig {
   return "off";
 }
 
-/** 主团队组名：FEISHU_PI_GROUP（无后缀）落到这里（与 permissions.json 的 group 对应） */
-const PRIMARY_GROUP = "group";
-
-/**
- * 解析组成员配置：
- * - FEISHU_PI_GROUP=x,y        → group（主团队组）
- * - FEISHU_PI_GROUP_<数字>      → group_<数字>（与 permissions.json 的组名对应）
- * - FEISHU_PI_GROUP_<组名>      → 组名小写（自定义组）
- * 同组多来源成员合并去重，保持首次出现顺序。
- */
+/** 只保留一个团队：FEISHU_PI_GROUP=成员1,成员2,... → group。 */
 export function parseGroupMembership(env: NodeJS.ProcessEnv): Record<string, string[]> {
-  const groups = new Map<string, string[]>();
-  const add = (name: string, members: string[]): void => {
-    const list = groups.get(name) ?? [];
-    for (const member of members) if (!list.includes(member)) list.push(member);
-    groups.set(name, list);
-  };
-  const toMembers = (value: string | undefined): string[] =>
-    (value ?? "").split(",").map((s) => s.trim()).filter(Boolean);
-
-  for (const [key, value] of Object.entries(env)) {
-    if (!key.startsWith("FEISHU_PI_GROUP")) continue;
-    const raw = key.slice("FEISHU_PI_GROUP".length);
-    if (raw === "") {
-      // 主团队组：FEISHU_PI_GROUP → group
-      add(PRIMARY_GROUP, toMembers(value));
-      continue;
-    }
-    if (!raw.startsWith("_")) continue; // 非 FEISHU_PI_GROUP 家族的变量（防御）
-    const suffix = raw.slice(1);
-    if (/^\d+$/.test(suffix)) {
-      add(`group_${suffix}`, toMembers(value));
-      continue;
-    }
-    const name = suffix.toLowerCase();
-    add(name, toMembers(value));
-  }
-  return Object.fromEntries(groups);
+  const members = (env.FEISHU_PI_GROUP ?? "").split(",").map((item) => item.trim()).filter(Boolean);
+  return members.length > 0 ? { group: [...new Set(members)] } : {};
 }
 
 /** 从环境变量读取 feishu-pi 启动配置。 */
@@ -164,9 +130,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     guardModels: (env.FEISHU_GUARD_MODELS ?? "").split(",").map((m) => m.trim()).filter(Boolean),
     guardApiKey: env.FEISHU_GUARD_API_KEY ?? env.FEISHU_PI_MODEL_API_KEY,
     guardTimeoutMs: 6_000,
-    // 各组归属关系：解析 FEISHU_PI_GROUP[<_N>]=成员1,成员2,... 格式；
-    // FEISHU_PI_GROUP（无后缀）映射到主团队组 group，
-    // FEISHU_PI_GROUP_2..N 对应 group_2..N；成员除 open_id/中英文名外还支持组织架构部门名
+    // 唯一团队成员名单：FEISHU_PI_GROUP；成员除 open_id/中英文名外还支持组织架构部门名
     // （用户缓存的部门路径包含该部门名即视为组成员，见 PermissionPolicy.groupsFor）。
     groupMembership: parseGroupMembership(env),
     approvalTimeoutMs: 5 * 60_000,

@@ -17,7 +17,7 @@
 
 | 文件/目录 | 作用 | 加载方 |
 |---|---|---|
-| `permissions.json` | 权限策略：`deny` + 各身份组的 `allow` 规则（fail-safe，未放行即拦截） | `src/permission/policy.ts` |
+| `permissions.json` | 权限策略：通配型 `deny` + `admin`/唯一 `group` 白名单；未命中进入 LLM 门禁并按结论放行或发授权卡 | `src/permission/policy.ts` |
 | `tools/` | 自定义工具（`.ts`/`.js` 导出含 `name`+`execute` 的对象；`.py` 用首行 `#! {...}` 元数据。注册为 Pi 的 `customTools`，详见 `skills/skill-to-tool.md`） | `src/runtime/feishu-pi-runtime.ts` |
 
 > 注意：`tools/` **不是** Pi 的原生约定。Pi 的原生"自定义工具"机制是 `extensions/`（扩展代码），

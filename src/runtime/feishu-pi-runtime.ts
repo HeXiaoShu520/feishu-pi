@@ -453,43 +453,12 @@ export class FeishuPiRuntime {
       sessionManager.appendSessionInfo(name);
     }
 
-    // 注入 beforeToolCall 钩子（统一策略过滤层）：
-    //   read → 所属组可读范围判定（范围外拦截不弹卡，范围内放行）
-    //   bash / write / edit / 自定义工具 → ToolGuard 按所属组策略判定（名单外交授权卡）
-    //   自定义工具另由 tools 字段控制可用性
+    // 注入 beforeToolCall 钩子：所有外部能力都走同一门禁。
+    // deny 硬拒绝；白名单直通；其余请求由 LLM 决定直通、管理员卡或用户卡。
     const chatId = context?.chatId;
     session.agent.beforeToolCall = async (ctx, signal) => {
       // 每次调用重新取已编译策略（内部有 mtime 缓存）：permissions.json 改动即时生效
       const groupPolicy = await groupPolicyFor();
-      if (ctx.toolCall.name === "read") {
-        const target = extractReadPath(ctx.args);
-        if (target !== undefined) {
-          // 第 0 层 deny 规则：先于可读范围判定，对所有人（含管理员）生效
-          const denyHit = groupPolicy.deniedPath(target);
-          if (denyHit) {
-            logger.warn(`[Runtime] 读取已被 deny 规则拦截: ${target}（命中 ${denyHit}）`);
-            return { block: true, reason: `⛔ 该路径已被权限策略禁止访问（命中 deny 规则 ${denyHit}）` };
-          }
-          const allowed = groupPolicy.readAllowed(target);
-          if (!allowed) {
-            return { block: true, reason: "⛔ 该路径不在你的可读范围内" };
-          }
-        }
-        return undefined;
-      }
-
-      // 自定义工具：先检查 tools 可见范围
-      // （ask_user_question 是内置交互工具，只向提问对象本人发卡，所有人可用）
-      if (
-        ctx.toolCall.name !== "bash" &&
-        ctx.toolCall.name !== "write" &&
-        ctx.toolCall.name !== "edit" &&
-        ctx.toolCall.name !== "ask_user_question"
-      ) {
-        if (!groupPolicy.toolsAllowed(ctx.toolCall.name)) {
-          return { block: true, reason: `⛔ 工具 \"${ctx.toolCall.name}\" 不在你的可用范围内` };
-        }
-      }
       if (this.config.toolGuard) {
         try {
           const guardResult = await this.config.toolGuard(
@@ -516,16 +485,6 @@ export class FeishuPiRuntime {
 
     return new SessionWrapper(session);
   }
-}
-
-/** 从 read 调用参数中提取路径。 */
-function extractReadPath(args: unknown): string | undefined {
-  if (typeof args !== "object" || args === null) return undefined;
-  const record = args as Record<string, unknown>;
-  for (const key of ["path", "file_path"]) {
-    if (typeof record[key] === "string" && record[key]) return record[key] as string;
-  }
-  return undefined;
 }
 
 /**

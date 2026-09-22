@@ -64,6 +64,7 @@ data/
 # 本地工具产物
 .claude/
 .pi/
+.agent/SYSTEM.md.bak
 
 # 会话工作区（运行时生成）
 work_space/
