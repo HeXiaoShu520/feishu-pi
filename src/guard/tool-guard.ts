@@ -48,7 +48,7 @@ export interface ToolGuardCheckParams {
 }
 
 /**
- * 统一门禁：deny 硬拒绝 → 白名单直接通过 → LLM 决定直接通过、管理员卡或用户卡。
+ * 统一门禁：deny 阻止白名单直通 → 白名单直接通过 → LLM 决定直接通过、管理员卡或用户卡。
  * read 和自定义工具也走同一条路径，避免各层各自做“名单外拒绝”。
  */
 export class ToolGuard {
@@ -67,22 +67,19 @@ export class ToolGuard {
   async check(policy: GroupPolicy, params: ToolGuardCheckParams, signal?: AbortSignal): Promise<{ block: true; reason: string } | undefined> {
     if (signal?.aborted) return { block: true, reason: "会话已中断" };
 
-    const denyHit = policy.denied(params.toolName, params.args);
-    if (denyHit) {
-      logger.warn(`[ToolGuard] 调用命中 deny 规则，已拦截: ${params.toolName}（${denyHit}）`);
-      return { block: true, reason: `⛔ 本次调用命中全局 deny 规则 ${denyHit}，不允许绕过或申请授权` };
-    }
-
-    if (this.isWhitelisted(policy, params)) return undefined;
+    const denyRule = policy.denied(params.toolName, params.args);
+    // deny 命中不能被白名单直接放行，但不是永久拒绝：仍交 LLM 给出上下文与理由，
+    // 最终固定走管理员单次授权，形成可审计的显式例外。
+    if (!denyRule && this.isWhitelisted(policy, params)) return undefined;
 
     const fields = policy.describe();
     const overview = this.getOverview ? await this.getOverview().catch(() => undefined) : undefined;
     const verdict = this.judge
-      ? await this.judge.judge({ groups: policy.groups, isAdmin: policy.isAdmin, fields, toolName: params.toolName, args: params.args, risky: Boolean(params.risky), overview })
+      ? await this.judge.judge({ groups: policy.groups, isAdmin: policy.isAdmin, fields, toolName: params.toolName, args: params.args, denyRule, risky: Boolean(params.risky), overview })
       : { decision: "admin" as const, reason: "智能门禁未装配，需管理员确认" };
-    if (verdict.decision === "allow") return undefined;
+    if (!denyRule && verdict.decision === "allow") return undefined;
     // 用户卡必须绑定真实的请求者；上下文缺失时宁可提升为管理员卡，不能产生无人可批准的卡片。
-    const mode = verdict.decision === "user" && params.requesterOpenId ? "self" : "admin";
+    const mode = denyRule || verdict.decision !== "user" || !params.requesterOpenId ? "admin" : "self";
     return this.requireApproval(params, verdict.reason, mode, signal);
   }
 

@@ -81,7 +81,7 @@ describe("ToolGuard 统一门禁", () => {
     expect(broker.calls[0]).toMatchObject({ mode: "admin" });
   });
 
-  it("deny 始终先于白名单、LLM 和授权卡硬拦截", async () => {
+  it("deny 阻止白名单直通，携带规则进入 LLM，最终只发管理员卡", async () => {
     const broker = new FakeBroker();
     const judge = fakeJudge("allow");
     const guard = new ToolGuard(broker, judge);
@@ -94,8 +94,7 @@ describe("ToolGuard 统一门禁", () => {
     });
     const result = await guard.check(policy, { toolName: "read", args: { path: ".env" }, chatId: "oc" });
     expect(result?.block).toBe(true);
-    expect(result?.reason).toContain("deny");
-    expect(judge.calls).toHaveLength(0);
-    expect(broker.calls).toHaveLength(0);
+    expect(judge.calls).toEqual([expect.objectContaining({ denyRule: "Read(**/.env*)" })]);
+    expect(broker.calls).toEqual([expect.objectContaining({ mode: "admin" })]);
   });
 });

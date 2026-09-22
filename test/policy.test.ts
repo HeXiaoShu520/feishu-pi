@@ -58,7 +58,7 @@ describe("PermissionPolicy：管理员 + 唯一团队", () => {
     expect(admin.writeAllowed(".agent/SYSTEM.md")).toBe(true);
   });
 
-  it("deny 使用和 allow 相同的带类型通配规则，且对管理员也硬拦截", async () => {
+  it("deny 使用和 allow 相同的带类型通配规则，且管理员同样会命中", async () => {
     const { file } = await writePolicy({
       deny: ["Read(**/.env*)", "Write(**/secrets/**)", "Bash(**.env**)", "Tools(admin_*)"],
       allow: { admin: ["Read(**)", "Write(**)", "Bash(*)", "Tools(*)"] },

@@ -1,5 +1,5 @@
 {
-  "_说明": "deny 是全局硬拒绝规则，和 allow 使用同一种通配语法：Bash(命令glob)、Read(路径glob)、Write(路径glob)、Tools(工具名glob)。deny 先于一切 allow 和审批，对所有人（包括管理员）生效。allow 只支持 admin（FEISHU_PI_ADMIN 识别）和 group（唯一团队，FEISHU_PI_GROUP 配置）；白名单命中直接通过，未命中统一交给 LLM 门禁，由它结合完整配置、调用者角色及是否管理员决定直接通过、管理员卡或用户本人卡。成员可用 open_id、中文名、英文名或部门名；_ 开头的键视为注释。每次工具调用重新检查文件变化；/status 可查看身份组。",
+  "_说明": "deny 与 allow 使用同一种通配语法：Bash(命令glob)、Read(路径glob)、Write(路径glob)、Tools(工具名glob)。命中 deny 不会永久拒绝，但会阻止白名单直通，连同规则交给 LLM 门禁；最终只能由管理员点卡单次授权。allow 只支持 admin（FEISHU_PI_ADMIN 识别）和 group（唯一团队，FEISHU_PI_GROUP 配置）；普通白名单命中直接通过，未命中统一交给 LLM 门禁，由它结合完整配置、调用者角色及是否管理员决定直接通过、管理员卡或用户本人卡。成员可用 open_id、中文名、英文名或部门名；_ 开头的键视为注释。每次工具调用重新检查文件变化；/status 可查看身份组。",
   "deny": [
     "Read(**/.env)",
     "Write(**/.env)",

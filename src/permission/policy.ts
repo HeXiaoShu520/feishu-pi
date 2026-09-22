@@ -28,7 +28,7 @@ export interface GroupPolicy {
   readAllowed(path: string): boolean;
   writeAllowed(path: string): boolean;
   toolsAllowed(name: string): boolean;
-  /** 顶层 deny：按工具类型和参数通配匹配，命中即对所有角色硬拦截。 */
+  /** deny：按工具类型和参数通配匹配；命中阻止白名单直通，转管理员授权流程。 */
   denied(toolName: string, args: unknown): string | undefined;
   describe(): Required<Omit<GroupFields, "tools">> & { tools: string[] };
 }
