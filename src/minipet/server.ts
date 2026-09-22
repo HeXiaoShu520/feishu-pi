@@ -8,10 +8,9 @@ import { logger } from "../utils/logger.ts";
 import {
   MINIPET_CAPABILITIES,
   MINIPET_PROTOCOL,
-  HISTORY_CLEAR,
-  HISTORY_CLEARED,
   HISTORY_GET,
   HISTORY_RESULT,
+  INPUT_ACCEPTED,
   SESSION_HELLO,
   SESSION_READY,
   SURFACE_SHOW,
@@ -158,10 +157,6 @@ export class MiniPetServer {
       await this.handleHistoryGet(peer, message.payload, message.request_id);
       return;
     }
-    if (message.type === HISTORY_CLEAR) {
-      await this.handleHistoryClear(peer, message.payload, message.request_id);
-      return;
-    }
     if (message.type === USER_CANCEL) {
       await this.handleCancel(peer, message.payload);
       return;
@@ -182,6 +177,13 @@ export class MiniPetServer {
         });
         return;
       }
+      // 先确认已被当前内核接收。MiniPet 在子进程重启期间会保留未确认输入，
+      // 收到此 ACK 后才将其从本地重投队列移除。
+      this.send(peer, envelope(INPUT_ACCEPTED, {
+        turn_id: input.turnId,
+        surface_id: input.surfaceId,
+        session_id: input.sessionId,
+      }, message.request_id));
       await this.handleUserInput(peer, input);
     }
   }
@@ -298,21 +300,6 @@ export class MiniPetServer {
     } catch (error) {
       this.send(peer, envelope("error", {
         code: "history_unavailable",
-        message: error instanceof Error ? error.message : String(error),
-        session_id: sessionId,
-      }, requestId));
-    }
-  }
-
-  private async handleHistoryClear(peer: MiniPetPeer, payload: Record<string, unknown>, requestId?: string): Promise<void> {
-    const sessionId = sessionIdFromPayload(payload);
-    const conversationId = this.conversationId(sessionId);
-    try {
-      await this.options.conversations.reset(conversationId, this.options.userOpenId);
-      this.send(peer, envelope(HISTORY_CLEARED, { session_id: sessionId }, requestId));
-    } catch (error) {
-      this.send(peer, envelope("error", {
-        code: "history_clear_failed",
         message: error instanceof Error ? error.message : String(error),
         session_id: sessionId,
       }, requestId));

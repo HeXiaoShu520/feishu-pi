@@ -2,8 +2,8 @@
 """
 文本聊天窗口。
 
-聊天内容由 res/chat/chat.html 渲染，Python 侧负责收集输入、展示流式结果，
-并通过 MiniPetApp 统一送入 mini-claw Agent 内核。
+聊天内容由 res/chat/chat.html 渲染。该窗口是 Pi 会话历史的只读查看器：
+输入、工具调用和授权操作都在桌宠浮窗/语音入口完成，不在这里产生副作用。
 """
 
 import ctypes
@@ -14,123 +14,15 @@ import uuid
 if sys.platform == 'win32':
     from ctypes.wintypes import MSG, POINT
 
-from PySide6.QtCore import QByteArray, QBuffer, QEvent, QIODevice, QSize, Qt, QUrl, Signal
-from PySide6.QtGui import QColor, QFont, QGuiApplication, QIcon, QKeyEvent, QPainter, QPen, QPixmap
+from PySide6.QtCore import QEvent, QSize, Qt, QUrl
+from PySide6.QtGui import QColor, QFont, QGuiApplication, QIcon, QPainter, QPen, QPixmap
 from PySide6.QtWebChannel import QWebChannel
 from PySide6.QtWebEngineWidgets import QWebEngineView
-from PySide6.QtWidgets import (QAbstractButton, QApplication, QFrame, QHBoxLayout, QLabel, QMenu, QPushButton, QSizePolicy, QVBoxLayout, QWidget)
-from qfluentwidgets import TitleLabel, TransparentToolButton
-from qfluentwidgets import FluentIcon as FIF
+from PySide6.QtWidgets import (QAbstractButton, QApplication, QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout, QWidget)
+from qfluentwidgets import TitleLabel
 
 import config
-from clients.stream_tts import StreamTtsQueue
-from clients.tts_client import stop_tts
 from windows.win32_frameless import WM_NCHITTEST, hit_test
-
-try:
-    from PySide6.QtTextEdit import QTextEdit
-except ImportError:
-    from PySide6.QtWidgets import QTextEdit
-
-
-class ChatInput(QTextEdit):
-    """支持回车发送、Shift+Enter 换行、粘贴/拖入图片的输入框。
-
-    继承 QTextEdit 而非 QLineEdit，是因为需要支持多行输入和
-    富文本粘贴拦截（将图片转成 data URL 而不是直接插入图片节点）。
-    """
-
-    image_pasted = Signal(str)
-
-    def __init__(self, parent=None):
-        """初始化输入框的基础交互属性和高度自适应监听。"""
-        super().__init__(parent)
-        self.setAcceptDrops(True)
-        self.setAcceptRichText(False)
-        self.setPlaceholderText('发送给宠物')
-        self.setCursor(Qt.IBeamCursor)
-        self.viewport().setCursor(Qt.IBeamCursor)
-        self.setMinimumHeight(38)
-        self.setMaximumHeight(120)
-        self.document().setDocumentMargin(0)
-        self.textChanged.connect(self._resize_to_content)
-        self._resize_to_content()
-
-    def _image_to_data_url(self, image):
-        """把 QImage 编码成 PNG base64 data URL，方便直接嵌入消息 blocks。"""
-        data = QByteArray()
-        buffer = QBuffer(data)
-        buffer.open(QIODevice.WriteOnly)
-        image.save(buffer, 'PNG')
-        return 'data:image/png;base64,' + bytes(data.toBase64()).decode('ascii')
-
-    def createStandardContextMenu(self):
-        """自建中文右键菜单，替代系统默认英文菜单。"""
-        menu = QMenu(self)
-        actions = (
-            ('撤销', self.undo, self.document().isUndoAvailable()),
-            ('重做', self.redo, self.document().isRedoAvailable()),
-            (None, None, True),
-            ('剪切', self.cut, self.textCursor().hasSelection()),
-            ('复制', self.copy, self.textCursor().hasSelection()),
-            ('粘贴', self.paste, self.canPaste()),
-            (None, None, True),
-            ('全选', self.selectAll, not self.document().isEmpty()),
-        )
-        for text, callback, enabled in actions:
-            if text is None:
-                menu.addSeparator()
-                continue
-            action = menu.addAction(text)
-            action.setEnabled(enabled)
-            action.triggered.connect(callback)
-        return menu
-
-    def insertFromMimeData(self, source):
-        """拦截剪贴板粘贴：图片转 data URL 发信号，文本走默认插入。"""
-        if source.hasImage():
-            self.image_pasted.emit(self._image_to_data_url(source.imageData()))
-            return
-        super().insertFromMimeData(source)
-
-    def dragEnterEvent(self, event):
-        """接受图片或文件 URL 的拖入，其余交给默认处理。"""
-        if event.mimeData().hasImage() or event.mimeData().hasUrls():
-            event.acceptProposedAction()
-            return
-        super().dragEnterEvent(event)
-
-    def dropEvent(self, event):
-        """处理拖放：优先取图片数据，其次尝试把 URL 当本地图片文件加载。"""
-        mime = event.mimeData()
-        if mime.hasImage():
-            self.image_pasted.emit(self._image_to_data_url(mime.imageData()))
-            event.acceptProposedAction()
-            return
-        for url in mime.urls():
-            path = url.toLocalFile()
-            pixmap = QPixmap(path)
-            if not pixmap.isNull():
-                self.image_pasted.emit(self._image_to_data_url(pixmap.toImage()))
-                event.acceptProposedAction()
-                return
-        super().dropEvent(event)
-
-    def keyPressEvent(self, event: QKeyEvent):
-        # 回车直接发送；Shift+Enter 则保留默认换行行为
-        if event.key() in (Qt.Key_Return, Qt.Key_Enter) and not event.modifiers() & Qt.ShiftModifier:
-            self.window()._send()
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-    def _resize_to_content(self):
-        """按文档高度自适应输入框高度，范围限制在 38~120px。"""
-        if not self.toPlainText().strip():
-            self.setFixedHeight(38)
-            return
-        doc_height = int(self.document().size().height()) + 20
-        self.setFixedHeight(max(38, min(120, doc_height)))
 
 
 def _scaled_pixmap(pixmap, w, h, mode=Qt.KeepAspectRatio):
@@ -195,27 +87,17 @@ class PetContactButton(QPushButton):
 
 
 class ChatBridge(QWebChannel):
-    """QWebChannel 桥：把消息推给 JS，接收 JS 的卡片按钮回调。
-
-    选择 QWebChannel 而非 QWebEnginePage.runJavaScript 的原因：
-    双向通信需要 JS → Python 的回调，QWebChannel 是官方推荐的跨层通信方案，
-    避免轮询或注入全局变量等 hack 手法。
-    """
+    """只读历史页的桥接层，仅提供复制和历史卡片展示所需的最小能力。"""
 
     def __init__(self, parent=None):
         """注册名为 bridge 的对象供页面 JS 调用。"""
         super().__init__(parent)
         self._card_callback = None
-        self._quote_callback = None
         self.registerObject('bridge', self)
 
     def set_card_callback(self, cb):
         """注册 JS 卡片按钮点击回调。"""
         self._card_callback = cb
-
-    def set_quote_callback(self, cb):
-        """注册 JS 消息引用点击回调。"""
-        self._quote_callback = cb
 
     # JS 可调用的槽
     from PySide6.QtCore import Slot
@@ -236,12 +118,6 @@ class ChatBridge(QWebChannel):
         默认被拒且失败静默，因此 JS 侧复制统一走本桥。
         """
         QGuiApplication.clipboard().setText(str(text or ''))
-
-    @Slot(str)
-    def quoteActivated(self, quoted_text):
-        if self._quote_callback:
-            self._quote_callback(quoted_text)
-
 
 class _WindowControlButton(QAbstractButton):
     """Windows 无边框窗口的系统控制按钮。"""
@@ -290,23 +166,12 @@ class _WindowControlButton(QAbstractButton):
 
 
 class ChatWindow(QWidget):
-    """完整文本聊天窗口。
+    """Pi 会话历史查看器，不提供发送、清空或授权能力。"""
 
-    这个窗口把 Qt 输入区和 WebEngine 消息区组合在一起。history 由外层
-    MiniPetApp 传入时，窗口只负责展示和提交消息；历史由 mini-claw 内核下发。
-    """
-
-    def __init__(self, pet_name='', parent=None, history=None, clear_history_callback=None, send_callback=None):
+    def __init__(self, pet_name='', parent=None, history=None):
         super().__init__(parent)
         self.pet_name = pet_name
         self.history = history if history is not None else []
-        self.clear_history_callback = clear_history_callback
-        self.send_callback = send_callback
-        self.worker = None
-        self._stream_id = None
-        self._stream_text = ''
-        self.stream_tts = StreamTtsQueue(self, label='Chat TTS')
-        self.pending_images = []  # 待发送图片的 data URL 列表
         self._web_ready = False  # WebEngine 页面是否加载完成
         self._pending_js = []  # 页面就绪前暂存的 JS 语句
         self.pet_contact = None
@@ -321,7 +186,7 @@ class ChatWindow(QWidget):
         self._init_ui()
 
     def _init_ui(self):
-        """搭建整体布局：标题栏 + 左侧后端边栏 + 右侧聊天面板。"""
+        """搭建只读历史布局：标题栏、联系人栏和消息展示区。"""
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
@@ -394,13 +259,11 @@ class ChatWindow(QWidget):
         self.title_label.setFont(QFont(self.title_label.font().family(), 12, QFont.DemiBold))
         self._title_box = title_box
         title_box.addWidget(self.title_label)
+        readonly_hint = QLabel('历史记录 · 只读', self.chat_header)
+        readonly_hint.setStyleSheet('QLabel{color:#8a96a8;font-size:11px;background:transparent;}')
+        title_box.addWidget(readonly_hint)
         h_layout.addWidget(self.avatar_widget)
         h_layout.addLayout(title_box, 1)
-        self.clear_btn = TransparentToolButton(FIF.DELETE, self.chat_header)
-        self.clear_btn.setFixedSize(28, 28)
-        self.clear_btn.setToolTip('删除当前对话')
-        self.clear_btn.clicked.connect(self._clear)
-        h_layout.addWidget(self.clear_btn)
         chat_layout.addWidget(self.chat_header)
 
         # WebEngine 消息区
@@ -423,55 +286,6 @@ class ChatWindow(QWidget):
         web_layout.setContentsMargins(0, 0, 2, 0)
         web_layout.addWidget(self.web)
         chat_layout.addWidget(web_wrap, 1)
-
-        # 输入区
-        input_bar = QWidget()
-        input_bar.setStyleSheet('QWidget{background:#f7f8fa;}')
-        input_layout = QVBoxLayout(input_bar)
-        input_layout.setContentsMargins(18, 8, 18, 12)
-        input_layout.setSpacing(4)
-        self.preview_row = QHBoxLayout()
-        self.preview_row.setContentsMargins(0, 0, 0, 0)
-        self.preview_row.setSpacing(6)
-        input_layout.addLayout(self.preview_row)
-
-        # 引用预览栏（默认隐藏）
-        self.quote_bar = QWidget(input_bar)
-        self.quote_bar.setVisible(False)
-        self.quote_bar.setStyleSheet(
-            'QWidget{background:#eef4ff;border-left:3px solid #4080ff;border-radius:6px;padding:0px;}'
-        )
-        quote_bar_layout = QHBoxLayout(self.quote_bar)
-        quote_bar_layout.setContentsMargins(10, 4, 6, 4)
-        quote_bar_layout.setSpacing(6)
-        self.quote_label = QLabel('', self.quote_bar)
-        self.quote_label.setStyleSheet(
-            'QLabel{color:#4060cc;font-size:12px;background:transparent;border:none;border-left:none;}'
-        )
-        self.quote_label.setWordWrap(False)
-        from PySide6.QtWidgets import QPushButton as _QPushButton
-        quote_close_btn = _QPushButton('×', self.quote_bar)
-        quote_close_btn.setFixedSize(20, 20)
-        quote_close_btn.setStyleSheet(
-            'QPushButton{background:transparent;border:none;color:#8090bb;font-size:14px;}'
-            'QPushButton:hover{color:#1677ff;}'
-        )
-        quote_close_btn.clicked.connect(self._clear_quote)
-        quote_bar_layout.addWidget(self.quote_label, 1)
-        quote_bar_layout.addWidget(quote_close_btn, 0)
-        input_layout.addWidget(self.quote_bar)
-        self._quoted_text = ''
-        self.bridge.set_quote_callback(self._on_quote_activated)
-
-        self.input = ChatInput(input_bar)
-        self.input.image_pasted.connect(self._add_pending_image)
-        self.input.setStyleSheet(
-            'QTextEdit{background:#ffffff;border:1px solid #dfe3e8;border-radius:10px;padding:8px 12px;font-size:14px;}'
-            'QTextEdit:focus{border:1px solid #8ab4f8;}'
-            'QTextEdit:disabled{background:#f3f4f6;color:#9aa0a6;border:1px solid #e5e7eb;}'
-        )
-        input_layout.addWidget(self.input)
-        chat_layout.addWidget(input_bar)
         shell_layout.addWidget(chat_panel, 1)
         outer = QWidget(self)
         outer_layout = QVBoxLayout(outer)
@@ -517,7 +331,7 @@ class ChatWindow(QWidget):
     def _interactive_title_rects(self):
         """收集标题栏上所有可点按钮的矩形，命中测试时把它们排除出拖动区。"""
         widgets = []
-        for name in ('clear_btn', 'minimize_btn', 'maximize_btn', 'close_btn'):
+        for name in ('minimize_btn', 'maximize_btn', 'close_btn'):
             button = getattr(self, name, None)
             if button is not None:
                 widgets.append(button)
@@ -568,29 +382,6 @@ class ChatWindow(QWidget):
             self.title_label.setText(self.pet_name)
         if self.pet_contact is not None:
             self.pet_contact.set_contact_name(self.pet_name)
-
-    def _update_input_state(self):
-        """同步输入框状态；当前窗口始终发送到唯一的 mini-claw 内核。"""
-        if not hasattr(self, 'input'):
-            return  # 构造函数早期调用时输入框尚未创建
-        self.input.setEnabled(True)
-        self.input.setPlaceholderText('发送给宠物')
-
-    def _on_quote_activated(self, quoted_text):
-        """收到 JS 的引用事件后展示引用预览栏并聚焦输入框。"""
-        self._quoted_text = quoted_text.strip()
-        if self._quoted_text:
-            summary = self._quoted_text[:80] + ('...' if len(self._quoted_text) > 80 else '')
-            self.quote_label.setText('引用：' + summary)
-            self.quote_bar.setVisible(True)
-            self.input.setFocus()
-
-    def _clear_quote(self):
-        """清空引用状态并隐藏预览栏，同时通知 JS 清除高亮。"""
-        self._quoted_text = ''
-        self.quote_bar.setVisible(False)
-        self.quote_label.setText('')
-        self._js('Chat.clearQuote()')
 
     def _js(self, code):
         """页面就绪则立即执行 JS，否则入队等待加载完成。"""
@@ -646,24 +437,11 @@ class ChatWindow(QWidget):
         msg = self._msg_dict(role, content, msg_id)
         self._js('Chat.appendMessage(%s)' % json.dumps(msg, ensure_ascii=False))
 
-    def _start_stream(self, msg_id):
-        """在消息区创建一条空的流式 assistant 气泡。"""
-        self._stream_id = msg_id
-        self._stream_text = ''
-        avatar_url = QUrl.fromLocalFile(str(config.avatar_path('pet'))).toString()
-        self._js('Chat.startStream(%s)' % json.dumps({
-            'id': msg_id,
-            'role': 'assistant',
-            'name': self.pet_name or '宠物',
-            'backend': '',
-            'avatar': avatar_url,
-        }, ensure_ascii=False))
-
     def reload_history(self):
-        """清空消息区并按 history 重新渲染，空历史时显示欢迎语。"""
+        """清空消息区并按内核历史投影重新渲染。"""
         self._js('Chat.clear()')
         if not self.history:
-            self._push_message('assistant', '主人好呀，想聊点什么？')
+            self._push_message('assistant', '还没有会话记录。请通过桌宠输入框或语音入口开始对话。')
             return
         for msg in self.history:
             role = msg.get('role')
@@ -672,136 +450,6 @@ class ChatWindow(QWidget):
                     self._msg_dict(role, msg.get('content', '')),
                     ensure_ascii=False,
                 ))
-
-    # ─── 输入区 ───
-
-    def _add_pending_image(self, data_url):
-        """记录待发图片并在输入框上方显示 48px 缩略图。"""
-        self.pending_images.append(data_url)
-        import base64
-        from PySide6.QtGui import QImage
-        img = QImage()
-        img.loadFromData(base64.b64decode(data_url.split(',', 1)[1]))
-        thumb = QLabel(self.input.parent())  # 必须有 parent，否则浮成顶层窗口
-        thumb.setFixedSize(48, 48)
-        thumb.setStyleSheet('QLabel{border:1px solid #dfe3e8;border-radius:6px;background:#f0f0f0;}')
-        thumb.setPixmap(QPixmap.fromImage(img).scaled(46, 46, Qt.KeepAspectRatio, Qt.SmoothTransformation))
-        self.preview_row.addWidget(thumb)
-
-    def _build_user_content(self, text, quote=''):
-        """把文本、引用和待发图片组装成发送内容；纯文本时直接返回字符串。"""
-        if not self.pending_images and not quote:
-            return text
-        blocks = []
-        if text:
-            block = {'type': 'text', 'text': text}
-            if quote:
-                block['quote'] = quote[:80] + ('...' if len(quote) > 80 else '')
-            blocks.append(block)
-        for img in self.pending_images:
-            blocks.append({'type': 'image', 'src': img, 'alt': '图片'})
-        return blocks or text
-
-    def _send(self):
-        """发送用户输入，启动一条流式 assistant 消息。
-
-        优先走外层 send_callback（由 MiniPetApp 注入内核调度逻辑）；
-        没有注入时显示统一的内核连接提示。
-        """
-        text = self.input.toPlainText().strip()
-        if (not text and not self.pending_images) or self.worker is not None:
-            return
-        quoted = self._quoted_text
-        # 把引用内容拼入发送文本，让 mini-claw 内核能理解上下文；展示层仅在 quote 字段显示原文
-        if quoted and text:
-            summary = quoted[:60] + ('...' if len(quoted) > 60 else '')
-            send_text = '对方引用了"%s"，他的输入是：%s' % (summary, text)
-        else:
-            send_text = text
-        content = self._build_user_content(send_text, quote=quoted if quoted and text else '')
-        self._clear_quote()
-        self.input.clear()
-        self.pending_images = []
-        while self.preview_row.count():
-            w = self.preview_row.takeAt(0).widget()
-            if w:
-                w.deleteLater()
-        self.input.setPlaceholderText('发送给宠物')
-        # 聊天窗口的回复只在窗口内显示，不触发外部 TTS。
-        stream_id = str(uuid.uuid4())
-        self._stream_id = stream_id
-        self._reset_stream_tts()
-        self.input.setEnabled(False)
-        if self.send_callback:
-            self.worker = self.send_callback(
-                content,
-                lambda: self._show_sent_user_then_stream(content, stream_id),
-                lambda d: self._on_delta(stream_id, d),
-                lambda ok, t: self._on_reply(stream_id, ok, t),
-            )
-            if not self.worker:
-                self._on_reply(stream_id, False, '当前后端发送失败。')
-            return
-        self._on_reply(stream_id, False, '当前 mini-claw 服务未连接。')
-
-    def _show_sent_user_then_stream(self, content, stream_id):
-        """内核通道确认后，先展示用户消息再开流式气泡。"""
-        self._push_message('user', content)
-        self._start_stream(stream_id)
-
-    def _memory_message_limit(self):
-        """本地不再构造模型上下文，历史由 mini-claw 内核管理。"""
-        return 0
-
-    def _build_messages(self):
-        """兼容旧测试的上下文接口；真实发送由 mini-claw 内核管理。"""
-        return []
-
-    def _on_delta(self, stream_id, text):
-        """收到流式增量后累加缓存并推给消息区。"""
-        if text:
-            self._stream_text += text
-            escaped = json.dumps(text, ensure_ascii=False)
-            self._js('Chat.appendDelta(%s, %s)' % (json.dumps(stream_id), escaped))
-
-    def _on_reply(self, stream_id, success, text):
-        """流式回复结束：定稿气泡；历史由 mini-claw 内核统一持久化。"""
-        # stream_id 用于核对是否是当前会话的回复，避免多次快速发送时串流
-        is_current_session = stream_id == self._stream_id
-        if is_current_session:
-            self.worker = None
-            self._update_input_state()
-        if success:
-            final = text.strip() or '嗯。'
-            if is_current_session:
-                self._js('Chat.endStream(%s, %s)' % (json.dumps(stream_id), json.dumps(final, ensure_ascii=False)))
-            self._stream_text = final
-        else:
-            self._reset_stream_tts()
-            if is_current_session:
-                self._js('Chat.endStream(%s, %s)' % (json.dumps(stream_id), json.dumps('⚠️ ' + text[:200], ensure_ascii=False)))
-        if is_current_session:
-            self.input.setFocus()
-
-    def _reset_stream_tts(self):
-        """清空 TTS 播放队列。"""
-        self.stream_tts.reset()
-
-    def clear_history(self, show_hint=False):
-        """停掉 TTS、清空历史和消息区，可选显示清空提示。"""
-        stop_tts()
-        self._reset_stream_tts()
-        if self.clear_history_callback:
-            self.clear_history_callback()
-            self.history = []
-        else:
-            self.history.clear()
-        self._js('Chat.clear()')
-        if show_hint:
-            self._push_message('assistant', '对话已清空，重新开始吧。')
-
-    def _clear(self):
-        self.clear_history(show_hint=True)
 
     def _fit_to_screen(self):
         """把窗口位置夹回屏幕可见区域内，防止拖出后找不回。"""
@@ -814,26 +462,18 @@ class ChatWindow(QWidget):
         self.move(x, y)
 
     def shutdown(self):
-        """停止 TTS 并等待后台 Worker 线程退出（最多 2 秒）。"""
-        stop_tts()
-        self._reset_stream_tts()
-        for attr in ('worker',):
-            w = getattr(self, attr, None)
-            if w is not None and w.isRunning():
-                w.requestInterruption()
-                w.quit()
-                w.wait(2000)
-            setattr(self, attr, None)
+        """只读窗口没有独立会话或后台任务，保留统一生命周期接口。"""
+        return None
 
     def closeEvent(self, event):
         self.shutdown()
         super().closeEvent(event)
 
     def show_window(self):
-        """显示/激活窗口，调整到可见区域并聚焦输入框。"""
+        """显示/激活只读历史窗口，调整到可见区域。"""
         if not self.isVisible():
             self.show()
         self._fit_to_screen()
         self.activateWindow()
         self.raise_()
-        self.input.setFocus()
+        self.web.setFocus()

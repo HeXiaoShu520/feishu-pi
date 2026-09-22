@@ -13,6 +13,7 @@ import subprocess
 import threading
 import time
 import uuid
+from collections import OrderedDict
 from pathlib import Path
 
 from PySide6.QtCore import QThread, Signal
@@ -20,8 +21,8 @@ from PySide6.QtCore import QThread, Signal
 from protocols.protocol_v1 import (
     SESSION_HELLO,
     SESSION_READY,
-    HISTORY_CLEAR,
     HISTORY_GET,
+    INPUT_ACCEPTED,
     USER_APPROVAL,
     USER_CANCEL,
     USER_INPUT,
@@ -32,6 +33,8 @@ from protocols.protocol_v1 import (
 
 
 log = logging.getLogger('minipet.kernel')
+
+MAX_PENDING_INPUTS = 20
 
 
 class EventClient(QThread):
@@ -49,6 +52,9 @@ class EventClient(QThread):
         self.ready = False
         self._connected = False
         self._write_lock = threading.Lock()
+        # 仅保留尚未收到 input.accepted 的用户输入。子进程重启后会原样重投，
+        # 不让快捷输入、语音转写或卡片按钮在 stdin 断开窗口内悄悄丢失。
+        self._pending_inputs = OrderedDict()
 
     def _kernel_command(self):
         """返回当前工程内核的启动命令；不依赖 PATH 中的全局 tsx。"""
@@ -120,6 +126,12 @@ class EventClient(QThread):
             name = str(server.get('name') or payload.get('name') or 'mini-claw')
             self.ready = True
             self.ready_changed.emit(True, name)
+            self._flush_pending_inputs()
+        if event.get('type') == INPUT_ACCEPTED:
+            request_id = event.get('request_id')
+            if isinstance(request_id, str):
+                with self._write_lock:
+                    self._pending_inputs.pop(request_id, None)
         self.event_received.emit(event)
 
     def _normalize(self, data):
@@ -132,19 +144,25 @@ class EventClient(QThread):
         return normalize_inbound_event(event)
 
     def _send_direct(self, message):
+        with self._write_lock:
+            return self._write_locked(message)
+
+    def _write_locked(self, message):
+        """在持有 _write_lock 时写入当前 stdin。"""
         process = self.process
         if process is None or process.poll() is not None or process.stdin is None:
             return False
         try:
-            with self._write_lock:
-                process.stdin.write(json.dumps(message, ensure_ascii=False) + '\n')
-                process.stdin.flush()
+            process.stdin.write(json.dumps(message, ensure_ascii=False) + '\n')
+            process.stdin.flush()
             return True
         except (BrokenPipeError, OSError, ValueError):
             return False
 
     def send_event(self, event_type, payload=None, request_id=None):
         """向内核写入一条 JSONL 事件。"""
+        if event_type == USER_INPUT:
+            return self.send_input(payload)
         message = {
             'version': '1.0',
             'type': event_type,
@@ -154,11 +172,38 @@ class EventClient(QThread):
             message['request_id'] = request_id
         return self._send_direct(message)
 
+    def send_input(self, payload=None):
+        """可靠提交用户输入。
+
+        写入管道不代表内核真正读取到了消息。输入会一直留在队列中，直到同一个
+        request_id 收到 input.accepted；若子进程在这之间退出，会在下一次握手后重投。
+        """
+        request_id = 'input-' + uuid.uuid4().hex
+        message = {
+            'version': '1.0',
+            'type': USER_INPUT,
+            'payload': payload or {},
+            'request_id': request_id,
+        }
+        with self._write_lock:
+            if len(self._pending_inputs) >= MAX_PENDING_INPUTS:
+                log.warning('mini-claw 未确认输入达到上限（%d），拒绝继续排队', MAX_PENDING_INPUTS)
+                return False
+            self._pending_inputs[request_id] = message
+            if self.ready:
+                self._write_locked(message)
+        # 即使当前断线也视为桌面端已接收：连接恢复后会自动投递。
+        return True
+
+    def _flush_pending_inputs(self):
+        """在新内核完成握手后，重投所有尚未被确认的输入。"""
+        with self._write_lock:
+            for message in self._pending_inputs.values():
+                if not self._write_locked(message):
+                    break
+
     def request_history(self, session_id='minipet:global'):
         return self.send_event(HISTORY_GET, history_payload(session_id), request_id='history-' + uuid.uuid4().hex)
-
-    def clear_history(self, session_id='minipet:global'):
-        return self.send_event(HISTORY_CLEAR, history_payload(session_id), request_id='history-clear-' + uuid.uuid4().hex)
 
     def send_v1_event(self, v1_type, payload=None, request_id=None):
         return self.send_event(v1_type, payload, request_id)

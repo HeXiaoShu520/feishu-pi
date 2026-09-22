@@ -8,12 +8,12 @@ export const MINIPET_VERSION = "1.0";
 export const SESSION_HELLO = "session.hello";
 export const SESSION_READY = "session.ready";
 export const USER_INPUT = "user.input";
+/** 内核已经收到 user.input；桌面端据此安全地从重连队列移除该输入。 */
+export const INPUT_ACCEPTED = "input.accepted";
 export const USER_CANCEL = "user.cancel";
 export const USER_APPROVAL = "user.approval";
 export const HISTORY_GET = "history.get";
 export const HISTORY_RESULT = "history.result";
-export const HISTORY_CLEAR = "history.clear";
-export const HISTORY_CLEARED = "history.cleared";
 export const SURFACE_SHOW = "surface.show";
 export const SURFACE_UPDATE = "surface.update";
 export const SURFACE_CLOSE = "surface.close";
@@ -22,12 +22,11 @@ export const MINIPET_CAPABILITIES = [
   SESSION_HELLO,
   SESSION_READY,
   USER_INPUT,
+  INPUT_ACCEPTED,
   USER_CANCEL,
   USER_APPROVAL,
   HISTORY_GET,
   HISTORY_RESULT,
-  HISTORY_CLEAR,
-  HISTORY_CLEARED,
   SURFACE_SHOW,
   SURFACE_UPDATE,
   SURFACE_CLOSE,

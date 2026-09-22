@@ -11,10 +11,8 @@ ReplyCard 是桌宠核心 UI 组件，负责展示 LLM 回复、工具状态和�
 - 宽度自适应：根据内容长度和结构在6个离散档位间动画切换
 """
 
-import re
-
 from PySide6.QtCore import QBuffer, QByteArray, QEvent, QEasingCurve, QIODevice, Property, QElapsedTimer, QPropertyAnimation, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap, QTextDocument
+from PySide6.QtGui import QColor, QPainter, QPainterPath, QPen, QPixmap
 from PySide6.QtWidgets import QApplication, QButtonGroup, QCheckBox, QFrame, QHBoxLayout, QLabel, QLineEdit, QPushButton, QRadioButton, QSizePolicy, QVBoxLayout, QWidget
 
 import config

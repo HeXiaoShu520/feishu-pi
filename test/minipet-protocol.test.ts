@@ -3,10 +3,9 @@ import { describe, expect, it } from "vitest";
 import { MiniPetServer } from "../src/minipet/server.ts";
 import {
   MINIPET_PROTOCOL,
-  HISTORY_CLEAR,
-  HISTORY_CLEARED,
   HISTORY_GET,
   HISTORY_RESULT,
+  INPUT_ACCEPTED,
   SESSION_HELLO,
   SESSION_READY,
   SURFACE_UPDATE,
@@ -126,16 +125,12 @@ describe("MiniPet minipet.v1 协议", () => {
     });
   });
 
-  it("history.get/clear 只操作内核会话并返回稳定契约", async () => {
-    let resetArgs: string[] = [];
+  it("history.get 从内核会话返回稳定投影", async () => {
     const fakeConversations = {
       getHistory: async () => [
         { role: "user", content: "你好", timestamp: "2026-09-23T00:00:00.000Z" },
         { role: "assistant", content: "你好！" },
       ],
-      reset: async (conversationId: string, callerOpenId?: string) => {
-        resetArgs = [conversationId, callerOpenId || ""];
-      },
     } as unknown as import("../src/runtime/conversation-manager.ts").ConversationManager;
     const server = new MiniPetServer({ conversations: fakeConversations, ...options });
     const channel = createChannel();
@@ -155,11 +150,6 @@ describe("MiniPet minipet.v1 协议", () => {
           ],
         },
       });
-
-      send(channel, envelope(HISTORY_CLEAR, { session_id: "chat-history" }, "clear-1"));
-      const cleared = await channel.waitFor((message) => message.type === HISTORY_CLEARED);
-      expect(cleared).toMatchObject({ request_id: "clear-1", payload: { session_id: "chat-history" } });
-      expect(resetArgs).toEqual(["minipet:minipet_user:chat-history", "minipet_user"]);
     } finally {
       channel.input.end();
       await server.stop();
@@ -199,7 +189,12 @@ describe("MiniPetServer 本地 JSONL 通道", () => {
         turn_id: "turn-1",
         surface_id: "surface-1",
         session_id: "chat-1",
-      }));
+      }, "input-1"));
+      const accepted = await channel.waitFor((message) => message.type === INPUT_ACCEPTED);
+      expect(accepted).toMatchObject({
+        request_id: "input-1",
+        payload: { turn_id: "turn-1", surface_id: "surface-1", session_id: "chat-1" },
+      });
       const finalEvent = await done;
       expect(finalEvent.payload).toMatchObject({ surface_id: "surface-1", content: "你好，MiniPet", status: "done" });
       expect(channel.received.some((message) => {

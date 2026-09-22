@@ -493,8 +493,9 @@ class DesktopPet(QWidget):
     def pat(self):
         pat_pet(self)
 
-    def show_chat(self, history=None, clear_history_callback=None, send_callback=None):
-        show_chat_window(self, history=history, clear_history_callback=clear_history_callback, send_callback=send_callback)
+    def show_chat(self, history=None):
+        """打开 Pi 会话的只读历史查看器。"""
+        show_chat_window(self, history=history)
 
     def _current_visible_bounds(self):
         """返回角色非透明区域，无效时退回整个窗口矩形。"""

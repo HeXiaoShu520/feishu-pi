@@ -10,7 +10,7 @@ mini-claw(Node/Pi)
    └─ ConversationManager → AgentSession / 工具 / 权限 / 飞书
 ```
 
-历史只有一个来源：mini-claw 的 Pi session JSONL（`work_space/<session>/`）。MiniPet 不再写 `data/chat`，只通过协议拿到展示投影；清空历史也由内核执行会话换代。
+历史只有一个来源：mini-claw 的 Pi session JSONL（`work_space/<session>/`）。MiniPet 不再写 `data/chat`，聊天窗只通过协议拿到展示投影；它不能发送、清空或授权。
 
 ## 启动
 
@@ -40,12 +40,11 @@ npm run dev:all   # 开发模式：MiniPet 自动拉起 npm run dev -- --stdio
 | MiniPet → mini-claw | `session.hello` | 启动握手 |
 | mini-claw → MiniPet | `session.ready` | 内核已就绪 |
 | MiniPet → mini-claw | `user.input` | 文本、语音结果、图片和拖放输入 |
+| mini-claw → MiniPet | `input.accepted` | 内核已收到输入；桌面端才从重连队列移除该消息 |
 | MiniPet → mini-claw | `user.cancel` | 中断当前轮次 |
 | MiniPet → mini-claw | `user.approval` | 本地授权卡按钮回调 |
 | MiniPet → mini-claw | `history.get` | 请求当前会话历史投影 |
-| MiniPet → mini-claw | `history.clear` | 请求内核换代并清空当前会话 |
 | mini-claw → MiniPet | `history.result` | 返回当前分支的用户/助手消息 |
-| mini-claw → MiniPet | `history.cleared` | 确认历史已清空 |
 | mini-claw → MiniPet | `surface.show` | 创建回复卡片/流式卡片 |
 | mini-claw → MiniPet | `surface.update` | 增量正文、工具进度、终态 |
 | mini-claw → MiniPet | `surface.close` | 关闭卡片 |

@@ -19,7 +19,6 @@ import json
 import mimetypes
 import signal
 import sys
-import uuid
 from pathlib import Path
 
 from PySide6.QtCore import QLocale, QTimer
@@ -33,10 +32,9 @@ from pet.desktop_pet import DesktopPet
 from clients.event_client import EventClient
 from widgets.notifications.reply_card_center import ReplyCardCenter
 from protocols.protocol_v1 import (
-    HISTORY_CLEARED,
     HISTORY_RESULT,
     SESSION_READY,
-    SURFACE_CLOSE, SURFACE_SHOW, SURFACE_UPDATE, USER_INPUT,
+    SURFACE_CLOSE, SURFACE_SHOW, SURFACE_UPDATE,
     normalize_inbound_event,
 )
 from protocols.surface_utils import (
@@ -231,19 +229,6 @@ class MiniPetApp(QApplication, ReplyTurnMixin):
         """返回内核历史在桌面端的只读投影缓存。"""
         return self.chat_histories.setdefault(backend or 'minipet', [])
 
-    def _reset_backend_history(self, backend):
-        """请求内核换代清空历史；桌面端不再直接删除自己的历史文件。"""
-        backend = backend or self._agent_backend()
-        for turn in list(self._active_turns.values()):
-            if turn.backend == backend:
-                self._finish_turn(turn, False)
-        self.chat_histories[backend] = []
-        if backend == self._agent_backend():
-            self.chat_history = self.chat_histories[backend]
-        self._refresh_chat_window()
-        if self.events and backend == self._agent_backend():
-            self.events.clear_history(self._backend_session_id(backend))
-
     def _refresh_chat_window(self):
         """如果聊天窗口当前可见，则重新加载以反映最新历史。"""
         if self.pet.chat_window is not None and self.pet.chat_window.isVisible():
@@ -365,11 +350,7 @@ class MiniPetApp(QApplication, ReplyTurnMixin):
         """打开或刷新聊天窗口，传入 mini-claw 下发的历史投影。"""
         backend = self._agent_backend()
         self.chat_history = self._history_for_backend(backend)
-        self.pet.show_chat(
-            history=self.chat_history,
-            clear_history_callback=self._clear_chat_history,
-            send_callback=self._send_chat_window_message,
-        )
+        self.pet.show_chat(history=self.chat_history)
 
     # ==== 退出流程 ====
     def _on_quit_requested(self):
@@ -386,29 +367,6 @@ class MiniPetApp(QApplication, ReplyTurnMixin):
         else:
             self._show_exit_card()
             QTimer.singleShot(GOODBYE_CARD_QUIT_DELAY_MS, self.pet.quit_now)
-
-    # ==== 聊天历史管理 ====
-    def _clear_chat_history(self, backend=None):
-        """清除内核会话，而不是清除桌面端的另一份副本。"""
-        self._reset_backend_history(backend or self._agent_backend())
-
-    # ==== 聊天窗口消息发送 ====
-    def _send_chat_window_message(self, content, on_sent, on_delta, on_result):
-        """按当前 mini-claw 会话记录发送消息。"""
-        backend = self._agent_backend()
-        session_id = self._backend_session_id(backend)
-        turn = self._begin_turn(
-            backend, 'chat_window', session_id, 'chat_window',
-            on_delta=on_delta, on_result=on_result,
-        )
-        if self._send_external_command(
-            content, 'text', 'chat_window', turn_id=turn.turn_id,
-            surface_id=turn.surface_id, session_id=session_id,
-        ):
-            on_sent()
-            return True
-        self._finish_turn(turn, False)
-        return False
 
     # ==== 消息内容工具方法 ====
     def _content_text_for_preview(self, content):
@@ -532,10 +490,10 @@ class MiniPetApp(QApplication, ReplyTurnMixin):
         backend = 'minipet'
         turn = self._resolve_turn(backend, turn_id, surface_id)
         if turn is None:
-            turn = self._begin_turn(backend, 'external', session_id, surface, surface_id)
+            turn = self._begin_turn(backend, session_id, surface, surface_id)
         turn_id = turn.turn_id
         surface_id = turn.surface_id
-        if turn.origin == 'external' and mode in ('text', 'voice'):
+        if mode in ('text', 'voice'):
             self._begin_reply_card_turn()
             self._reset_external_stream_tts()
             self._show_reply_card('正在思考...', status='streaming', timeout_ms=60000)
@@ -825,8 +783,6 @@ class MiniPetApp(QApplication, ReplyTurnMixin):
             self._handle_surface_close(payload)
         elif event_type == HISTORY_RESULT:
             self._handle_history_result(payload)
-        elif event_type == HISTORY_CLEARED:
-            self._handle_history_cleared(payload)
         else:
             self.note.setup_toast(payload.get('title', '外部事件'), payload.get('summary') or payload.get('content') or '')
 
@@ -848,17 +804,10 @@ class MiniPetApp(QApplication, ReplyTurnMixin):
             self.pet.chat_window.history = self.chat_history
             self.pet.chat_window.reload_history()
 
-    def _handle_history_cleared(self, payload):
-        if payload.get('session_id') != self._backend_session_id('minipet'):
-            return
-        self.chat_history.clear()
-        self.chat_histories['minipet'] = self.chat_history
-
     def _handle_surface_show(self, payload):
         """处理 SURFACE_SHOW 事件：mini-claw 回复进入 TTS 与卡片。"""
         card_event = normalize_display_event(SURFACE_SHOW, payload)
-        if (self._agent_backend() == 'minipet'
-                and not self._is_chat_window_surface_turn(card_event)):
+        if self._agent_backend() == 'minipet':
             self._queue_external_reply_tts(card_event, surface_text(card_event))
         self._queue_surface_display(card_event, is_update=False)
 
@@ -867,19 +816,11 @@ class MiniPetApp(QApplication, ReplyTurnMixin):
         if not payload.get('surface_id'):
             return
         card_event = normalize_display_event(SURFACE_UPDATE, payload)
-        if (self._agent_backend() == 'minipet'
-                and not self._is_chat_window_surface_turn(card_event)):
+        if self._agent_backend() == 'minipet':
             self._queue_external_reply_tts(card_event, surface_text(card_event))
         self._queue_surface_display(card_event, is_update=True)
         if is_terminal_surface_status(card_event):
             self._request_kernel_history()
-
-    def _is_chat_window_surface_turn(self, card_event):
-        """判断 surface 对应的 turn 是否归属聊天窗口。"""
-        turn = self._resolve_turn(
-            'minipet', card_event.get('turn_id'), card_event.get('surface_id'),
-        )
-        return bool(turn and turn.origin == 'chat_window')
 
     def _queue_surface_display(self, card_event, is_update):
         """将 surface 显示操作入队（防止流式输出时闪烁）。"""
@@ -891,8 +832,7 @@ class MiniPetApp(QApplication, ReplyTurnMixin):
 
     def _show_surface_event(self, card_event, is_update):
         """实际显示 surface 卡片，更新已有卡片或新建卡片。"""
-        if self._handle_custom_chat_surface(card_event):
-            return
+        self._finish_surface_turn_if_terminal(card_event)
         text = surface_text(card_event)
         if is_silent_surface_text(text) and not card_event.get('elements') and not card_event.get('actions') and not card_event.get('controls'):
             return
@@ -911,26 +851,14 @@ class MiniPetApp(QApplication, ReplyTurnMixin):
             self._surface_cards[surface_id] = card_id
         self._handle_external_voice_surface(card_event)
 
-    def _handle_custom_chat_surface(self, card_event):
-        """处理聊天窗口关联的 surface 事件，通过 turn delta/result 路由。"""
+    def _finish_surface_turn_if_terminal(self, card_event):
+        """终态 surface 结束对应桌宠输入轮次，并刷新只读历史投影。"""
         turn = self._resolve_turn(
             'minipet', card_event.get('turn_id'), card_event.get('surface_id'),
         )
-        if turn is None:
-            return False
-        # mini-claw 走 surface 协议，delta/result 复用同一套 turn 系统
-        text = surface_text(card_event)
-        if turn.origin == 'chat_window':
-            if text:
-                self._publish_turn_delta(turn, text)
-            if is_terminal_surface_status(card_event):
-                self._finish_turn(turn, not self._surface_failed(card_event), text)
-                self._request_kernel_history()
-            return True
-        if is_terminal_surface_status(card_event):
-            self._finish_turn(turn, not self._surface_failed(card_event), text)
+        if turn is not None and is_terminal_surface_status(card_event):
+            self._finish_turn(turn, not self._surface_failed(card_event), surface_text(card_event))
             self._request_kernel_history()
-        return False
 
     @staticmethod
     def _surface_failed(card_event):
@@ -1035,7 +963,6 @@ class MiniPetApp(QApplication, ReplyTurnMixin):
 
     def _on_reply_card_quote(self, card_id, message, quoted_text='', user_text=''):
         """Handle a quoted reply within an existing card."""
-        backend = self._agent_backend()
         has_images = isinstance(message, list) and any(b.get('type') == 'image' for b in message if isinstance(b, dict))
         # 存储时带结构化 quote block，聊天窗口 reload 时可渲染飞书风格引用
         if quoted_text and user_text and not has_images:
