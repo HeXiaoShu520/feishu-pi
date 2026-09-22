@@ -8,8 +8,8 @@
  *
  * 身份注入：与技能里的约定一致——通过环境变量 LARKSUITE_CLI_USER_ACCESS_TOKEN /
  * LARKSUITE_CLI_APP_ID 注入，token 不经过 shell，多用户并发互不可见。
- * 普通用户不需要先登录：优先使用管理员已授权的 token；仅在管理员不可用/不可见时，
- * 才尝试目标用户自己已经登录的 token。
+ * 普通用户不需要也不应当为了资料查询而登录：查询始终使用管理员已授权的 token。
+ * 管理员凭证不可用时，调用方仅保留 open_id 作为身份兜底，不改用目标用户的凭证。
  */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
@@ -21,11 +21,8 @@ export interface CliSearchUserOptions {
   appId: string;
   /** 项目根（定位 node_modules 内的 lark-cli 原生二进制） */
   cwd?: string;
-  /**
-   * 查询用 user token 的候选 openId 列表（按优先级）：通常为 [管理员, 目标本人]。
-   * 返回值里的 undefined 项跳过。
-   */
-  tokenCandidates: (targetOpenId: string) => Array<string | undefined>;
+  /** 资料查询唯一使用的管理员 open_id；未配置时跳过该补充通道。 */
+  adminOpenId?: string;
   /** 取得有效 user token；实现可从凭证库加载并按到期时间刷新。 */
   getToken: (openId: string) => Promise<string | undefined>;
   /** CLI 明确认证失败后的单次强制刷新；刷新后会重试同一查询。 */
@@ -122,40 +119,38 @@ export function createCliSearchUser(options: CliSearchUserOptions): CliSearchUse
       logger.warn("[CliSearch] 未找到项目内 lark-cli 二进制（node_modules/@larksuite/cli），跳过用户态搜索通道");
       return undefined;
     }
-    // 查询对象就是管理员时两个候选相同；同一 token 无需重复执行一次 CLI。
-    const candidates = [...new Set(options.tokenCandidates(targetOpenId).filter((candidate): candidate is string => Boolean(candidate)))];
-    for (const candidate of candidates) {
-      let token = await options.getToken(candidate);
-      if (!token) continue;
-      let retriedAfterRefresh = false;
-      while (token) {
-        try {
-          const stdout = await run(exe, ["contact", "+search-user", "--user-ids", targetOpenId, "--as", "user"], {
-            ...process.env,
-            LARKSUITE_CLI_USER_ACCESS_TOKEN: token,
-            LARKSUITE_CLI_APP_ID: options.appId,
-          }, timeoutMs);
-          const profile = parseSearchUserOutput(stdout);
-          if (profile) {
-            logger.info(`[CliSearch] 用户态搜索命中 ${targetOpenId}（以 ${candidate === targetOpenId ? "本人" : "管理员"} token 查询）：${profile.name ?? "无名"}, 部门=${profile.department_name?.join(" / ") ?? "无"}`);
-            return profile;
-          }
-          logger.info(`[CliSearch] 用户态搜索未命中 ${targetOpenId}（以 ${candidate} token 查询）`);
-          break;
-        } catch (error) {
-          // CLI 用退出码 3 统一表达认证/API 错误；先强制刷新一次 token 再重试。
-          if (!retriedAfterRefresh && options.refreshToken) {
-            retriedAfterRefresh = true;
-            const refreshed = await options.refreshToken(candidate).catch(() => undefined);
-            if (refreshed && refreshed !== token) {
-              logger.info(`[CliSearch] ${candidate === targetOpenId ? "本人" : "管理员"} token 查询失败，已刷新并重试`);
-              token = refreshed;
-              continue;
-            }
-          }
-          logger.warn(`[CliSearch] 用户态搜索失败（${candidate} token）：${error instanceof Error ? error.message : String(error)}`);
-          break;
+    const adminOpenId = options.adminOpenId;
+    if (!adminOpenId) return undefined;
+    let token = await options.getToken(adminOpenId);
+    if (!token) return undefined;
+    let retriedAfterRefresh = false;
+    while (token) {
+      try {
+        const stdout = await run(exe, ["contact", "+search-user", "--user-ids", targetOpenId, "--as", "user"], {
+          ...process.env,
+          LARKSUITE_CLI_USER_ACCESS_TOKEN: token,
+          LARKSUITE_CLI_APP_ID: options.appId,
+        }, timeoutMs);
+        const profile = parseSearchUserOutput(stdout);
+        if (profile) {
+          logger.info(`[CliSearch] 用户态搜索命中 ${targetOpenId}（以管理员 token 查询）：${profile.name ?? "无名"}, 部门=${profile.department_name?.join(" / ") ?? "无"}`);
+          return profile;
         }
+        logger.info(`[CliSearch] 用户态搜索未命中 ${targetOpenId}（以管理员 token 查询）`);
+        return undefined;
+      } catch (error) {
+        // CLI 用退出码 3 统一表达认证/API 错误；先强制刷新一次管理员 token 再重试。
+        if (!retriedAfterRefresh && options.refreshToken) {
+          retriedAfterRefresh = true;
+          const refreshed = await options.refreshToken(adminOpenId).catch(() => undefined);
+          if (refreshed && refreshed !== token) {
+            logger.info("[CliSearch] 管理员 token 查询失败，已刷新并重试");
+            token = refreshed;
+            continue;
+          }
+        }
+        logger.warn(`[CliSearch] 用户态搜索失败（管理员 token）：${error instanceof Error ? error.message : String(error)}`);
+        return undefined;
       }
     }
     return undefined;

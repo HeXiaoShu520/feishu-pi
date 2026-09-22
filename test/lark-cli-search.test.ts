@@ -10,7 +10,7 @@ describe("createCliSearchUser", () => {
     const search = createCliSearchUser({
       appId: "cli_test",
       cwd: process.cwd(),
-      tokenCandidates: () => ["ou_user"],
+      adminOpenId: "ou_admin",
       getToken: async () => "old-token",
       refreshToken: async () => "new-token",
       run: async (_exe, _args, env) => {
@@ -25,35 +25,20 @@ describe("createCliSearchUser", () => {
     expect(tokens).toEqual(["old-token", "new-token"]);
   });
 
-  it("本人就是管理员时，对同一候选只查询一次", async () => {
-    let calls = 0;
-    const search = createCliSearchUser({
-      appId: "cli_test",
-      cwd: process.cwd(),
-      tokenCandidates: () => ["ou_user", "ou_user"],
-      getToken: async () => "token",
-      run: async () => { calls += 1; return success; },
-    });
-
-    await expect(search("ou_user")).resolves.toEqual({ name: "何小书", department_name: ["研发部"] });
-    expect(calls).toBe(1);
-  });
-
-  it("按候选顺序优先使用管理员 token，管理员不可见时才回退目标本人", async () => {
+  it("管理员 token 失败后不使用目标用户 token，只保留 open_id 兜底", async () => {
     const tokens: string[] = [];
     const search = createCliSearchUser({
       appId: "cli_test",
       cwd: process.cwd(),
-      tokenCandidates: () => ["ou_admin", "ou_sender"],
-      getToken: async (openId) => openId === "ou_admin" ? "admin-token" : "sender-token",
+      adminOpenId: "ou_admin",
+      getToken: async () => "admin-token",
       run: async (_exe, _args, env) => {
         tokens.push(env.LARKSUITE_CLI_USER_ACCESS_TOKEN!);
-        if (env.LARKSUITE_CLI_USER_ACCESS_TOKEN === "admin-token") throw new Error("permission denied");
-        return success;
+        throw new Error("permission denied");
       },
     });
 
-    await expect(search("ou_sender")).resolves.toEqual({ name: "何小书", department_name: ["研发部"] });
-    expect(tokens).toEqual(["admin-token", "sender-token"]);
+    await expect(search("ou_sender")).resolves.toBeUndefined();
+    expect(tokens).toEqual(["admin-token"]);
   });
 });
