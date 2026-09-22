@@ -581,6 +581,14 @@ export class LarkTransport implements FeishuTransport {
       data: { receive_id: chatId, msg_type: "text", content: JSON.stringify({ text }) },
     });
   }
+
+  /** 以文本私聊指定用户；飞书按 open_id 自动投递到机器人与该用户的会话。 */
+  async sendTextToUser(openId: string, text: string): Promise<void> {
+    await this.client.im.v1.message.create({
+      params: { receive_id_type: "open_id" },
+      data: { receive_id: openId, msg_type: "text", content: JSON.stringify({ text }) },
+    });
+  }
 }
 
 /**

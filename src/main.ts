@@ -36,6 +36,7 @@ import { SlashCommandRegistrar } from "./feishu/slash-command.ts";
 import type { CleanupStats } from "./runtime/data-cleaner.ts";
 import { acquireInstanceLock } from "./utils/instance-lock.ts";
 import { MiniPetServer } from "./minipet/server.ts";
+import { sendAdminLifecycleNotice } from "./feishu/admin-lifecycle-notice.ts";
 
 /** 授权请求失效（服务重启/已处理）时就地更新的提示卡文案。 */
 const APPROVAL_STALE_NOTICE = "⚠️ 该授权请求已失效（服务已重启或已处理），请重新发起任务。";
@@ -682,6 +683,13 @@ ${trimmed}` }] },
   // 恢复定时任务调度（任务持久化在 data/schedules.json）
   await scheduleService.start();
 
+  // 仅在飞书长连接、MiniPet 通道与定时调度均完成后才报告上线，避免“已上线”但服务尚未可用。
+  await sendAdminLifecycleNotice(
+    (openId, text) => transport.sendTextToUser(openId, text),
+    adminOpenId,
+    "🟢 mini-claw 已上线，飞书通道、权限门禁和定时任务已就绪。",
+  );
+
   logger.info("[Main] 启动 4/4 服务开始工作");
 
   // 优雅退出处理：飞书连接后台断开 + 短宽限后立即退出，不阻塞终端
@@ -690,6 +698,13 @@ ${trimmed}` }] },
     if (exiting) return;
     exiting = true;
     logger.info(`[Main] 收到 ${signal} 信号，正在关闭服务...`);
+
+    // 此时连接仍在，先投递下线通知；失败或超时不阻塞后续资源回收。
+    await sendAdminLifecycleNotice(
+      (openId, text) => transport.sendTextToUser(openId, text),
+      adminOpenId,
+      `🔴 mini-claw 正在下线（${signal}）。`,
+    );
 
     clearInterval(cleanupTimer);
     clearInterval(tokenRefresher);
