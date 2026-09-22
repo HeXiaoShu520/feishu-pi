@@ -73,12 +73,16 @@ async function defaultRun(exe: string, args: string[], env: NodeJS.ProcessEnv, t
   return new Promise((resolve, reject) => {
     const child = spawn(exe, args, { env, windowsHide: true });
     let stdout = "";
+    let stderr = "";
     const timer = setTimeout(() => {
       child.kill();
       reject(new Error(`lark-cli 调用超时（${timeoutMs}ms）`));
     }, timeoutMs);
     child.stdout.on("data", (chunk: Buffer) => {
       stdout += chunk.toString("utf8");
+    });
+    child.stderr.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString("utf8");
     });
     child.on("error", (err) => {
       clearTimeout(timer);
@@ -87,7 +91,10 @@ async function defaultRun(exe: string, args: string[], env: NodeJS.ProcessEnv, t
     child.on("close", (code) => {
       clearTimeout(timer);
       if (code === 0) resolve(stdout);
-      else reject(new Error(`lark-cli 退出码 ${code}：${stdout.slice(0, 200)}`));
+      else {
+        const output = [stdout.trim(), stderr.trim()].filter(Boolean).join("\n");
+        reject(new Error(`lark-cli 退出码 ${code}：${output.slice(0, 500) || "（无标准输出或错误输出）"}`));
+      }
     });
   });
 }
@@ -112,8 +119,9 @@ export function createCliSearchUser(options: CliSearchUserOptions): CliSearchUse
       logger.warn("[CliSearch] 未找到项目内 lark-cli 二进制（node_modules/@larksuite/cli），跳过用户态搜索通道");
       return undefined;
     }
-    for (const candidate of options.tokenCandidates(targetOpenId)) {
-      if (!candidate) continue;
+    // 查询对象就是管理员时两个候选相同；同一 token 无需重复执行一次 CLI。
+    const candidates = [...new Set(options.tokenCandidates(targetOpenId).filter((candidate): candidate is string => Boolean(candidate)))];
+    for (const candidate of candidates) {
       const token = options.peekToken(candidate);
       if (!token) continue;
       try {

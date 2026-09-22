@@ -81,9 +81,9 @@ describe("ToolGuard 统一门禁", () => {
     expect(broker.calls[0]).toMatchObject({ mode: "admin" });
   });
 
-  it("deny 阻止白名单直通，携带规则进入 LLM，最终只发管理员卡", async () => {
+  it("deny 阻止白名单直通，携带规则进入 LLM，并尊重其用户卡决策", async () => {
     const broker = new FakeBroker();
-    const judge = fakeJudge("allow");
+    const judge = fakeJudge("user");
     const guard = new ToolGuard(broker, judge);
     const policy = makePolicy({
       groups: ["admin"],
@@ -92,9 +92,9 @@ describe("ToolGuard 统一门禁", () => {
       readAllowed: () => true,
       denied: (toolName, args) => toolName === "read" && (args as { path?: string }).path === ".env" ? "Read(**/.env*)" : undefined,
     });
-    const result = await guard.check(policy, { toolName: "read", args: { path: ".env" }, chatId: "oc" });
+    const result = await guard.check(policy, { toolName: "read", args: { path: ".env" }, chatId: "oc", requesterOpenId: "ou_user" });
     expect(result?.block).toBe(true);
     expect(judge.calls).toEqual([expect.objectContaining({ denyRule: "Read(**/.env*)" })]);
-    expect(broker.calls).toEqual([expect.objectContaining({ mode: "admin" })]);
+    expect(broker.calls).toEqual([expect.objectContaining({ mode: "self", requesterOpenId: "ou_user" })]);
   });
 });
