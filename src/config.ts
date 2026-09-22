@@ -32,6 +32,10 @@ export interface FeishuPiAppConfig {
   approvalTimeoutMs: number;
   /** 回复卡末尾是否显示模型统计小字（模型 · token · ctx · 费用 · 耗时 · 会话别名）；工具过程状态不受影响 */
   showModelStats: boolean;
+  /** 服务完全就绪后发给管理员的私聊文本（FEISHU_PI_ONLINE_NOTICE） */
+  onlineNotice: string;
+  /** 服务收到退出信号时发给管理员的私聊文本；可用 {signal} 插入信号名（FEISHU_PI_OFFLINE_NOTICE） */
+  offlineNotice: string;
   /** 单个图片/附件允许的最大字节数 */
   maxResourceBytes: number;
   /** 一条消息所有图片/附件允许的最大总字节数 */
@@ -54,6 +58,12 @@ export function deriveModelProvider(modelName: string): string {
 function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined || value.trim() === "") return fallback;
   return ["1", "true", "on", "yes"].includes(value.trim().toLowerCase());
+}
+
+/** 生命周期通知：支持在 .env 中用字面量 `\\n` 表示换行；空值沿用默认文本。 */
+function parseNoticeEnv(value: string | undefined, fallback: string): string {
+  const parsed = value?.replaceAll("\\n", "\n").trim();
+  return parsed || fallback;
 }
 
 /** MiniPet 只能绑定真实飞书用户，禁止使用占位身份进入 stdio 内核。 */
@@ -136,6 +146,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     approvalTimeoutMs: 5 * 60_000,
     // 回复末尾的模型统计小字：默认显示；FEISHU_SHOW_MODEL_STATS=0/false/off 关闭（工具过程状态不受影响）
     showModelStats: parseBoolEnv(env.FEISHU_SHOW_MODEL_STATS, true),
+    onlineNotice: parseNoticeEnv(env.FEISHU_PI_ONLINE_NOTICE, "🟢 mini-claw 已上线，飞书通道、权限门禁和定时任务已就绪。"),
+    offlineNotice: parseNoticeEnv(env.FEISHU_PI_OFFLINE_NOTICE, "🔴 mini-claw 正在下线（{signal}）。"),
     // 资源和会话背压：单位分别为 MiB、MiB、条；默认值适合普通内部机器人，可按部署调整。
     maxResourceBytes: parsePositiveIntEnv(env.FEISHU_PI_MAX_RESOURCE_MB, 20, 1024) * 1024 * 1024,
     maxMessageResourceBytes: parsePositiveIntEnv(env.FEISHU_PI_MAX_MESSAGE_RESOURCE_MB, 40, 2048) * 1024 * 1024,

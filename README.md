@@ -27,6 +27,7 @@ npm start
 | `FEISHU_GUARD_BASE_URL` / `FEISHU_GUARD_MODELS` / `FEISHU_GUARD_API_KEY` | 白名单未命中的智能门禁；未配置时回退管理员授权卡 |
 | `FEISHU_USER_AUTH_SCOPES` | 覆盖默认用户授权 scope，以空格或逗号分隔 |
 | `FEISHU_SHOW_MODEL_STATS` | 回复统计小字开关，默认开启，设 `0` 关闭 |
+| `FEISHU_PI_ONLINE_NOTICE` / `FEISHU_PI_OFFLINE_NOTICE` | 服务上线/下线时私聊管理员的文案；支持 `\n`，下线文案中的 `{signal}` 会替换为退出信号 |
 | `FEISHU_PI_MAX_RESOURCE_MB` / `FEISHU_PI_MAX_MESSAGE_RESOURCE_MB` | 单个资源 / 单条消息附件总大小上限，默认 20 / 40 MiB |
 | `FEISHU_PI_MAX_PENDING_MESSAGES` | 单会话在途与排队消息上限，默认 3 |
 | `MINIPET_USER_OPEN_ID` | MiniPet 本地调用者 Open ID；MiniPet 通过子进程 stdin/stdout 接入，不监听端口 |

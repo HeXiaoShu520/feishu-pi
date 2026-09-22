@@ -687,7 +687,7 @@ ${trimmed}` }] },
   await sendAdminLifecycleNotice(
     (openId, text) => transport.sendTextToUser(openId, text),
     adminOpenId,
-    "🟢 mini-claw 已上线，飞书通道、权限门禁和定时任务已就绪。",
+    config.onlineNotice,
   );
 
   logger.info("[Main] 启动 4/4 服务开始工作");
@@ -703,7 +703,7 @@ ${trimmed}` }] },
     await sendAdminLifecycleNotice(
       (openId, text) => transport.sendTextToUser(openId, text),
       adminOpenId,
-      `🔴 mini-claw 正在下线（${signal}）。`,
+      config.offlineNotice.replaceAll("{signal}", signal),
     );
 
     clearInterval(cleanupTimer);
