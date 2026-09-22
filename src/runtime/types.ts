@@ -29,6 +29,13 @@ export interface SessionStats {
   sessionId?: string;
 }
 
+/** 面向桌面前端的历史消息投影；不暴露 Pi 内部 session entry。 */
+export interface FeishuPiHistoryMessage {
+  role: "user" | "assistant";
+  content: string;
+  timestamp?: string;
+}
+
 /** Runtime 配置：工作目录、模型、权限与可选的 Guard 钩子 */
 export interface FeishuPiConfig {
   cwd: string;
@@ -64,6 +71,8 @@ export interface FeishuPiSession {
   waitForIdle(): Promise<void>;
   abort(): void;
   getStats(): SessionStats;
+  /** 返回当前分支的可展示历史；持久化事实仍由 Pi session 文件维护。 */
+  getHistory?(): FeishuPiHistoryMessage[];
   getModelName?(): string;
 }
 

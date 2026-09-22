@@ -1,0 +1,28 @@
+venv/
+.venv/
+.env
+miniPet/.env
+__pycache__/
+**/__pycache__/
+*.pyc
+data/avatars/
+data/chat/
+data/memory/
+data/tts_export/
+data/vosk/
+# 个人唤醒词模板由用户本地录制，不提交仓库
+data/wake_word_templates/*.json
+data/minipet_settings.json
+data/wooden_fish.json
+data/wooden_fish_preview.png
+dist/
+build/
+.DS_Store
+**/.DS_Store
+
+# 本地语音唤醒 KWS 模型（约 40MB 二进制），用 tools/download_kws_model.py 获取
+models/
+data/wake_word_keywords.txt
+
+# 运行日志（自启/调试时生成）
+data/logs/

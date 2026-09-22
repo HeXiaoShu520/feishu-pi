@@ -47,6 +47,69 @@ describe("ScheduleService", () => {
     expect(bad.error).toContain("无效");
   });
 
+  it("支持一次性时间、固定间隔和 cron 时区", async () => {
+    const { service } = await makeService();
+    const at = await service.addTask({
+      cron: "",
+      kind: "at",
+      at: new Date(Date.now() + 60_000).toISOString(),
+      prompt: "提醒我",
+      chatId: CHAT,
+      createdBy: ADMIN,
+    });
+    expect(at.task?.kind).toBe("at");
+    expect(at.task?.at).toBeTruthy();
+
+    const every = await service.addTask({
+      cron: "",
+      kind: "every",
+      everyMs: 60_000,
+      prompt: "检查状态",
+      chatId: CHAT,
+      createdBy: ADMIN,
+    });
+    expect(every.task?.kind).toBe("every");
+    expect(every.task?.everyMs).toBe(60_000);
+
+    const zoned = await service.addTask({
+      cron: "0 9 * * *",
+      timezone: "Asia/Shanghai",
+      prompt: "晨报",
+      chatId: CHAT,
+      createdBy: ADMIN,
+    });
+    expect(zoned.task?.timezone).toBe("Asia/Shanghai");
+
+    expect((await service.addTask({
+      cron: "",
+      kind: "every",
+      everyMs: 999,
+      prompt: "太快",
+      chatId: CHAT,
+      createdBy: ADMIN,
+    })).error).toContain("至少 1000");
+  });
+
+  it("一次性任务手动执行后自动停用但保留结果档案", async () => {
+    const { service } = await makeService();
+    const added = await service.addTask({
+      cron: "",
+      kind: "at",
+      at: new Date(Date.now() + 60_000).toISOString(),
+      prompt: "一次提醒",
+      chatId: CHAT,
+      createdBy: ADMIN,
+    });
+    if (!added.task) throw new Error("task missing");
+
+    await service.fireNow(added.task.id);
+    await vi.waitFor(async () => {
+      const task = (await service.listTasks()).find((item) => item.id === added.task!.id)!;
+      expect(task.lastStatus).toBe("ok");
+      expect(task.enabled).toBe(false);
+    });
+  });
+
   it("fireNow：执行注入的 runner 并记录 lastStatus=ok；runner 抛错记录 lastStatus=error", async () => {
     const runner = vi.fn(async (_task: ScheduleTask) => undefined);
     const { service } = await makeService(runner);

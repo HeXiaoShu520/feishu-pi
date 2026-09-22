@@ -16,8 +16,16 @@ export interface ScheduleTask {
   id: string;
   /** 任务名（展示用） */
   name: string;
-  /** cron 表达式（5 段：分 时 日 月 周） */
+  /** cron 表达式（5 段：分 时 日 月 周）；非 cron 任务为空字符串，保留此字段兼容旧档案。 */
   cron: string;
+  /** 调度形式；旧档案没有该字段时按 cron 处理。 */
+  kind?: "cron" | "at" | "every";
+  /** 一次性任务的 ISO 8601 时间。 */
+  at?: string;
+  /** 固定间隔任务的毫秒数。 */
+  everyMs?: number;
+  /** cron 任务使用的 IANA 时区；未填写时使用服务进程本地时区。 */
+  timezone?: string;
   /** 触发时投给智能体的指令 */
   prompt: string;
   /** 结果推送的目标会话（创建任务时的飞书会话） */
@@ -80,8 +88,8 @@ export interface ScheduleServiceOptions {
  */
 export class ScheduleService {
   private readonly store: ScheduleStore;
-  /** 运行中的 cron 任务（任务 id → croner 实例） */
-  private readonly jobs = new Map<string, Cron>();
+  /** 运行中的调度任务（任务 id → croner 或原生 timer）。 */
+  private readonly jobs = new Map<string, { stop: () => void }>();
   private readonly runTask: (task: ScheduleTask) => Promise<void>;
   private readonly running = new Set<string>();
   private started = false;
@@ -107,16 +115,34 @@ export class ScheduleService {
     this.jobs.clear();
   }
 
-  /** 新建任务：校验 cron 表达式并持久化、上调度。返回 { task } 或 { error }。 */
-  async addTask(input: { cron: string; prompt: string; chatId: string; createdBy: string; name?: string }): Promise<{ task?: ScheduleTask; error?: string }> {
+  /** 新建任务：校验 cron / at / every，持久化并上调度。返回 { task } 或 { error }。 */
+  async addTask(input: {
+    cron: string;
+    prompt: string;
+    chatId: string;
+    createdBy: string;
+    name?: string;
+    kind?: "cron" | "at" | "every";
+    at?: string;
+    everyMs?: number;
+    timezone?: string;
+  }): Promise<{ task?: ScheduleTask; error?: string }> {
+    const kind = input.kind ?? (input.at ? "at" : input.everyMs !== undefined ? "every" : "cron");
+    if (kind !== "cron" && kind !== "at" && kind !== "every") return { error: `不支持的调度类型：${String(kind)}` };
     const cron = input.cron.trim();
-    if (!this.isValidCron(cron)) return { error: `cron 表达式无效：${cron}（5 段：分 时 日 月 周，如 "0 9 * * *" = 每天 9 点）` };
+    const timezone = input.timezone?.trim() || undefined;
+    const validationError = this.validateSchedule({ kind, cron, at: input.at, everyMs: input.everyMs, timezone });
+    if (validationError) return { error: validationError };
     if (!input.prompt.trim()) return { error: "任务指令不能为空" };
 
     const task: ScheduleTask = {
       id: randomUUID(),
       name: input.name?.trim() || input.prompt.trim().slice(0, 20),
       cron,
+      kind,
+      ...(kind === "at" && input.at ? { at: new Date(input.at).toISOString() } : {}),
+      ...(kind === "every" && input.everyMs !== undefined ? { everyMs: Math.floor(input.everyMs) } : {}),
+      ...(timezone ? { timezone } : {}),
       prompt: input.prompt.trim(),
       chatId: input.chatId,
       createdBy: input.createdBy,
@@ -163,14 +189,34 @@ export class ScheduleService {
     return `已触发任务 ${id}（${task.name}），后台执行中，结果会推送到会话`;
   }
 
-  /** 借 croner 校验表达式合法性（构造成功即合法，立即释放）。 */
-  private isValidCron(expr: string): boolean {
-    if (expr.split(/\s+/).length !== 5) return false;
+  /** 校验一次性、固定间隔和 cron 三种调度形式。 */
+  private validateSchedule(input: {
+    kind: "cron" | "at" | "every";
+    cron: string;
+    at?: string;
+    everyMs?: number;
+    timezone?: string;
+  }): string | undefined {
+    if (input.kind === "at") {
+      if (!input.at || Number.isNaN(Date.parse(input.at))) return "一次性任务需要合法的 ISO 8601 时间（如 2026-09-21T09:00:00+08:00）";
+      if (Date.parse(input.at) <= Date.now()) return "一次性任务的时间必须晚于当前时间";
+      return undefined;
+    }
+    if (input.kind === "every") {
+      const everyMs = input.everyMs;
+      if (typeof everyMs !== "number" || !Number.isFinite(everyMs) || !Number.isInteger(everyMs) || everyMs < 1_000) {
+        return "固定间隔任务的 everyMs 必须是至少 1000 的整数（单位：毫秒）";
+      }
+      return undefined;
+    }
+    if (!input.cron || input.cron.split(/\s+/).length !== 5) {
+      return `cron 表达式无效：${input.cron}（5 段：分 时 日 月 周，如 "0 9 * * *" = 每天 9 点）`;
+    }
     try {
-      new Cron(expr, () => {}).stop();
-      return true;
+      new Cron(input.cron, { mode: "5-part", ...(input.timezone ? { timezone: input.timezone } : {}) }).stop();
+      return undefined;
     } catch {
-      return false;
+      return `cron 表达式无效：${input.cron}（请检查数值范围或时区 ${input.timezone ?? ""}）`;
     }
   }
 
@@ -178,10 +224,28 @@ export class ScheduleService {
   private scheduleJob(task: ScheduleTask): void {
     if (this.jobs.has(task.id)) return;
     try {
-      const job = new Cron(task.cron, () => {
+      const fire = () => {
         void this.fire(task.id).catch((error) => logger.error(`[Schedule] 调度失败 ${task.id}:`, error));
-      });
-      this.jobs.set(task.id, job);
+      };
+      const kind = task.kind ?? "cron";
+      if (kind === "at") {
+        const atMs = Date.parse(task.at ?? "");
+        if (Number.isNaN(atMs)) throw new Error("一次性任务时间无效");
+        const timer = setTimeout(fire, Math.max(0, atMs - Date.now()));
+        this.jobs.set(task.id, { stop: () => clearTimeout(timer) });
+      } else if (kind === "every") {
+        const everyMs = task.everyMs;
+        if (typeof everyMs !== "number" || !Number.isInteger(everyMs) || everyMs < 1_000) throw new Error("固定间隔无效");
+        const timer = setInterval(fire, everyMs);
+        this.jobs.set(task.id, { stop: () => clearInterval(timer) });
+      } else {
+        const job = new Cron(
+          task.cron,
+          { mode: "5-part", ...(task.timezone ? { timezone: task.timezone } : {}) },
+          fire,
+        );
+        this.jobs.set(task.id, job);
+      }
     } catch (error) {
       logger.warn(`[Schedule] 任务 ${task.id} cron 无效，跳过调度: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -214,6 +278,15 @@ export class ScheduleService {
       await this.markResult(task, "error", detail);
       logger.warn(`[Schedule] 任务 ${task.id} 执行失败: ${detail}`);
     } finally {
+      // 一次性任务只执行一次；保留档案便于查询结果，但不在重启后重复触发。
+      if ((task.kind ?? "cron") === "at") {
+        this.unscheduleJob(task.id);
+        const current = await this.store.get(task.id);
+        if (current) {
+          current.enabled = false;
+          await this.store.putIfPresent(current);
+        }
+      }
       this.running.delete(task.id);
     }
   }

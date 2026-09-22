@@ -13,10 +13,11 @@ function makeService() {
   const svc: ScheduleManagerService = {
     listTasks: async () => [...tasks.values()],
     addTask: async (input) => {
-      if (!/^\S+(\s+\S+){4}$/.test(input.cron)) return { error: `cron 表达式无效：${input.cron}` };
+      if ((input.kind ?? "cron") === "cron" && !/^\S+(\s+\S+){4}$/.test(input.cron)) return { error: `cron 表达式无效：${input.cron}` };
       seq += 1;
       const task = {
         id: `t${seq}`, name: input.name ?? input.prompt.slice(0, 20), cron: input.cron,
+        kind: input.kind, at: input.at, everyMs: input.everyMs, timezone: input.timezone,
         prompt: input.prompt, chatId: input.chatId, createdBy: input.createdBy, enabled: true,
       };
       tasks.set(task.id, task);
@@ -55,7 +56,7 @@ describe("schedule_manager 工具（直连 ScheduleService）", () => {
   it("add：校验必填与 cron 格式；list：能看到新任务", async () => {
     const { svc, fired } = makeService();
     const tool = makeTool(svc);
-    expect(await call(tool, { action: "add" })).toContain("cron 与 prompt");
+    expect(await call(tool, { action: "add" })).toContain("cron / at / everyMs");
     expect(await call(tool, { action: "add", cron: "not-a-cron", prompt: "x" })).toContain("cron 表达式无效");
     expect(await call(tool, { action: "add", cron: "0 9 * * *", prompt: "播报天气", name: "天气播报" })).toContain("已创建");
     const list = await call(tool, { action: "list" });
@@ -80,6 +81,23 @@ describe("schedule_manager 工具（直连 ScheduleService）", () => {
     expect(await call(tool, { action: "run", id: task!.id })).toContain("已触发");
     expect(fired).toEqual([`fire:${task!.id}`]);
     expect(await call(tool, { action: "what" })).toContain("未知操作");
+  });
+
+  it("add 支持一次性 at 和 every", async () => {
+    const { svc } = makeService();
+    const tool = makeTool(svc);
+    expect(await call(tool, {
+      action: "add",
+      kind: "at",
+      at: "2026-09-22T09:00:00+08:00",
+      prompt: "提醒开会",
+    })).toContain("at:");
+    expect(await call(tool, {
+      action: "add",
+      kind: "every",
+      everyMs: 60_000,
+      prompt: "检查状态",
+    })).toContain("every: 60000ms");
   });
 });
 

@@ -1,0 +1,113 @@
+{
+  "default": {
+    "images": "stand",
+    "act_num": 10,
+    "frame_refresh": 0.06
+  },
+  "up" : {
+    "images": "stand",
+    "act_num": 1,
+    "frame_refresh": 0.06
+  },
+  "down" : {
+    "images": "stand",
+    "act_num": 1,
+    "frame_refresh": 0.06
+  },
+  "left": {
+    "images": "stand",
+    "act_num": 10,
+    "frame_refresh": 0.06
+  },
+  "right": {
+    "images": "stand2",
+    "act_num": 4,
+    "frame_refresh": 0.06
+  },
+  "sleep": {
+    "images": "sleep",
+    "act_num": 5,
+    "frame_refresh": 0.06
+  },
+  "left_walk": {
+    "images": "walk",
+    "act_num": 3,
+    "need_move": true,
+    "direction": "left",
+    "frame_move": 3,
+    "frame_refresh": 0.06
+  },
+  "right_walk": {
+    "images": "walk2",
+    "act_num": 3,
+    "need_move": true,
+    "direction": "right",
+    "frame_move": 3,
+    "frame_refresh": 0.06
+  },
+  "drag": {
+    "images": "catch",
+    "act_num": 1,
+    "frame_refresh": 0.06
+  },
+  "fall": {
+    "images": "fall",
+    "act_num": 1,
+    "frame_refresh": 0.06
+  },
+  "onfloor": {
+    "images": "onfloor",
+    "act_num": 1,
+    "frame_refresh": 0.06
+  },
+  "pat": {
+    "images": "pat",
+    "act_num": 1,
+    "frame_refresh": 0.06
+  },
+  "fire": {
+    "images": "fire",
+    "act_num": 1,
+    "frame_refresh": 0.06
+  },
+  "loop": {
+    "images": "loop",
+    "act_num": 1,
+    "frame_refresh": 0.06
+  },
+  "attack": {
+    "images": "attack",
+    "act_num": 1,
+    "frame_refresh": 0.06
+  },
+  "sit": {
+    "images": "sit",
+    "act_num": 1,
+    "frame_refresh": 0.06
+  },
+  "chargedenergy": {
+    "images": "chargedenergy",
+    "act_num": 4,
+    "frame_refresh": 0.06
+  },
+  "throwknife": {
+    "images": "throwknife",
+    "act_num": 1,
+    "frame_refresh": 0.06
+  },
+  "feed_1":{
+    "images": "feed",
+    "act_num": 1,
+    "frame_refresh": 0.06
+  },
+  "feed_2":{
+    "images": "feed",
+    "act_num": 1,
+    "frame_refresh": 0.06
+  },
+  "feed_3":{
+    "images": "angry",
+    "act_num": 1,
+    "frame_refresh": 0.06
+  }
+}

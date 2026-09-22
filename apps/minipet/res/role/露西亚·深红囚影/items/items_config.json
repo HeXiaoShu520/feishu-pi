@@ -1,0 +1,46 @@
+{
+    "阿尔法的对话1":{
+        "name": "阿尔法的对话1",
+        "effect_FV": 0,
+        "drop_rate": 0,
+        "fv_lock": 2,
+        "fv_reward": 2,
+        "type": "dialogue",
+        "description": "阿尔法的对话1",
+        "image": "阿尔法的对话1.png",
+        "pet_limit": ["露西亚·深红囚影"]
+    },
+    "阿尔法的对话2":{
+        "name": "阿尔法的对话2",
+        "effect_FV": 0,
+        "drop_rate": 0,
+        "fv_lock": 3,
+        "fv_reward": 3,
+        "type": "dialogue",
+        "description": "阿尔法的对话2",
+        "image": "阿尔法的对话2.png",
+        "pet_limit": ["露西亚·深红囚影"]
+    },
+    "阿尔法的对话3":{
+        "name": "阿尔法的对话3",
+        "effect_FV": 0,
+        "drop_rate": 0,
+        "fv_lock": 4,
+        "fv_reward": 4,
+        "type": "dialogue",
+        "description": "阿尔法的对话3",
+        "image": "阿尔法的对话3.png",
+        "pet_limit": ["露西亚·深红囚影"]
+    },
+    "阿尔法的对话4":{
+        "name": "阿尔法的对话4",
+        "effect_FV": 0,
+        "drop_rate": 0,
+        "fv_lock": 5,
+        "fv_reward": 5,
+        "type": "dialogue",
+        "description": "阿尔法的对话4",
+        "image": "阿尔法的对话4.png",
+        "pet_limit": ["露西亚·深红囚影"]
+    }
+}

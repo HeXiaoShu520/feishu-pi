@@ -1,4 +1,4 @@
-import type { FeishuPiPrompt, FeishuPiSession, SessionStats } from "./types.ts";
+import type { FeishuPiHistoryMessage, FeishuPiPrompt, FeishuPiSession, SessionStats } from "./types.ts";
 import type { FeishuPiRuntime } from "./feishu-pi-runtime.ts";
 import type { SessionStore } from "./session-store.ts";
 import type { FeishuContext } from "../context/types.ts";
@@ -179,6 +179,12 @@ export class ConversationManager {
   async getStats(conversationId: string, context?: FeishuContext): Promise<SessionStats | undefined> {
     const state = await this.getState(conversationId, context);
     return state.session.getStats?.();
+  }
+
+  /** 返回当前会话的展示历史；唯一来源是 Pi session 文件对应的当前分支。 */
+  async getHistory(conversationId: string, context?: FeishuContext): Promise<FeishuPiHistoryMessage[]> {
+    const state = await this.getState(conversationId, context);
+    return state.session.getHistory?.() ?? [];
   }
 
   /**

@@ -13,6 +13,10 @@ export interface ScheduleManagerService {
       id: string;
       name: string;
       cron: string;
+      kind?: "cron" | "at" | "every";
+      at?: string;
+      everyMs?: number;
+      timezone?: string;
       prompt: string;
       chatId: string;
       createdBy: string;
@@ -24,6 +28,10 @@ export interface ScheduleManagerService {
   >;
   addTask(input: {
     cron: string;
+    kind?: "cron" | "at" | "every";
+    at?: string;
+    everyMs?: number;
+    timezone?: string;
     prompt: string;
     chatId: string;
     createdBy: string;
@@ -42,13 +50,17 @@ export function createScheduleManagerTool(
     name: "schedule_manager",
     label: "schedule_manager",
     description:
-      "管理定时任务：list 列表 / add 创建（cron 为 5 段表达式：分 时 日 月 周）/ remove 删除 / toggle 启停 / run 立即执行一次。" +
+      "管理定时任务：list 列表 / add 创建（kind=cron 时 cron 为 5 段表达式；也支持 kind=at 一次性时间、kind=every 固定毫秒间隔）/ remove 删除 / toggle 启停 / run 立即执行一次。" +
       "任务的指令必须自包含——执行时只能看到 prompt 这句话，需写明做什么、范围与输出要求。",
     parameters: {
       type: "object",
       properties: {
         action: { type: "string", enum: ["list", "add", "remove", "toggle", "run"], description: "操作类型" },
-        cron: { type: "string", description: "add 时：cron 表达式（5 段：分 时 日 月 周，如 0 9 * * *）" },
+        kind: { type: "string", enum: ["cron", "at", "every"], description: "add 时：cron=周期、at=一次性、every=固定间隔；默认 cron" },
+        cron: { type: "string", description: "kind=cron 时：5 段 cron（如 0 9 * * *）" },
+        at: { type: "string", description: "kind=at 时：未来的 ISO 8601 时间（如 2026-09-21T09:00:00+08:00）" },
+        everyMs: { type: "number", description: "kind=every 时：执行间隔，单位毫秒，至少 1000" },
+        timezone: { type: "string", description: "kind=cron 时可选的 IANA 时区（如 Asia/Shanghai）" },
         prompt: { type: "string", description: "add 时：任务执行时的完整指令（自包含）" },
         name: { type: "string", description: "add 时：任务名（可选，默认取 prompt 前 20 字）" },
         id: { type: "string", description: "remove/toggle/run 时：任务 ID（list 里可查）" },
@@ -94,25 +106,40 @@ async function run(
           const last = t.lastRunAt
             ? `，上次${t.lastStatus === "error" ? "执行失败" : "执行成功"}`
             : "，从未执行";
-          return `- [${t.id}] ${t.name} · cron: ${t.cron} · ${state}${last}\n  指令：${t.prompt}`;
+          const schedule = t.kind === "at"
+            ? `at: ${t.at}`
+            : t.kind === "every"
+              ? `every: ${t.everyMs}ms`
+              : `cron: ${t.cron}${t.timezone ? ` (${t.timezone})` : ""}`;
+          return `- [${t.id}] ${t.name} · ${schedule} · ${state}${last}\n  指令：${t.prompt}`;
         }),
       ].join("\n");
     }
     case "add": {
       const cron = str(params.cron);
       const prompt = str(params.prompt);
-      if (!cron || !prompt) {
-        return "❌ 创建任务需要 cron 与 prompt 两项齐全";
+      const rawKind = str(params.kind);
+      if (rawKind && !["cron", "at", "every"].includes(rawKind)) return `❌ 不支持的调度类型：${rawKind}`;
+      const effectiveKind = (rawKind || (str(params.at) ? "at" : typeof params.everyMs === "number" ? "every" : "cron")) as "cron" | "at" | "every";
+      const at = str(params.at);
+      const everyMs = typeof params.everyMs === "number" ? params.everyMs : undefined;
+      if (effectiveKind === "cron" && !cron || effectiveKind === "at" && !at || effectiveKind === "every" && everyMs === undefined || !prompt) {
+        return "❌ 创建任务需要按 kind 提供 cron / at / everyMs，并提供 prompt";
       }
       const { task, error } = await service.addTask({
         cron,
+        kind: effectiveKind,
+        ...(at ? { at } : {}),
+        ...(everyMs !== undefined ? { everyMs } : {}),
+        timezone: str(params.timezone) || undefined,
         prompt,
         chatId: defaults.chatId,
         createdBy: defaults.createdBy,
         name: str(params.name) || undefined,
       });
       if (error || !task) return `❌ 创建失败：${error ?? "未知原因"}`;
-      return `✅ 已创建定时任务 [${task.id}] ${task.name}（cron: ${cron}），到点自动执行并将结果推送到本会话。`;
+      const schedule = effectiveKind === "at" ? `at: ${at}` : effectiveKind === "every" ? `every: ${everyMs}ms` : `cron: ${cron}`;
+      return `✅ 已创建定时任务 [${task.id}] ${task.name}（${schedule}），到点自动执行并将结果推送到本会话。`;
     }
     case "remove":
       return service.removeTask(id);

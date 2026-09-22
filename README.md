@@ -29,6 +29,7 @@ npm start
 | `FEISHU_SHOW_MODEL_STATS` | 回复统计小字开关，默认开启，设 `0` 关闭 |
 | `FEISHU_PI_MAX_RESOURCE_MB` / `FEISHU_PI_MAX_MESSAGE_RESOURCE_MB` | 单个资源 / 单条消息附件总大小上限，默认 20 / 40 MiB |
 | `FEISHU_PI_MAX_PENDING_MESSAGES` | 单会话在途与排队消息上限，默认 3 |
+| `MINIPET_USER_OPEN_ID` | MiniPet 本地调用者 Open ID；MiniPet 通过子进程 stdin/stdout 接入，不监听端口 |
 
 应用需要启用机器人与长连接，订阅 `im.message.receive_v1` 和 `card.action.trigger`。初始化向导提供预置权限（含 Slash Command 的读写权限）；服务启动时会幂等注册内置快捷指令，应用实际生效的权限以飞书后台发布状态为准。
 
@@ -44,15 +45,19 @@ npm start
 - 个人文件记忆、定时任务和 Markdown 技能；TS/JS/Python 自定义工具。
 - 消息去重、会话恢复、空闲驱逐与过期目录清理。
 
-当前没有 HTTP 服务、`/stats` 页面、技能使用统计 API 或 `/perm` 命令。
+当前没有 `/stats` 页面、技能使用统计 API 或 `/perm` 命令。
 
 ## 开发与扩展
 
 ```sh
-npm run dev     # 源码热重载
+npm run dev      # 只启动飞书服务，源码热重载
+npm run minipet  # 启动 MiniPet，并由它拉起一个 mini-claw 子进程
+npm run dev:all  # 启动 MiniPet + mini-claw 热重载子进程
 npm run check   # TypeScript 检查
 npm test        # Vitest 测试
 ```
+
+MiniPet 已内置到 `apps/minipet/`，桌面端不再提供内置大模型、OpenClaw 或 Claude Code 连接；所有对话、会话、工具和权限统一由本工程的 Pi Agent 内核处理。MiniPet 启动时自动拉起 mini-claw 子进程，双方通过本地 stdin/stdout 的 JSONL 协议通信。
 
 | 位置 | 职责 |
 |---|---|
@@ -68,4 +73,4 @@ npm test        # Vitest 测试
 
 依赖声明中 Pi、飞书 SDK 和 CLI 使用 `latest`，实际安装版本由 `package-lock.json` 锁定；部署使用 `npm ci`。升级依赖后需要回归消息、附件、授权卡和模型切换。
 
-详细说明：[架构](docs/architecture.md) · [命令](docs/commands.md) · [授权](docs/user-auth.md) · [数据](docs/data-management.md) · [工具扩展](.agent/README.md)。
+详细说明：[架构](docs/architecture.md) · [MiniPet 前端接入](docs/minipet-integration.md) · [命令](docs/commands.md) · [授权](docs/user-auth.md) · [数据](docs/data-management.md) · [工具扩展](.agent/README.md) · [OpenClaw 差距与路线](docs/openclaw-gap-analysis.md)。

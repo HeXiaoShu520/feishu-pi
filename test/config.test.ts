@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { loadConfig, parseGroupMembership } from "../src/config.ts";
+import { isValidMiniPetUserOpenId, loadConfig, parseGroupMembership } from "../src/config.ts";
 
 const baseEnv = {
   FEISHU_APP_ID: "cli_x",
@@ -27,6 +27,17 @@ describe("loadConfig 模型统计小字开关", () => {
     expect(custom.maxResourceBytes).toBe(8 * 1024 * 1024);
     expect(custom.maxMessageResourceBytes).toBe(16 * 1024 * 1024);
     expect(custom.maxPendingMessages).toBe(5);
+  });
+
+  it("MiniPet 前端只保留本地调用者身份配置", () => {
+    const alias = loadConfig({ ...baseEnv, MINIPET_USER_OPEN_ID: "mini_user" });
+    expect(alias.miniPetUserOpenId).toBe("mini_user");
+  });
+
+  it("MiniPet 身份只接受真实飞书 Open ID", () => {
+    expect(isValidMiniPetUserOpenId("ou_c34b02e41beb83e64f2ca8efaaf9299d")).toBe(true);
+    expect(isValidMiniPetUserOpenId("minipet_user")).toBe(false);
+    expect(isValidMiniPetUserOpenId(undefined)).toBe(false);
   });
 
   it("FEISHU_SHOW_MODEL_STATS：0/false/off 关闭；1/true/on 开启", () => {

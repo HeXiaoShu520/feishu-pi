@@ -4,7 +4,7 @@ import { ConversationManager } from "./runtime/conversation-manager.ts";
 import { FeishuPiRuntime } from "./runtime/feishu-pi-runtime.ts";
 import { FeishuAgentBridge } from "./feishu/agent-bridge.ts";
 import { LarkTransport } from "./feishu/lark-transport.ts";
-import { loadConfig } from "./config.ts";
+import { isValidMiniPetUserOpenId, loadConfig } from "./config.ts";
 import { SessionStore } from "./runtime/session-store.ts";
 import { MessageStore } from "./feishu/message-store.ts";
 import { DataCleaner } from "./runtime/data-cleaner.ts";
@@ -35,6 +35,7 @@ import { createMemoryTool } from "./feishu/memory-tool.ts";
 import { SlashCommandRegistrar } from "./feishu/slash-command.ts";
 import type { CleanupStats } from "./runtime/data-cleaner.ts";
 import { acquireInstanceLock } from "./utils/instance-lock.ts";
+import { MiniPetServer } from "./minipet/server.ts";
 
 /** 授权请求失效（服务重启/已处理）时就地更新的提示卡文案。 */
 const APPROVAL_STALE_NOTICE = "⚠️ 该授权请求已失效（服务已重启或已处理），请重新发起任务。";
@@ -73,6 +74,9 @@ export async function main(): Promise<void> {
   }
 
   const config = loadConfig();
+  if (process.argv.includes("--stdio") && !isValidMiniPetUserOpenId(config.miniPetUserOpenId)) {
+    throw new Error("MiniPet 子进程必须配置真实的 MINIPET_USER_OPEN_ID（ou_...），不能使用占位身份启动。");
+  }
   const instanceLock = await acquireInstanceLock(join(config.dataDir, ".instance.lock"));
 
   // 项目内预制 CLI（lark-cli）：把 node_modules/.bin 前插到 PATH，
@@ -384,15 +388,31 @@ export async function main(): Promise<void> {
   });
   // bridge 在下方创建，先用闭包引用（授权卡撤回需查询该会话的详细模式开关）
   let bridgeRef: FeishuAgentBridge | undefined;
+  // MiniPet 本地 stdio 通道稍后才创建；授权通道通过闭包绑定，避免改变现有装配顺序。
+  let miniPetServer: MiniPetServer | undefined;
   const broker = new PermissionBroker({
     adminOpenIds: adminOpenId ? [adminOpenId] : [],
     timeoutMs: config.approvalTimeoutMs,
-    sendCard: (chatId, card) => transport.sendCardToChat(chatId, card),
+    sendCard: (chatId, card) => {
+      if (chatId.startsWith("minipet:")) {
+        if (!miniPetServer) return Promise.reject(new Error("MiniPet 前端尚未就绪"));
+        return miniPetServer.sendApprovalCard(chatId, card);
+      }
+      return transport.sendCardToChat(chatId, card);
+    },
     // 转发授权卡到管理员私聊：open_id 投递（chat_id 通道不认 ou_ 前缀）
     sendCardToUser: (openId, card) => transport.sendCardToUser(openId, card),
-    updateCard: (messageId, card) => transport.updateCardById(messageId, card),
+    updateCard: (messageId, card) => {
+      if (messageId.startsWith("minipet-card:")) {
+        if (!miniPetServer) return Promise.reject(new Error("MiniPet 前端尚未就绪"));
+        return miniPetServer.updateApprovalCard(messageId, card);
+      }
+      return transport.updateCardById(messageId, card);
+    },
     // 精简模式下授权确认后撤回卡片，减少会话占用
-    recallCard: (messageId) => transport.recallMessageById(messageId),
+    recallCard: (messageId) => messageId.startsWith("minipet-card:")
+      ? (miniPetServer ? miniPetServer.recallApprovalCard(messageId) : Promise.resolve())
+      : transport.recallMessageById(messageId),
     shouldRecall: (chatId) => bridgeRef?.isDetailMode(chatId) === false,
   });
   const toolGuard = new ToolGuard(broker, new PolicyJudge({
@@ -571,6 +591,18 @@ ${trimmed}` }] },
 
   const conversations = new ConversationManager(runtime, sessions, { maxPendingMessages: config.maxPendingMessages });
 
+  // MiniPet 是第二个前端入口：只做本地 JSONL 协议适配，底层复用同一个会话/权限/工具运行时。
+  // 只有由 MiniPet 启动的 --stdio 子进程才开启，避免主服务额外监听端口。
+  miniPetServer = process.argv.includes("--stdio")
+    ? new MiniPetServer({
+        conversations,
+        userOpenId: config.miniPetUserOpenId,
+        maxResourceBytes: config.maxResourceBytes,
+        maxMessageResourceBytes: config.maxMessageResourceBytes,
+        onApproval: (params) => broker.handleCallback(params),
+      })
+    : undefined;
+
   const bridge = new FeishuAgentBridge(
     conversations,
     transport,
@@ -644,13 +676,13 @@ ${trimmed}` }] },
 
   bridge.start();
   await transport.connect();
+  if (miniPetServer) await miniPetServer.start();
   // 恢复定时任务调度（任务持久化在 data/schedules.json）
   await scheduleService.start();
 
   logger.info("[Main] 启动 4/4 服务开始工作");
 
-  // 优雅退出处理：Windows 上 WebSocket disconnect 可能挂住，
-  // 因此后台尝试断开 + 短宽限后立即硬退出，不阻塞终端
+  // 优雅退出处理：飞书连接后台断开 + 短宽限后立即退出，不阻塞终端
   let exiting = false;
   const gracefulShutdown = async (signal: string) => {
     if (exiting) return;
@@ -660,6 +692,7 @@ ${trimmed}` }] },
     clearInterval(cleanupTimer);
     clearInterval(tokenRefresher);
     scheduleService.stop();
+    await miniPetServer?.stop();
     await instanceLock.release();
 
     // 断开在后台进行，不 await——挂住也不影响退出

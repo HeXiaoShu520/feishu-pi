@@ -2,7 +2,7 @@ import { createAgentSession, SessionManager, type AgentSession, DefaultResourceL
 import { findEnvKeys, getModel, type ImageContent } from "@earendil-works/pi-ai/compat";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { deriveModelProvider } from "../config.ts";
-import type { FeishuPiConfig, FeishuPiEvent, FeishuPiPrompt, FeishuPiSession, FeishuPiTool } from "./types.ts";
+import type { FeishuPiConfig, FeishuPiEvent, FeishuPiHistoryMessage, FeishuPiPrompt, FeishuPiSession, FeishuPiTool } from "./types.ts";
 import type { FeishuContext } from "../context/types.ts";
 import { DEFAULT_BUILTIN_TOOLS, createToolRegistryAsync } from "../tools/registry.ts";
 import { resolve, sep } from "node:path";
@@ -66,6 +66,19 @@ class SessionWrapper implements FeishuPiSession {
     return this.raw.model?.id || "unknown";
   }
 
+  getHistory(): FeishuPiHistoryMessage[] {
+    return this.raw.sessionManager.getBranch()
+      .flatMap((entry) => {
+        if (entry.type !== "message" || (entry.message.role !== "user" && entry.message.role !== "assistant")) return [];
+        return [{
+          role: entry.message.role as "user" | "assistant",
+          content: messageText(entry.message.content),
+          timestamp: entry.timestamp,
+        }];
+      })
+      .filter((entry) => entry.content.trim());
+  }
+
   subscribe(listener: (event: FeishuPiEvent) => void): () => void {
     return this.raw.subscribe((event) => {
       const mapped = mapPiEvent(event as unknown as PiRawEvent);
@@ -91,6 +104,18 @@ class SessionWrapper implements FeishuPiSession {
     // abort 返回 Promise，这里不等待（调用方只负责触发中断）
     void this.raw.abort();
   }
+}
+
+function messageText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (!Array.isArray(content)) return "";
+  return content.map((block) => {
+    if (!block || typeof block !== "object") return "";
+    const item = block as { type?: unknown; text?: unknown };
+    if (item.type === "text" && typeof item.text === "string") return item.text;
+    if (item.type === "image") return "[图片]";
+    return "";
+  }).filter(Boolean).join("\n");
 }
 
 /**

@@ -6,6 +6,8 @@
   "scripts": {
     "start": "tsx src/main.ts",
     "dev": "tsx watch src/main.ts",
+    "minipet": "node apps/minipet/tools/dev_launcher.js",
+    "dev:all": "node tools/dev-all.mjs",
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "vitest --run",
     "setup": "tsx src/scripts/setup-wizard.ts"

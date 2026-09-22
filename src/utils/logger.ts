@@ -49,19 +49,23 @@ function colorizeTag(arg: unknown): unknown {
   });
 }
 
+// MiniPet 子进程用 stdout 传 JSONL；日志统一转到 stderr，避免污染协议流。
+const info = (...args: unknown[]) => (process.env.MINIPET_STDIO === "1" ? console.error(...args) : console.info(...args));
+const log = (...args: unknown[]) => (process.env.MINIPET_STDIO === "1" ? console.error(...args) : console.log(...args));
+
 export const logger = {
-  info: (...args: unknown[]) => console.info(`${colors.gray}[${timestamp()}]${colors.reset}`, ...args.map(colorizeTag)),
+  info: (...args: unknown[]) => info(`${colors.gray}[${timestamp()}]${colors.reset}`, ...args.map(colorizeTag)),
   warn: (...args: unknown[]) => console.warn(`${colors.gray}[${timestamp()}]${colors.reset} ${colors.yellow}[warn]${colors.reset}`, ...args.map(colorizeTag)),
   error: (...args: unknown[]) => console.error(`${colors.gray}[${timestamp()}]${colors.reset} ${colors.red}[error]${colors.reset}`, ...args.map(colorizeTag)),
-  log: (...args: unknown[]) => console.log(`${colors.gray}[${timestamp()}]${colors.reset}`, ...args.map(colorizeTag)),
+  log: (...args: unknown[]) => log(`${colors.gray}[${timestamp()}]${colors.reset}`, ...args.map(colorizeTag)),
 
   // 用户输入（蓝色）
   userInput: (userName: string, message: string) => {
-    console.info(`${colors.gray}[${timestamp()}]${colors.reset} ${colors.blue}[${userName}]${colors.reset} ${colorizeTag(message)}`);
+    info(`${colors.gray}[${timestamp()}]${colors.reset} ${colors.blue}[${userName}]${colors.reset} ${colorizeTag(message)}`);
   },
 
   // AI 响应（绿色）
   aiResponse: (userName: string, message: string) => {
-    console.info(`${colors.gray}[${timestamp()}]${colors.reset} ${colors.green}[${userName}]${colors.reset} ${colorizeTag(message)}`);
+    info(`${colors.gray}[${timestamp()}]${colors.reset} ${colors.green}[${userName}]${colors.reset} ${colorizeTag(message)}`);
   },
 };

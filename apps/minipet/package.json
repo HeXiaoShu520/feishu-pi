@@ -1,0 +1,8 @@
+{
+  "name": "minipet",
+  "private": true,
+  "scripts": {
+    "postinstall": "node tools/install_python_deps.js",
+    "dev": "node tools/dev_launcher.js"
+  }
+}

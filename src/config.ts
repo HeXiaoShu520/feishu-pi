@@ -38,6 +38,8 @@ export interface FeishuPiAppConfig {
   maxMessageResourceBytes: number;
   /** 单个会话最多保留的在途/排队消息数 */
   maxPendingMessages: number;
+  /** MiniPet 本地前端使用的稳定调用者标识 */
+  miniPetUserOpenId: string;
 }
 
 /** 由模型名推断供应商：带 claude → anthropic，带 deepseek → deepseek，其余 → openai。 */
@@ -52,6 +54,11 @@ export function deriveModelProvider(modelName: string): string {
 function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
   if (value === undefined || value.trim() === "") return fallback;
   return ["1", "true", "on", "yes"].includes(value.trim().toLowerCase());
+}
+
+/** MiniPet 只能绑定真实飞书用户，禁止使用占位身份进入 stdio 内核。 */
+export function isValidMiniPetUserOpenId(value: string | undefined): boolean {
+  return /^ou_[A-Za-z0-9_]+$/.test(value ?? "");
 }
 
 /** 读取正整数配置；非法值回退默认值，避免启动阶段因可选参数失败。 */
@@ -169,5 +176,7 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     maxResourceBytes: parsePositiveIntEnv(env.FEISHU_PI_MAX_RESOURCE_MB, 20, 1024) * 1024 * 1024,
     maxMessageResourceBytes: parsePositiveIntEnv(env.FEISHU_PI_MAX_MESSAGE_RESOURCE_MB, 40, 2048) * 1024 * 1024,
     maxPendingMessages: parsePositiveIntEnv(env.FEISHU_PI_MAX_PENDING_MESSAGES, 3, 100),
+    // MiniPet 由本地 stdio 子进程接入，不监听端口；只保留服务端注入的调用者身份。
+    miniPetUserOpenId: env.MINIPET_USER_OPEN_ID || "minipet_user",
   };
 }

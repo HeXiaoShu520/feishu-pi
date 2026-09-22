@@ -2,19 +2,21 @@
 
 ## 范围
 
-单进程、单飞书应用的智能体后端。复用 Pi 的模型适配、Agent loop、SessionManager 和编码工具，不自建 Agent 框架，不提供 Web 服务。
+单进程、单飞书应用的智能体后端，同时可选接入本机 MiniPet 桌面前端。复用 Pi 的模型适配、Agent loop、SessionManager 和编码工具，不自建 Agent 框架。
 
 ```text
-WebSocket / EventDispatcher
-  → LarkTransport：消息归一化、资料查询、附件下载、会话路由
-  → FeishuAgentBridge：消息认领、命令、回复生命周期
-  → ConversationManager：同会话串行、打断、恢复与换代
+飞书 WebSocket / EventDispatcher                 MiniPet stdin/stdout JSONL
+  → LarkTransport                                 → MiniPetServer：协议归一化、图片解码、surface 流式输出
+  → FeishuAgentBridge：消息认领、命令、回复生命周期       ↘
+                         → ConversationManager：同会话串行、打断、恢复与换代
   → FeishuPiRuntime：Pi AgentSession、资源与工具
   → beforeToolCall：权限策略 → ToolGuard → 审核模型 / 授权卡
   → Pi 事件 → ReplyParts → CardKitReply → CardKitStream
 ```
 
 `main.ts` 装配服务。机器人身份获取失败会终止启动；管理员解析失败则继续运行，但管理员授权能力不可用。技能、工具和权限在接收消息前预加载。
+
+MiniPet 由桌面端拉起 mini-claw 子进程，使用 `minipet.v1` 本地 JSONL 协议通信，不监听端口。`session_id` 映射为 `minipet:{user}:{session}`，保证桌面聊天窗口跨轮复用同一 Pi 历史；历史展示通过 `history.get/result` 读取 Pi session，桌面端不再维护第二份消息库；`turn_id/surface_id` 只负责一轮回复卡片的更新。详见 [MiniPet 前端接入](minipet-integration.md)。
 
 ## 会话与身份
 
@@ -76,7 +78,7 @@ Pi 事件的异步处理按顺序排空后才结算回复。初始化失败不�
 
 ## 定时任务和记忆
 
-`schedule_manager` 已接通对话：创建、列出、删除、启停、立即执行。工具只允许操作调用者自己的任务。cron 为 5 段，时区使用服务进程本地时区。同一任务执行中再次触发会跳过，避免周期性中断上一轮。
+`schedule_manager` 已接通对话：创建、列出、删除、启停、立即执行。工具只允许操作调用者自己的任务。调度支持 5 段 cron、一次性 `at` 和固定间隔 `every`；cron 可指定 IANA 时区，未指定时使用服务进程本地时区。同一任务执行中再次触发会跳过，避免周期性中断上一轮。
 
 任务以创建者身份、独立会话执行，结果发往创建时的 chatId。prompt 必须包含执行所需的对象、范围与输出要求；后续触发可看到该任务自己的历史。没有任意的最短字数限制。
 

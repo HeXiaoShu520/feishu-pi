@@ -18,6 +18,6 @@
 
 `/model` 需要配置 `FEISHU_PI_MODEL_BASE_URL`；切换会写回 `.env`，新建或重建的 Pi 会话使用新模型。现存会话可在允许的场景使用 `/new` 更新。
 
-没有 `/perm`、`/stats`、`/schedule` 命令。权限查看使用配置文件与 `/status`；定时任务通过自然语言调用 `schedule_manager`，是否可调用由 `Tools(schedule_manager)` 决定。
+没有 `/perm`、`/stats`、`/schedule` 命令。权限查看使用配置文件与 `/status`；定时任务通过自然语言调用 `schedule_manager`，支持 cron、一次性 `at` 和固定间隔 `every`，是否可调用由 `Tools(schedule_manager)` 决定。
 
 登录也可由缺凭证/缺 scope 的 CLI 调用自动发起，授权链接发往本人私聊。`/logout` 清除本地凭证，不撤销飞书服务器端已授予的应用权限。

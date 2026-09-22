@@ -1,0 +1,128 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #fff7fa;
+    }
+    #stage {
+      width: 224px;
+      height: 158px;
+    }
+  </style>
+</head>
+<body>
+<div id="stage"></div>
+<script src="three.min.js"></script>
+<script>
+const params = new URLSearchParams(location.search);
+const faces = (params.get('faces') || '2,5,3,4,1,6').split(',').map(Number);
+
+const scene = new THREE.Scene();
+const camera = new THREE.PerspectiveCamera(45, 224 / 158, 0.1, 1000);
+camera.position.set(3.2, 2.5, 5.2);
+camera.lookAt(0, 0, 0);
+
+const renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+renderer.setSize(224, 158);
+renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+document.getElementById('stage').appendChild(renderer.domElement);
+
+scene.add(new THREE.AmbientLight(0xffffff, 1.7));
+const light = new THREE.DirectionalLight(0xffffff, 1.6);
+light.position.set(3, 4, 5);
+scene.add(light);
+
+function roundRect(ctx, x, y, w, h, r) {
+  ctx.beginPath();
+  ctx.moveTo(x + r, y);
+  ctx.lineTo(x + w - r, y);
+  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
+  ctx.lineTo(x + w, y + h - r);
+  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  ctx.lineTo(x + r, y + h);
+  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
+  ctx.lineTo(x, y + r);
+  ctx.quadraticCurveTo(x, y, x + r, y);
+  ctx.closePath();
+}
+
+function faceTexture(n) {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 256;
+  const g = c.getContext('2d');
+  const grd = g.createLinearGradient(0, 0, 256, 256);
+  grd.addColorStop(0, '#ffffff');
+  grd.addColorStop(1, '#f0a8c8');
+  g.fillStyle = grd;
+  roundRect(g, 10, 10, 236, 236, 38);
+  g.fill();
+  g.strokeStyle = '#7e3a5b';
+  g.lineWidth = 10;
+  g.stroke();
+  const pipMap = {
+    1: [[128, 128]],
+    2: [[78, 78], [178, 178]],
+    3: [[78, 78], [128, 128], [178, 178]],
+    4: [[78, 78], [178, 78], [78, 178], [178, 178]],
+    5: [[78, 78], [178, 78], [128, 128], [78, 178], [178, 178]],
+    6: [[78, 68], [178, 68], [78, 128], [178, 128], [78, 188], [178, 188]],
+  };
+  g.fillStyle = '#c24a75';
+  for (const [x, y] of pipMap[n]) {
+    g.beginPath();
+    g.arc(x, y, 18, 0, Math.PI * 2);
+    g.fill();
+  }
+  const texture = new THREE.CanvasTexture(c);
+  texture.colorSpace = THREE.SRGBColorSpace;
+  return texture;
+}
+
+const materials = faces.map(n => new THREE.MeshStandardMaterial({
+  map: faceTexture(n),
+  roughness: 0.55,
+}));
+const cube = new THREE.Mesh(new THREE.BoxGeometry(1.8, 1.8, 1.8), materials);
+scene.add(cube);
+
+const shadow = new THREE.Mesh(
+  new THREE.CircleGeometry(1.35, 48),
+  new THREE.MeshBasicMaterial({ color: 0x693752, transparent: true, opacity: 0.16 })
+);
+shadow.rotation.x = -Math.PI / 2;
+shadow.position.y = -1.18;
+scene.add(shadow);
+
+const finalDeg = { x: -14, y: -24, z: 0 };
+const start = performance.now();
+const duration = 1800;
+function easeOut(t) { return 1 - Math.pow(1 - t, 3); }
+
+function tick(now) {
+  const p = Math.min(1, (now - start) / duration);
+  const e = easeOut(p);
+  const bounce = Math.abs(Math.sin(p * 18)) * Math.exp(-4 * p) * 0.8;
+  cube.position.y = 1.9 * (1 - e) + bounce;
+  cube.rotation.x = (720 * (1 - p) + finalDeg.x) * Math.PI / 180;
+  cube.rotation.y = (540 * (1 - p) + finalDeg.y) * Math.PI / 180;
+  cube.rotation.z = (260 * (1 - p) + finalDeg.z) * Math.PI / 180;
+  if (p >= 1) {
+    cube.rotation.x = finalDeg.x * Math.PI / 180;
+    cube.rotation.y = finalDeg.y * Math.PI / 180;
+    cube.rotation.z = finalDeg.z * Math.PI / 180;
+    cube.position.y = 0;
+  }
+  renderer.render(scene, camera);
+  if (p < 1) requestAnimationFrame(tick);
+}
+requestAnimationFrame(tick);
+</script>
+</body>
+</html>

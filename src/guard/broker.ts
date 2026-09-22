@@ -19,6 +19,9 @@ export interface BrokerOptions {
   shouldRecall?: (chatId: string) => boolean;
 }
 
+/** MiniPet 使用的本地会话 ID 前缀。管理员模式不会走此通道，而是投递管理员私聊。 */
+const MINIPET_CHAT_PREFIX = "minipet:";
+
 export interface ApprovalRequest {
   toolName: string;
   args: unknown;
@@ -133,11 +136,20 @@ export class PermissionBroker {
       });
 
       const card = buildPermissionCard({ toolName: request.toolName, args: request.args, approvalId, token, mode });
-      this.options
-        .sendCard(request.chatId, card)
+      const pending = this.pending.get(approvalId)!;
+      // MiniPet 的管理员审批不能让桌面端直接批准：把原始授权卡投递到管理员私聊。
+      // 只有 self 模式会走本地卡片通道；本地按钮最终仍须经过下面的 token/身份校验。
+      const directAdminDelivery = mode === "admin" && request.chatId.startsWith(MINIPET_CHAT_PREFIX);
+      if (directAdminDelivery) pending.forwarded = {};
+      const delivery = directAdminDelivery
+        ? this.options.sendCardToUser(this.options.adminOpenIds[0]!, card)
+        : this.options.sendCard(request.chatId, card);
+      delivery
         .then((messageId) => {
           const pending = this.pending.get(approvalId);
-          if (pending) pending.messageId = messageId;
+          if (!pending) return;
+          if (directAdminDelivery) pending.forwarded = { messageId };
+          else pending.messageId = messageId;
         })
         .catch((error) => {
           // 卡片发送失败：直接拒绝并唤醒等待方

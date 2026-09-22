@@ -1,0 +1,119 @@
+{
+  "default": {
+    "images": "ly-daiji",
+    "act_num": 10,
+    "frame_refresh":0.160
+  },
+  "up" : {
+    "images": "ly-daiji",
+    "act_num": 1,
+    "frame_refresh":0.160
+  },
+  "down" : {
+    "images": "ly-daiji",
+    "act_num": 1,
+    "frame_refresh":0.160
+  },
+  "left": {
+    "images": "ly-daiji",
+    "act_num": 10,
+    "frame_refresh":0.160
+  },
+  "right": {
+    "images": "ly-daiji",
+    "act_num": 4,
+    "frame_refresh":0.160
+  },
+  "ly-dianrang": {
+    "images": "ly-dianrang",
+    "act_num": 1,
+    "frame_refresh":0.160
+  },
+  "ly-guancha": {
+    "images": "ly-guancha",
+    "act_num": 1,
+    "frame_refresh":0.160
+  },
+  "ly-jie": {
+    "images": "ly-jie",
+    "act_num": 1,
+    "anchor": [0, -5], 
+    "frame_refresh":0.160
+  },
+"ly-qifei": {
+  "images": "ly-qifei",
+  "act_num": 1,
+  "frame_refresh":0.160
+},
+"ly-qifeng": {
+  "images": "ly-qifeng",
+  "act_num": 1,
+  "frame_refresh":0.160
+},
+"ly-xiao": {
+  "images": "ly-xiao",
+  "act_num": 1,
+  "frame_refresh":0.160
+},
+"ly-zhaojingzi": {
+  "images": "ly-zhaojingzi",
+  "act_num": 1,
+  "frame_refresh":0.160
+},
+    "ly-suijiao": {
+    "images": "ly-suijiao",
+    "act_num": 20,
+    "frame_refresh":0.160
+  },
+  "left_walk": {
+    "images": "ly-zoulu",
+    "act_num": 2,
+    "need_move": true,
+    "direction": "left",
+    "frame_move": 10,
+    "frame_refresh":0.160
+  },
+  "right_walk": {
+    "images": "ly-zoulu2",
+    "act_num": 2,
+    "need_move": true,
+    "direction": "right",
+    "frame_move": 10,
+    "frame_refresh":0.160
+  },
+  "drag": {
+    "images": "ly-linqi",
+    "act_num": 1,
+    "frame_refresh":0.160
+  },
+  "fall": {
+    "images": "ly-zhikong",
+    "act_num": 1,
+    "frame_refresh":0.090
+  },
+  "onfloor": {
+    "images": "ly-luodi1",
+    "act_num": 1,
+    "frame_refresh":0.130
+  },
+  "patpat": {
+    "images": "ly-xiao",
+    "act_num": 1,
+    "frame_refresh":0.160
+  },
+  "feed_1":{
+    "images": "ly-xiao",
+    "act_num": 5,
+    "frame_refresh":0.160
+  },
+  "feed_2":{
+    "images": "ly-xiao",
+    "act_num": 5,
+    "frame_refresh":0.160
+  },
+  "feed_3":{
+    "images": "ly-xiao",
+    "act_num": 5,
+    "frame_refresh":0.160
+  }
+}

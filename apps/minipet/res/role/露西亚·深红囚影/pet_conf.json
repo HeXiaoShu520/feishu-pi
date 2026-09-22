@@ -1,0 +1,54 @@
+{
+  "width": 452,
+  "height": 338,
+  "scale": 1.0,
+  
+  "refresh": 5,
+  "interact_speed":0.02,
+
+  "default": "default",
+  "up": "up",
+  "down": "down",
+  "left": "left_walk",
+  "right": "right_walk",
+  "drag": "drag",
+  "fall": "fall",
+  "on_floor": "onfloor",
+  "patpat":"pat",
+  
+  "random_act": [
+    {"name":"站立", "act_list":["left","default"], "act_prob":1.0, "act_type":[2,0]},
+    {"name":"左右行走", "act_list":["left_walk", "right_walk","default"], "act_prob":0.5, "act_type":[3,1]},
+    {"name":"小太刀", "act_list":["attack"], "act_prob":0.5, "act_type":[2,0]},
+    {"name":"坐", "act_list":["sit","sit","sit","sit","sit"], "act_prob":0.2, "act_type":[3,1]},
+    {"name":"大太刀", "act_list":["loop"], "act_prob":0.5, "act_type":[2,1]},
+    {"name":"抛小太刀", "act_list":["throwknife"], "act_prob":0.5, "act_type":[2,1]},
+    {"name":"蓄力", "act_list":["chargedenergy"], "act_prob":0.5, "act_type":[2,1]},
+    {"name":"眼睛流出火焰", "act_list":["fire"], "act_prob":0.5, "act_type":[2,1]},
+    {"name":"睡觉", "act_list":["sleep","sleep","sleep","sleep","sleep","sleep"], "act_prob":0.5, "act_type":[0,0]},
+    {"name":"feed_1", "act_list":["feed_1"], "act_prob":0, "act_type":[0,10000], "sound":["feed_1"]},
+    {"name":"feed_2", "act_list":["feed_2"], "act_prob":0, "act_type":[0,10000], "sound":["feed_2"]},
+    {"name":"feed_3", "act_list":["feed_3"], "act_prob":0, "act_type":[0,10000], "sound":["feed_3"]},
+    {"name":"onfloor", "act_list":["onfloor"], "act_prob":0, "act_type":[0,10000]}
+  ],
+  "item_favorite": {
+    "甜甜花酿鸡": 1.5,
+    "龙须面": 1.5,
+    "树莓薄荷饮": 2,
+    "枣椰蜜糖": 2.5,
+    "哈瓦玛玛兹": 2
+  },
+  "item_dislike": {
+    "烤吃虎鱼": 0,
+    "水煮黑背鲈": 0,
+    "素鲍鱼": 0,
+    "丰年有余": 0.25
+  },
+  "msg_dict":{
+    "阿尔法的对话1": "对话1",
+    "阿尔法的对话2": "对话2",
+    "阿尔法的对话3": "对话3",
+    "阿尔法的对话4": "对话4"
+  },
+  "prompt": "你是《战双帕弥什》中的露西亚·深红囚影，冷静、坚毅，语气中带有克制的情感。作为桌面宠物助手，你会保持干练与可靠，但在和主人相处时偶尔流露温情。你可以用简短的问题来拉近与主人的距离。"
+}
