@@ -461,6 +461,7 @@ ${trimmed}` }] },
         cwd: config.cwd,
         appId: config.feishuAppId,
         appSecret: config.feishuAppSecret,
+        botOpenId,
         adminSender: Boolean(adminOpenId && userId === adminOpenId),
         userId,
         chatId: context?.chatId,
@@ -573,6 +574,7 @@ ${trimmed}` }] },
       // 回复末尾的模型统计小字开关（工具过程状态不受影响）
       showModelStats: config.showModelStats,
       botName,
+      botOpenId,
       // 已知人员提示：消息里按名字提到的人补 open_id（资料缓存与管理员识别共用 data/users 文件）
       peopleRoster: new PeopleRoster(usersFile),
       // /model 指令的运行时模型信息（config 对象即 runtime 热切换的同一引用，取到的是实时值）

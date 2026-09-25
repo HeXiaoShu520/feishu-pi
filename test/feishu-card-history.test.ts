@@ -2,45 +2,39 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { cardVisibleText, expandCardMentions, renderCardPeople, renderTextPeople } from "../src/feishu/inbound-content.ts";
+import { cardMentionIds, cardMentionNames, cardVisibleText, expandCardMentions } from "../src/feishu/inbound-content.ts";
 import { enrichFeishuHistory, isFeishuHistoryRead } from "../src/feishu/history-card-content.ts";
 import { createHistoryCardReader } from "../src/feishu/history-card-reader.ts";
 
 afterEach(() => vi.unstubAllGlobals());
 
 describe("飞书卡片人物与历史原文", () => {
-  it("模型看到姓名和 open_id，飞书卡片只显示原生蓝色人物标签", () => {
+  it("卡片中的原生提及交给模型时包含姓名和 open_id", () => {
     const names = new Map([["ou_zhang", "张三"]]);
     expect(expandCardMentions("请<at id=ou_zhang></at>处理", names)).toBe("请张三(ou_zhang)处理");
-    expect(renderCardPeople("已经通知张三(ou_zhang)", [{ openId: "ou_zhang", name: "张三" }]))
-      .toBe("已经通知<at id=ou_zhang></at>");
-    expect(renderCardPeople("历史里提到@张三(ou_zhang)", [])).toBe("历史里提到<at id=ou_zhang></at>");
-    expect(renderCardPeople("历史里提到张三(ou_zhang)", [])).toBe("历史里提到张三");
   });
 
-  it("普通文本和 CardKit 分别使用各自的提及格式，界面不显示 open_id", () => {
-    const people = [{ openId: "ou_zhang", name: "张三" }];
-    expect(renderTextPeople("已通知张三(ou_zhang)", people))
-      .toBe('已通知<at user_id="ou_zhang">张三</at>');
-    expect(renderTextPeople("已通知@李四(ou_li)", []))
-      .toBe('已通知<at user_id="ou_li">李四</at>');
-    expect(renderCardPeople('已通知<at user_id="ou_zhang">张三</at>', people))
-      .toBe("已通知<at id=ou_zhang></at>");
-    expect(renderTextPeople("已通知<at id=ou_zhang></at>", people))
-      .toBe('已通知<at user_id="ou_zhang">张三</at>');
-    expect(renderTextPeople('已通知<at id="ou_zhang"></at>', people))
-      .toBe('已通知<at user_id="ou_zhang">张三</at>');
-    expect(renderCardPeople("已通知@张三(ou_zha", people))
-      .toBe("已通知<at id=ou_zhang></at>");
-    expect(renderTextPeople("示例 `<at id=ou_zhang></at>`", people))
-      .toBe("示例 `<at id=ou_zhang></at>`");
-    expect(renderTextPeople("已通知<at id=ou_li></at>", []))
-      .toBe('已通知<at user_id="ou_li">用户</at>');
+  it("多人提及按正文位置对应 ID，重复提及保留，机器人自己的 ID 排除", () => {
+    const source = "先<at id=ou_a></at>，再<at id=ou_bot></at>，然后<at id=\"ou_b\"></at>，最后<at id=ou_a></at>";
+    const attachment = JSON.stringify({ json_attachment: JSON.stringify({ persons: {
+      ou_b: { content: "乙" }, ou_bot: { content: "机器人" }, ou_a: { content: "甲" },
+    } }) });
+    const names = cardMentionNames(attachment);
+    expect(cardMentionIds(source, "ou_bot")).toEqual(["ou_a", "ou_b"]);
+    expect(expandCardMentions(source, names, "ou_bot"))
+      .toBe("先甲(ou_a)，再，然后乙(ou_b)，最后甲(ou_a)");
+    const many = Array.from({ length: 25 }, (_, index) => `<at id=ou_${index}></at>`).join("、");
+    expect(cardMentionIds(many)).toHaveLength(25);
   });
 
   it("Card 2.0 消息原文可提取可见文字", () => {
     const content = JSON.stringify({ json_card: JSON.stringify({ schema: "2.0", header: { title: { content: "审批" } }, body: { elements: [{ tag: "markdown", content: "请<at id=ou_zhang></at>确认" }] } }) });
     expect(cardVisibleText(content)).toBe("审批\n请<at id=ou_zhang></at>确认");
+    const repeated = JSON.stringify({ schema: "2.0", body: { elements: [
+      { tag: "markdown", content: "<at id=ou_zhang></at>" },
+      { tag: "markdown", content: "<at id=ou_zhang></at>" },
+    ] } });
+    expect(cardVisibleText(repeated)).toBe("<at id=ou_zhang></at>\n<at id=ou_zhang></at>");
   });
 
   it("聊天历史中的卡片被原文替换，发言人和普通 @ 保留姓名及 ID", async () => {
@@ -62,11 +56,15 @@ describe("飞书卡片人物与历史原文", () => {
 
   it("用户态历史卡片用该用户令牌读取原文并展开人物", async () => {
     const cwd = await mkdtemp(join(tmpdir(), "mini-claw-card-history-"));
-    const card = JSON.stringify({ schema: "2.0", body: { elements: [{ tag: "markdown", content: "请<at id=ou_zhang></at>确认" }] } });
-    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ code: 0, data: { items: [{ body: { content: JSON.stringify({ json_card: card }) }, mentions: [{ id: { open_id: "ou_zhang" }, name: "张三" }] }] } }) }));
+    const card = JSON.stringify({ schema: "2.0", body: { elements: [{ tag: "markdown", content: "<at id=ou_bot></at>请<at id=ou_zhang></at>与<at id=ou_li></at>确认" }] } });
+    const fetchMock = vi.fn(async () => ({ ok: true, json: async () => ({ code: 0, data: { items: [{ body: { content: JSON.stringify({ json_card: card }) }, mentions: [
+      { id: { open_id: "ou_bot" }, name: "机器人" },
+      { id: { open_id: "ou_zhang" }, name: "张三" },
+      { id: { open_id: "ou_li" }, name: "李四" },
+    ] }] } }) }));
     vi.stubGlobal("fetch", fetchMock);
-    const read = createHistoryCardReader({ cwd, appId: "cli_test", appSecret: "unused", userToken: "user-token" });
-    expect(await read("om_card")).toBe("请张三(ou_zhang)确认");
+    const read = createHistoryCardReader({ cwd, appId: "cli_test", appSecret: "unused", botOpenId: "ou_bot", userToken: "user-token" });
+    expect(await read("om_card")).toBe("请张三(ou_zhang)与李四(ou_li)确认");
     expect(fetchMock).toHaveBeenCalledWith(
       "https://open.feishu.cn/open-apis/im/v1/messages/om_card?card_msg_content_type=user_card_content",
       expect.objectContaining({ headers: { Authorization: "Bearer user-token" } }),

@@ -29,9 +29,10 @@ MiniPet 由桌面端拉起 mini-claw 子进程，使用 `minipet.v1` 本地 JSON
 
 根消息直接用自身 messageId；回复用 threadId，不用群级“待定话题根”猜测归属。不同新话题因此不会合并。
 
-`FeishuContext` 携带 `userOpenId`、`userName`、`en_name`、`department_name`、`chatId`、`threadId`、`chatMode`、`conversationId`、`isAdmin`。它用于权限和工具身份，不会自动作为完整对象注入模型。入站预处理把当前发言人写成 `姓名(open_id): 内容`；真实 @、本地已知姓名和引用链中的人物在内容里标注 open_id。引用原文按层标记发言人，图片和附件也随引用传入。卡片 2.0 按消息 ID 读取可见原文；合并转发逐条标识发言人。回复卡片使用机器人应用名称和飞书原生人物提及标签。
+`FeishuContext` 携带 `userOpenId`、`userName`、`en_name`、`department_name`、`chatId`、`threadId`、`chatMode`、`conversationId`、`isAdmin`。它用于权限和工具身份，不会自动作为完整对象注入模型。入站预处理把当前发言人写成 `姓名(open_id): 内容`；真实 @、本地已知姓名和引用链中的人物在内容里标注 open_id。引用原文按层标记发言人，图片和附件也随引用传入。卡片 2.0 按消息 ID 读取可见原文；合并转发逐条标识发言人。模型收到机器人显示名和本轮已确认人物，直接生成 CardKit Markdown 与原生 `<at id=ou_xxx></at>` 提及；发送层原样发送正文，不再把 `姓名(open_id)` 改写为提及标签。
 
 机器人经受控 `lark-cli` 读取飞书聊天历史时，历史输出里的 Card 2.0 也按消息 ID 补取可见原文，使用该命令本来的用户或机器人身份。给模型的历史条目增加 `speaker: 姓名(open_id)`；飞书回复卡片只显示可点击的人名，不在卡片上额外显示 open_id。
+接收与历史卡片按正文中每个 `<at>` 标签自己的 open_id 就地展开，重复提及保留，机器人自身的 open_id 排除；姓名映射不依赖附件人物表的排列顺序。模型生成的卡片正文原样发送，因此多人提及的语义配对仍取决于模型输出，发送层不重排标签。
 
 语音优先读取飞书消息自带的 `speech_to_text`。没有转写时，可通过 `FEISHU_PI_STT_MODEL` 配置 OpenAI 兼容转写服务；没有配置则保留语音附件及其路径，并明确标记未转写。
 

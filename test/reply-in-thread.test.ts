@@ -60,8 +60,8 @@ describe("CardKitReply 传递 reply_in_thread", () => {
     expect(replies[0].data?.reply_in_thread).toBe(false);
   });
 
-  it("CardKit 初始化失败时只发送一次普通文本兜底", async () => {
-    const fallback = vi.fn(async () => undefined);
+  it("CardKit 初始化失败时只发送一次固定故障提示", async () => {
+    const notice = vi.fn(async () => undefined);
     const reply = new CardKitReply({
       client: {
         request: vi.fn().mockRejectedValue(new Error("offline")),
@@ -69,12 +69,12 @@ describe("CardKitReply 传递 reply_in_thread", () => {
       } as unknown as Client,
       chatId: "oc_chat",
       messageId: "om_msg",
-      fallbackText: fallback,
+      fallbackNotice: notice,
     });
 
     await reply.close("最终文本");
     await reply.close("不应重复发送");
-    expect(fallback).toHaveBeenCalledOnce();
-    expect(fallback).toHaveBeenCalledWith("最终文本");
+    expect(notice).toHaveBeenCalledOnce();
+    expect(notice).toHaveBeenCalledWith();
   });
 });

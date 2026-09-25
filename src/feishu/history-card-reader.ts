@@ -1,6 +1,6 @@
 import { Client, LoggerLevel } from "@larksuiteoapi/node-sdk";
 import { join } from "node:path";
-import { cardMentionNames, cardReferenceId, cardVisibleText, expandCardMentions } from "./inbound-content.ts";
+import { cardMentionIds, cardMentionNames, cardReferenceId, cardVisibleText, expandCardMentions } from "./inbound-content.ts";
 import { LarkCli } from "./lark-cli.ts";
 
 interface MessageItem {
@@ -9,7 +9,7 @@ interface MessageItem {
 }
 
 /** 使用执行历史命令的同一身份读取卡片：用户命令用该用户令牌，--as bot 用当前应用凭证。 */
-export function createHistoryCardReader(options: { cwd: string; appId: string; appSecret: string; userToken?: string }): (messageId: string) => Promise<string | undefined> {
+export function createHistoryCardReader(options: { cwd: string; appId: string; appSecret: string; botOpenId?: string; userToken?: string }): (messageId: string) => Promise<string | undefined> {
   const botClient = options.userToken ? undefined : new Client({
     appId: options.appId,
     appSecret: options.appSecret,
@@ -48,13 +48,13 @@ export function createHistoryCardReader(options: { cwd: string; appId: string; a
     const names = cardMentionNames(content);
     for (const mention of item.mentions ?? []) {
       const id = typeof mention.id === "string" ? mention.id : mention.id?.open_id;
-      if (id && mention.name) names.set(id, mention.name);
+      if (id && id !== options.botOpenId && mention.name) names.set(id, mention.name);
     }
-    const ids = [...new Set([...visible.matchAll(/<at\s+(?:id|user_id)=["']?(ou_[A-Za-z0-9_-]+)/gi)].map((match) => match[1]))].slice(0, 20);
+    const ids = cardMentionIds(visible, options.botOpenId);
     await Promise.all(ids.map(async (id) => {
       const profile = await profiles.getUserProfile(id);
       if (profile.name || profile.en_name) names.set(id, profile.name || profile.en_name || id);
     }));
-    return expandCardMentions(visible, names);
+    return expandCardMentions(visible, names, options.botOpenId);
   };
 }

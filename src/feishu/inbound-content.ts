@@ -57,7 +57,7 @@ export function cardVisibleText(content: string): string | undefined {
   const add = (value: unknown): void => {
     if (typeof value !== "string") return;
     const line = value.trim();
-    if (line && line !== lines[lines.length - 1]) lines.push(line);
+    if (line) lines.push(line);
   };
   const walk = (value: unknown, depth: number): void => {
     if (depth > 12 || lines.join("\n").length > 20_000) return;
@@ -98,11 +98,19 @@ export function cardMentionNames(content: string): Map<string, string> {
   return names;
 }
 
-/** 卡片中的原生人物标签交给模型前展开为可读姓名和 open_id。 */
-export function expandCardMentions(text: string, names: ReadonlyMap<string, string>): string {
-  return text
-    .replace(/<at\s+id=["']?(ou_[A-Za-z0-9_-]+)["']?\s*>(.*?)<\/at>/gi, (_tag, id: string, label: string) => personLabel(names.get(id) || label, id))
-    .replace(/<at\s+user_id=["']?(ou_[A-Za-z0-9_-]+)["']?\s*>(.*?)<\/at>/gi, (_tag, id: string, label: string) => personLabel(names.get(id) || label, id));
+const CARD_MENTION_RE = /<at\s+(?:id|user_id)=["']?(ou_[A-Za-z0-9_-]+)["']?\s*>([\s\S]*?)<\/at>/gi;
+
+/** 按正文出现顺序提取卡片中的人物 ID，重复提及只查询一次。 */
+export function cardMentionIds(text: string, excludedOpenId?: string): string[] {
+  return [...new Set([...text.matchAll(CARD_MENTION_RE)]
+    .map((match) => match[1])
+    .filter((id) => id !== excludedOpenId))];
+}
+
+/** 逐个就地展开卡片原生提及；机器人自己的标签从模型输入中移除。 */
+export function expandCardMentions(text: string, names: ReadonlyMap<string, string>, excludedOpenId?: string): string {
+  return text.replace(CARD_MENTION_RE, (_tag, id: string, label: string) =>
+    id === excludedOpenId ? "" : personLabel(names.get(id) || label, id));
 }
 
 /** 只用已经确认的 open_id 标注消息中的人名；不凭名字推断未知账号。 */
@@ -125,63 +133,4 @@ export function annotatePeople(text: string, people: ReadonlyArray<{ openId: str
     }
     return result;
   }).join("");
-}
-
-/** 模型输出的 姓名(open_id) 在飞书卡片里显示为原生蓝色人物；ID 只留在模型上下文。 */
-export function renderCardPeople(text: string, people: ReadonlyArray<{ openId: string; name?: string; alias?: string }>): string {
-  // 普通 text 消息的提及标签不能直接放进 CardKit Markdown。
-  text = text.split(/(```[\s\S]*?```|`[^`\n]*`)/g).map((part, index) => index % 2 ? part :
-    part.replace(/<at\s+user_id=["']?(ou_[A-Za-z0-9_-]+)["']?\s*>[^<]*<\/at>/g, (_full, openId: string) =>
-      `<at id=${openId}></at>`)).join("");
-  const names = new Map<string, string | undefined>();
-  for (const person of people) {
-    for (const name of [person.name, person.alias]) {
-      if (!name || name.length < 2 || name === person.openId) continue;
-      names.set(name, names.has(name) && names.get(name) !== person.openId ? undefined : person.openId);
-    }
-  }
-  const unique = [...names].filter((entry): entry is [string, string] => Boolean(entry[1]))
-    .sort((a, b) => b[0].length - a[0].length);
-  const escaped = unique.map(([name]) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
-  const matcher = escaped.length ? new RegExp(`@?(?:${escaped.join("|")})`, "gu") : undefined;
-  return text.split(/(```[\s\S]*?```|`[^`\n]*`|<at\b[^>]*>[\s\S]*?<\/at>|^.*已保存到:.*$)/gm).map((part, index) => {
-    if (index % 2) return part;
-    let explicit = part;
-    for (const person of people) {
-      for (const name of [person.name, person.alias]) {
-        if (name) explicit = explicit.replaceAll(`${name}(${person.openId})`, `<at id=${person.openId}></at>`);
-      }
-    }
-    // 未进入本轮人物表的 ID 只有带 @ 的明确人物标记才变成提及，避免吞掉中文句子前缀。
-    explicit = explicit.replace(/@[\p{L}\p{N}_ -]{1,64}\((?:[^,()]+,\s*)?(ou_[A-Za-z0-9_-]+)\)/gu, (_full, openId: string) =>
-      `<at id=${openId}></at>`);
-    // 模型偶尔忘记 @ 时仍隐藏内部 ID，保留原文姓名。
-    explicit = explicit.replace(/\(ou_[A-Za-z0-9_-]+\)/g, "");
-    // 流式中间帧可能停在 (ou_... 的半截，不能把 ID 片段显示到卡片上。
-    explicit = explicit.replace(/\((?:[^,()\n]+,\s*)?ou_?[A-Za-z0-9_-]*$/g, "");
-    if (!matcher) return explicit;
-    return explicit.split(/(<at\b[^>]*>[\s\S]*?<\/at>)/g).map((piece, pieceIndex) => {
-      if (pieceIndex % 2) return piece;
-      return piece.replace(matcher, (hit) => {
-        const openId = names.get(hit.startsWith("@") ? hit.slice(1) : hit);
-        return openId ? `<at id=${openId}></at>` : hit;
-      });
-    }).join("");
-  }).join("");
-}
-
-/** 普通文本兜底使用 text 消息的 @ 标签格式。 */
-export function renderTextPeople(text: string, people: ReadonlyArray<{ openId: string; name?: string; alias?: string }>): string {
-  const labels = new Map(people.filter((person) => (person.name && person.name !== person.openId)
-    || (person.alias && person.alias !== person.openId))
-    .map((person) => [person.openId, person.name && person.name !== person.openId ? person.name : person.alias || "用户"]));
-  for (const match of text.matchAll(/<at\s+user_id=["']?(ou_[A-Za-z0-9_-]+)["']?\s*>([^<]*)<\/at>/g)) {
-    if (!labels.has(match[1]!) && match[2] && !/^ou_[A-Za-z0-9_-]+$/.test(match[2])) labels.set(match[1]!, match[2]);
-  }
-  for (const match of text.matchAll(/@([\p{L}\p{N}_ -]{1,64})\((?:[^,()]+,\s*)?(ou_[A-Za-z0-9_-]+)\)/gu)) {
-    if (!labels.has(match[2]!) && !/^ou_[A-Za-z0-9_-]+$/.test(match[1]!)) labels.set(match[2]!, match[1]!);
-  }
-  return renderCardPeople(text, people).split(/(```[\s\S]*?```|`[^`\n]*`)/g).map((part, index) => index % 2 ? part :
-    part.replace(/<at\s+id=["']?(ou_[A-Za-z0-9_-]+)["']?\s*>[^<]*<\/at>/g, (_full, openId: string) =>
-      `<at user_id="${openId}">${(labels.get(openId) || "用户").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;")}</at>`)).join("");
 }

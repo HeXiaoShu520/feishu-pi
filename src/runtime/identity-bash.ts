@@ -45,6 +45,8 @@ export interface IdentityBashOptions {
   appId: string;
   /** 当前机器人应用密钥，仅在显式 --as bot 时交给 lark-cli 子进程。 */
   appSecret: string;
+  /** 读取飞书历史卡片时用于排除机器人自己的 @。 */
+  botOpenId?: string;
   /** 管理员用户令牌只供固定资料入库，不交给 AI CLI。 */
   adminSender?: boolean;
   /** 当前会话用户的飞书 user token（同步读内存缓存）；undefined 表示未登录，用户态调用拒绝执行 */
@@ -200,6 +202,7 @@ export function createIdentityBashTool(options: IdentityBashOptions): ToolDefini
         cwd: options.cwd,
         appId: options.appId,
         appSecret: options.appSecret,
+        botOpenId: options.botOpenId,
         adminSender: options.adminSender,
         getLarkToken: async () => await options.ensureLarkToken?.() ?? options.getLarkToken?.(),
         onLarkMissing: () => options.onNotLoggedIn?.(options.userId ?? ""),

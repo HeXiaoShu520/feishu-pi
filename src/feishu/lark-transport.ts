@@ -9,7 +9,7 @@ import { attachmentsDirOfSession, imagesDirOfSession, sanitizeFileName } from ".
 import { upsertEnvLine } from "../utils/env-file.ts";
 import { toBuffer } from "./resource-buffer.ts";
 import { mentionedUserIds } from "./people-roster.ts";
-import { cardMentionNames, cardReferenceId, cardVisibleText, expandCardMentions, personLabel, postAttachments, speechText, type InboundResource } from "./inbound-content.ts";
+import { cardMentionIds, cardMentionNames, cardReferenceId, cardVisibleText, expandCardMentions, personLabel, postAttachments, speechText, type InboundResource } from "./inbound-content.ts";
 import { transcribeAudio, type AudioTranscriptionOptions } from "./audio-transcriber.ts";
 import { SessionStore } from "../runtime/session-store.ts";
 import { readFileSync, writeFileSync } from "node:fs";
@@ -668,20 +668,22 @@ export class LarkTransport implements FeishuTransport {
     const names = cardMentionNames(content);
     for (const mention of item?.mentions ?? []) {
       const id = mention.id?.open_id;
-      if (id && mention.name) names.set(id, mention.name);
+      if (id && id !== this.botOpenId && mention.name) names.set(id, mention.name);
     }
-    const ids = [...new Set([...text.matchAll(/<at\s+(?:id|user_id)=["']?(ou_[A-Za-z0-9_-]+)/gi)].map((match) => match[1]))].slice(0, 20);
-    await Promise.all(ids.map(async (id) => {
-      const cached = await this.larkCli.getUserProfile(id);
-      if (!cached.name && !cached.en_name && !names.has(id)) {
-        await this.resolveSenderProfile(id);
-      }
-      const profile = await this.larkCli.getUserProfile(id);
-      const name = profile.name || profile.en_name;
-      if (name) names.set(id, name);
-    }));
+    const ids = cardMentionIds(text, this.botOpenId);
+    for (let index = 0; index < ids.length; index += 5) {
+      await Promise.all(ids.slice(index, index + 5).map(async (id) => {
+        const cached = await this.larkCli.getUserProfile(id);
+        if (!cached.name && !cached.en_name && !names.has(id)) {
+          await this.resolveSenderProfile(id);
+        }
+        const profile = await this.larkCli.getUserProfile(id);
+        const name = profile.name || profile.en_name;
+        if (name) names.set(id, name);
+      }));
+    }
     return {
-      text: expandCardMentions(text, names),
+      text: expandCardMentions(text, names, this.botOpenId),
       people: ids.map((openId) => ({ openId, name: names.get(openId) || openId })),
     };
   }
@@ -729,7 +731,7 @@ export class LarkTransport implements FeishuTransport {
       const rawContent = item.body?.content || "";
       const mentions = await Promise.all((item.mentions || []).map(async (mention) => {
         const openId = mention.id?.open_id;
-        if (!openId || !openId.startsWith("ou_")) return mention;
+        if (!openId || !openId.startsWith("ou_") || openId === this.botOpenId) return mention;
         const saved = await this.larkCli.getUserProfile(openId);
         const name = saved.name || saved.en_name || mention.name || openId;
         if (!people.some((person) => person.openId === openId)) people.push({ openId, name, alias: mention.name });

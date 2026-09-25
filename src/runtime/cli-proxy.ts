@@ -12,6 +12,7 @@ export interface CliProxyOptions {
   cwd: string;
   appId: string;
   appSecret: string;
+  botOpenId?: string;
   getLarkToken?: () => Promise<string | undefined>;
   onLarkMissing?: () => void;
   onLarkOutput?: (output: string) => string | undefined;
@@ -162,6 +163,7 @@ export async function startCliProxy(options: CliProxyOptions): Promise<CliProxyH
                 cwd: options.cwd,
                 appId: options.appId,
                 appSecret: options.appSecret,
+                botOpenId: options.botOpenId,
                 userToken: historyUserToken,
               });
               readable = await enrichFeishuHistory(output, fetchCard);

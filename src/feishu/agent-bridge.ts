@@ -13,7 +13,7 @@ import { randomUUID } from "node:crypto";
 import { formatStatsLine, formatToolCall, toolIcon, ReplyParts } from "./reply-parts.ts";
 import { STATS_PLACEHOLDER } from "./cardkit-stream.ts";
 import type { PeopleRoster } from "./people-roster.ts";
-import { annotatePeople, personLabel, renderTextPeople } from "./inbound-content.ts";
+import { annotatePeople, personLabel } from "./inbound-content.ts";
 
 /** 工具段延迟上屏阈值：工具运行满该时长才显示工具段与小字动画，快速指令不刷屏。 */
 const TOOL_SEGMENT_DELAY_MS = 1000;
@@ -34,6 +34,7 @@ export class FeishuAgentBridge {
   /** 预制人员名单（可选）：把消息中按名字提到的人补成提示词，模型才能识别/@ 到人 */
   private readonly peopleRoster?: PeopleRoster;
   private readonly botName: string;
+  private readonly botOpenId?: string;
 
   /** 查询某会话是否开启详细模式（供授权卡撤回等外部逻辑判断）。 */
   isDetailMode(chatId: string): boolean {
@@ -56,6 +57,7 @@ export class FeishuAgentBridge {
       /** 预制人员名单（可选）：按名字提到的人自动补 open_id 提示 */
       peopleRoster?: PeopleRoster;
       botName?: string;
+      botOpenId?: string;
     },
   ) {
     this.conversations = conversations;
@@ -66,6 +68,7 @@ export class FeishuAgentBridge {
     this.showModelStats = options?.showModelStats ?? true;
     this.peopleRoster = options?.peopleRoster;
     this.botName = options?.botName || "机器人";
+    this.botOpenId = options?.botOpenId;
     this.reactionController = options?.client ? new ReactionController(options.client) : undefined;
     this.commandRegistry = createDefaultRegistry(options?.modelInfo);
     // /detail on|off 设置详细/精简模式，状态由 bridge 持有（按 chatId 记忆，默认精简）
@@ -100,11 +103,12 @@ export class FeishuAgentBridge {
     }
 
     const rosterHits = await this.peopleRoster?.match(message.text, { senderOpenId: message.context.userOpenId }).catch(() => []) ?? [];
-    const knownPeople = [...(message.people ?? [])];
+    const knownPeople = (message.people ?? []).filter((person) => person.openId !== this.botOpenId);
     if (!knownPeople.some((item) => item.openId === message.context.userOpenId)) {
       knownPeople.push({ openId: message.context.userOpenId, name: userName || message.context.userOpenId });
     }
     for (const person of rosterHits) {
+      if (person.openId === this.botOpenId) continue;
       if (!knownPeople.some((item) => item.openId === person.openId)) {
         knownPeople.push({ openId: person.openId, name: person.name || person.enName });
       }
@@ -120,17 +124,15 @@ export class FeishuAgentBridge {
     const reply = new CardKitReply({
       client: this.client,
       chatId: message.chatId,
-      botName: this.botName,
-      people: knownPeople,
       messageId: message.messageId,
       replyInThread: resolveReplyInThread(message.context.chatMode, message.context.threadId),
       onError: (err) => logger.error("[CardKit]", err),
-      fallbackText: async (text) => {
+      fallbackNotice: async () => {
         await this.client!.im.message.reply({
           path: { message_id: message.messageId },
           data: {
             msg_type: "text",
-            content: JSON.stringify({ text: `${this.botName}：${renderTextPeople(text, knownPeople)}` }),
+            content: JSON.stringify({ text: "卡片发送失败，请重试。" }),
             reply_in_thread: resolveReplyInThread(message.context.chatMode, message.context.threadId),
           },
         });
@@ -207,10 +209,14 @@ export class FeishuAgentBridge {
       // 每一轮明确标出真正的发言人；引用的原文保留原作者，实际 @ 与已知姓名附 open_id。
       const speaker = personLabel(userName, message.context.userOpenId);
       const body = annotatePeople(message.text, knownPeople);
+      const mentionTargets = knownPeople
+        .filter((person) => person.name && person.name !== person.openId)
+        .map((person) => ({ name: person.name, alias: person.alias, openId: person.openId }));
+      // 输出规则由 SYSTEM.md 告诉模型；这里只提供本轮通道和人物数据，发送层不改写模型正文。
       const promptText = [
+        `[飞书回复上下文]\n输出通道：CardKit 2.0 Markdown\n机器人显示名：${JSON.stringify(this.botName)}\n已确认人物：${JSON.stringify(mentionTargets)}\n[/飞书回复上下文]`,
         message.quoteText,
         `${speaker}: ${body}`,
-        knownPeople.length ? "[飞书人物显示：回复中提到飞书人物时写 @姓名(open_id)；卡片只显示蓝色姓名，open_id 仅留在模型上下文。]" : undefined,
       ].filter(Boolean).join("\n");
 
       session = await this.conversations.prompt(
