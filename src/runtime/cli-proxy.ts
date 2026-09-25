@@ -7,12 +7,14 @@ import { tmpdir } from "node:os";
 import { join, relative, resolve, sep } from "node:path";
 import { createHistoryCardReader } from "../feishu/history-card-reader.ts";
 import { enrichFeishuHistory, isFeishuHistoryRead } from "../feishu/history-card-content.ts";
+import { LarkCli } from "../feishu/lark-cli.ts";
 
 export interface CliProxyOptions {
   cwd: string;
   appId: string;
   appSecret: string;
   botOpenId?: string;
+  botName?: string;
   getLarkToken?: () => Promise<string | undefined>;
   onLarkMissing?: () => void;
   onLarkOutput?: (output: string) => string | undefined;
@@ -166,7 +168,15 @@ export async function startCliProxy(options: CliProxyOptions): Promise<CliProxyH
                 botOpenId: options.botOpenId,
                 userToken: historyUserToken,
               });
-              readable = await enrichFeishuHistory(output, fetchCard);
+              const profiles = new LarkCli(options.appId, join(options.cwd, "data", "users"));
+              readable = await enrichFeishuHistory(output, fetchCard, async (senderId, senderType) => {
+                if (senderType === "app") {
+                  return senderId === options.botOpenId || senderId === options.appId ? options.botName || "机器人" : "其他机器人";
+                }
+                if (!senderId.startsWith("ou_")) return undefined;
+                const profile = await profiles.getUserProfile(senderId);
+                return profile.name || profile.en_name || undefined;
+              });
             } catch {
               readable = output;
             }

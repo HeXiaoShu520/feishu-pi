@@ -124,13 +124,13 @@ export function annotatePeople(text: string, people: ReadonlyArray<{ openId: str
   }
   const aliases = [...candidates].filter((entry): entry is [string, string] => Boolean(entry[1]))
     .map(([name, openId]) => ({ name, openId })).sort((a, b) => b.name.length - a.name.length);
+  if (!aliases.length) return text;
+  const ids = new Map(aliases.map(({ name, openId }) => [name, openId]));
+  const alternatives = aliases.map(({ name }) => name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+  // 一次扫描完成最长姓名匹配；已带 ID 的姓名整体保护，避免“张三丰”再被“张三”命中。
+  const matcher = new RegExp(`(?:${alternatives})\\(ou_[A-Za-z0-9_-]+\\)|(?:${alternatives})`, "gu");
   return text.split(/(```[\s\S]*?```|`[^`\n]*`|^.*已保存到:.*$)/gm).map((part, index) => {
     if (index % 2) return part;
-    let result = part;
-    for (const { name, openId } of aliases) {
-      const expression = new RegExp(`${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?!\\([^)]*ou_[A-Za-z0-9_-]+\\))`, "g");
-      result = result.replace(expression, `${name}(${openId})`);
-    }
-    return result;
+    return part.replace(matcher, (match) => match.includes("(ou_") ? match : `${match}(${ids.get(match)})`);
   }).join("");
 }

@@ -65,8 +65,8 @@ export class CardKitReply implements FeishuReply {
   private readonly client: Client;
   private readonly chatId: string;
   private readonly messageId?: string;
-  /** 本轮卡片消息的 message_id（sendCardReference 时记录），撤回用 */
-  private sentMessageId?: string;
+  /** 一轮回复可能拆成多张卡；中断或失败时必须全部撤回。 */
+  private readonly sentMessageIds: string[] = [];
   private readonly replyInThread: boolean;
   private readonly onError?: (err: unknown) => void;
   private readonly fallbackNotice?: () => Promise<void>;
@@ -79,6 +79,8 @@ export class CardKitReply implements FeishuReply {
   private initialization?: Promise<void>;
   /** 当前卡片内容在全文中的起始偏移（分卡时推进） */
   private offset = 0;
+  /** 已收尾卡片的正文；终态重绘时确认分卡前缀仍有效。 */
+  private splitHead = "";
   /** 分卡串行化，避免并发旋转 */
   private rotating?: Promise<void>;
 
@@ -99,6 +101,8 @@ export class CardKitReply implements FeishuReply {
       // 首次更新：创建卡片并发送消息
       if (!this.stream) {
         await this.initializeCardKit(text);
+        this.stream!.patch(text);
+        await this.maybeRotate();
         return;
       }
 
@@ -116,12 +120,16 @@ export class CardKitReply implements FeishuReply {
     if (this.closed) return;
 
     try {
+      if (this.offset > 0) await this.resetSplitCards();
       if (!this.stream) {
         await this.initializeCardKit(text);
+        await this.stream!.replace(text);
+        await this.maybeRotate();
         return;
       }
 
       await this.stream.replace(text);
+      await this.maybeRotate();
     } catch (err) {
       this.onError?.(err);
       throw err;
@@ -155,9 +163,12 @@ export class CardKitReply implements FeishuReply {
     if (this.closed || this.closing) return;
     this.closing = true;
     try {
+      if (this.offset > 0 && !text.startsWith(this.splitHead)) await this.resetSplitCards();
       if (!this.stream) {
         // 没有初始化过，创建后立即走关闭流程
         await this.initializeCardKit(text);
+        await this.stream!.replace(text);
+        await this.maybeRotate();
       }
 
       // 最后一张卡只关闭自己承载的那段内容（前面几张已在分卡时收尾）
@@ -166,6 +177,7 @@ export class CardKitReply implements FeishuReply {
       this.closed = true;
     } catch (err) {
       this.onError?.(err);
+      await this.recall().catch((recallError) => this.onError?.(recallError));
       const fallbackSent = await this.sendFallbackNotice();
       this.closed = true;
       if (!fallbackSent) throw err;
@@ -216,7 +228,7 @@ export class CardKitReply implements FeishuReply {
     }
   }
 
-  /** 发送引用 card_id 的卡片消息（回复原消息或直接发送）。记录发出的消息 id 供撤回用。 */
+  /** 发送引用 card_id 的卡片消息（回复原消息或直接发送）。记录每张卡的消息 ID。 */
   private async sendCardReference(cardId: string, replyToMessageId?: string): Promise<void> {
     if (replyToMessageId) {
       const res = await this.client.im.message.reply({
@@ -227,7 +239,7 @@ export class CardKitReply implements FeishuReply {
           reply_in_thread: this.replyInThread,
         },
       });
-      this.sentMessageId = res?.data?.message_id;
+      if (res?.data?.message_id) this.sentMessageIds.push(res.data.message_id);
     } else {
       const res = await this.client.im.message.create({
         params: { receive_id_type: "chat_id" },
@@ -237,17 +249,38 @@ export class CardKitReply implements FeishuReply {
           content: JSON.stringify({ type: "card", data: { card_id: cardId } }),
         },
       });
-      this.sentMessageId = res?.data?.message_id;
+      if (res?.data?.message_id) this.sentMessageIds.push(res.data.message_id);
     }
   }
 
-  /** 撤回本条卡片消息（本轮被打断时调用；未发出过消息则无操作）。 */
+  /** 撤回本轮全部卡片消息（中断或终态更新失败时调用）。 */
   async recall(): Promise<void> {
     this.closed = true;
     this.stream?.dispose();
-    if (!this.sentMessageId) return;
-    await this.client.im.v1.message.delete({ path: { message_id: this.sentMessageId } });
-    this.sentMessageId = undefined;
+    await this.deleteSentCards();
+  }
+
+  /** 全量重绘会改变分卡前缀；撤回旧卡后从完整正文重新开始。 */
+  private async resetSplitCards(): Promise<void> {
+    this.stream?.dispose();
+    await this.deleteSentCards();
+    this.stream = undefined;
+    this.initialization = undefined;
+    this.offset = 0;
+    this.splitHead = "";
+  }
+
+  private async deleteSentCards(): Promise<void> {
+    let firstError: unknown;
+    for (const messageId of [...this.sentMessageIds].reverse()) {
+      try {
+        await this.client.im.v1.message.delete({ path: { message_id: messageId } });
+        this.sentMessageIds.splice(this.sentMessageIds.indexOf(messageId), 1);
+      } catch (error) {
+        firstError ??= error;
+      }
+    }
+    if (firstError) throw firstError;
   }
 
   /** 正文超过单卡上限时，在完整块边界分出新卡。 */
@@ -277,6 +310,7 @@ export class CardKitReply implements FeishuReply {
       await newStream.replace(tail);
       this.stream = newStream;
       this.offset += split;
+      this.splitHead += head;
       await this.sendCardReference(newCardId, this.messageId);
       logger.info(`[CardKit] 正文超限已分卡：前卡 ${head.length} 字符，新卡从第 ${this.offset} 字符继续`);
     })();

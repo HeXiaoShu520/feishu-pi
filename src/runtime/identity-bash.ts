@@ -47,6 +47,7 @@ export interface IdentityBashOptions {
   appSecret: string;
   /** 读取飞书历史卡片时用于排除机器人自己的 @。 */
   botOpenId?: string;
+  botName?: string;
   /** 管理员用户令牌只供固定资料入库，不交给 AI CLI。 */
   adminSender?: boolean;
   /** 当前会话用户的飞书 user token（同步读内存缓存）；undefined 表示未登录，用户态调用拒绝执行 */
@@ -203,6 +204,7 @@ export function createIdentityBashTool(options: IdentityBashOptions): ToolDefini
         appId: options.appId,
         appSecret: options.appSecret,
         botOpenId: options.botOpenId,
+        botName: options.botName,
         adminSender: options.adminSender,
         getLarkToken: async () => await options.ensureLarkToken?.() ?? options.getLarkToken?.(),
         onLarkMissing: () => options.onNotLoggedIn?.(options.userId ?? ""),

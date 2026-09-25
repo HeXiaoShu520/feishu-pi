@@ -8,7 +8,7 @@ function object(value: unknown): JsonRecord | undefined {
 
 /** 只拦截消息读取命令；发送、编辑和其它 CLI 输出原样透传。 */
 export function isFeishuHistoryRead(args: string[]): boolean {
-  const words = args[0] === "--as" ? args.slice(2) : /^--as=/.test(args[0] ?? "") ? args.slice(1) : args;
+  const words = args.filter((arg, index) => arg !== "--as" && args[index - 1] !== "--as" && !arg.startsWith("--as="));
   if (words[0] !== "im") return false;
   if (["+chat-messages-list", "+threads-messages-list", "+messages-mget", "+messages-search"].includes(words[1] ?? "")) return true;
   return words[1] === "messages" && ["get", "list"].includes(words[2] ?? "");
@@ -18,6 +18,7 @@ export function isFeishuHistoryRead(args: string[]): boolean {
 export async function enrichFeishuHistory(
   output: string,
   fetchCard: (messageId: string) => Promise<string | undefined>,
+  resolveSpeaker?: (senderId: string, senderType?: string) => Promise<string | undefined>,
 ): Promise<string> {
   let root: unknown;
   try { root = JSON.parse(output); } catch {
@@ -32,6 +33,7 @@ export async function enrichFeishuHistory(
     return details.length ? `${output.trimEnd()}\n\n${details.join("\n\n")}\n` : output;
   }
   const cards: Array<{ messageId: string; value: JsonRecord }> = [];
+  const speakers: Array<{ value: JsonRecord; senderId: string; senderType?: string; senderName?: string }> = [];
   const visited = new Set<object>();
   const walk = (value: unknown, depth: number): void => {
     if (depth > 12 || !value || typeof value !== "object" || visited.has(value)) return;
@@ -42,9 +44,9 @@ export async function enrichFeishuHistory(
     const senderId = typeof sender?.id === "string" ? sender.id : undefined;
     if (senderId) {
       const senderName = typeof sender?.name === "string" ? sender.name : typeof sender?.sender_name === "string" ? sender.sender_name : undefined;
-      item.speaker = personLabel(senderName, senderId);
+      speakers.push({ value: item, senderId, senderType: typeof sender?.sender_type === "string" ? sender.sender_type : undefined, senderName });
     }
-    if (typeof item.content === "string" && Array.isArray(item.mentions)) {
+    if (Array.isArray(item.mentions)) {
       const people = item.mentions.flatMap((entry): Array<{ openId: string; name: string }> => {
         const mention = object(entry);
         const idValue = mention?.id;
@@ -53,7 +55,9 @@ export async function enrichFeishuHistory(
         return typeof openId === "string" && typeof name === "string" && /^ou_[A-Za-z0-9_-]+$/.test(openId)
           ? [{ openId, name }] : [];
       });
-      item.content = annotatePeople(item.content, people);
+      if (typeof item.content === "string") item.content = annotatePeople(item.content, people);
+      const body = object(item.body);
+      if (body && typeof body.content === "string") body.content = annotatePeople(body.content, people);
     }
     const type = item.msg_type ?? item.message_type;
     const messageId = item.message_id;
@@ -63,6 +67,15 @@ export async function enrichFeishuHistory(
     for (const nested of Object.values(item)) walk(nested, depth + 1);
   };
   walk(root, 0);
+  const resolvedNames = new Map<string, string | undefined>();
+  const unknownSpeakers = new Map(speakers.filter((speaker) => !speaker.senderName)
+    .map((speaker) => [`${speaker.senderType ?? ""}:${speaker.senderId}`, speaker]));
+  await Promise.all([...unknownSpeakers].map(async ([key, { senderId, senderType }]) => {
+    resolvedNames.set(key, resolveSpeaker ? await resolveSpeaker(senderId, senderType).catch(() => undefined) : undefined);
+  }));
+  for (const { value, senderId, senderType, senderName } of speakers) {
+    value.speaker = personLabel(senderName || resolvedNames.get(`${senderType ?? ""}:${senderId}`), senderId);
+  }
   const cardContent = new Map<string, string | undefined>();
   const ids = [...new Set(cards.map((card) => card.messageId))];
   for (let index = 0; index < ids.length; index += 5) {

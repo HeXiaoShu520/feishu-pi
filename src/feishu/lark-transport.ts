@@ -215,7 +215,7 @@ export class LarkTransport implements FeishuTransport {
     let stopLease: (() => void) | undefined;
     try {
       // 会话模式先行：决定响应资格（群聊需 @）与 conversationId 归属
-      const chatMode = await this.getChatModeCached(chatId);
+      const chatMode = await this.getChatModeCached(chatId, message.chatType);
 
       // 群聊/话题群只响应 @机器人 的消息；私聊全响应。
       // 未 @ 的消息静默忽略（不查资料、不入会话，避免群聊刷屏误触发）。
@@ -475,7 +475,7 @@ export class LarkTransport implements FeishuTransport {
 
   /** 查询会话模式并缓存（话题群与普通群的会话隔离策略不同，模式极少变化）。
    *  缓存有上限（近似 LRU：超限驱逐最早条目），长驻进程不无限增长。 */
-  private async getChatModeCached(chatId: string): Promise<"p2p" | "group" | "topic"> {
+  private async getChatModeCached(chatId: string, eventChatType?: string): Promise<"p2p" | "group" | "topic"> {
     const cached = this.chatModeCache.get(chatId);
     if (cached) {
       // 命中时移到末尾，保证驱逐的是真正最久未用的条目
@@ -494,8 +494,9 @@ export class LarkTransport implements FeishuTransport {
       }
       return result;
     } catch (error) {
-      logger.warn(`[LarkTransport] 获取会话模式失败，按普通会话处理: ${error instanceof Error ? error.message : error}`);
-      return "group";
+      const fallback = eventChatType === "p2p" ? "p2p" : "group";
+      logger.warn(`[LarkTransport] 获取会话模式失败，按事件中的 ${fallback} 类型处理: ${error instanceof Error ? error.message : error}`);
+      return fallback;
     }
   }
 

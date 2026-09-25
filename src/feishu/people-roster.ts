@@ -123,9 +123,8 @@ export class PeopleRoster {
 
       seen.add(entry.openId);
       hits.push({ openId: entry.openId, name: entry.name, enName: entry.enName, departments: entry.departments, at });
-      if (hits.length >= limit) break;
     }
-    return hits.sort((a, b) => a.at - b.at).map(({ at: _at, ...hit }) => hit);
+    return hits.sort((a, b) => a.at - b.at).slice(0, limit).map(({ at: _at, ...hit }) => hit);
   }
 
   /** 加载名单文件；mtime 变化时重载（文件由资料查询链路持续补充）。缺失/损坏按空名单。 */
