@@ -12,6 +12,7 @@
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { randomUUID } from "node:crypto";
 import { logger } from "../utils/logger.ts";
+import { renderCardPeople } from "./inbound-content.ts";
 
 const CARD_SCHEMA = "2.0";
 const STREAM_ELEMENT_ID = "stream_md";
@@ -21,6 +22,8 @@ export const STATS_PLACEHOLDER = "\u2800";
 
 interface CardKitStreamOptions {
   client: Client;
+  botName?: string;
+  people?: ReadonlyArray<{ openId: string; name?: string; alias?: string }>;
   /** 最小推送间隔（毫秒），默认 400ms：帧小而频繁，客户端打字机不追帧、观感连贯 */
   minPushIntervalMs?: number;
   /** 客户端打字机渲染速度（毫秒），默认 30ms */
@@ -43,6 +46,8 @@ export class CardKitStream {
   private dirty = false;
 
   private readonly client: Client;
+  private readonly botName?: string;
+  private readonly people: ReadonlyArray<{ openId: string; name?: string; alias?: string }>;
   private readonly minInterval: number;
   private readonly printFrequencyMs: number;
   private readonly printStep: number;
@@ -50,6 +55,8 @@ export class CardKitStream {
 
   constructor(options: CardKitStreamOptions) {
     this.client = options.client;
+    this.botName = options.botName;
+    this.people = options.people ?? [];
     this.minInterval = options.minPushIntervalMs ?? 400;
     this.printFrequencyMs = options.printFrequencyMs ?? 30; // 加快客户端渲染：30ms/步
     this.printStep = options.printStep ?? 3;
@@ -179,7 +186,7 @@ export class CardKitStream {
       method: "PUT",
       url: `/open-apis/cardkit/v1/cards/${this.cardId}/elements/${STREAM_ELEMENT_ID}/content`,
       data: {
-        content: fullText || " ",
+        content: this.present(fullText) || " ",
         sequence: ++this.sequence,
         uuid: this.uuid(),
       },
@@ -239,6 +246,7 @@ export class CardKitStream {
 
   /** 构建 CardKit JSON */
   private buildCardJson(text: string, streaming: boolean, statsText?: string): string {
+    const bodyText = this.present(text);
     return JSON.stringify({
       schema: CARD_SCHEMA,
       config: {
@@ -260,7 +268,7 @@ export class CardKitStream {
         elements: [
           {
             tag: "markdown",
-            content: text || " ",
+            content: bodyText || " ",
             element_id: STREAM_ELEMENT_ID,
           },
           {
@@ -276,5 +284,9 @@ export class CardKitStream {
 
   private uuid(): string {
     return randomUUID();
+  }
+
+  private present(text: string): string {
+    return `${this.botName ? `${this.botName}：` : ""}${renderCardPeople(text, this.people)}`;
   }
 }

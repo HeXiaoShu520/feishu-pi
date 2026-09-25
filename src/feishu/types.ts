@@ -17,6 +17,10 @@ export interface FeishuInboundMessage {
   text: string;
   /** 图片附件（如有） */
   images?: FeishuPiPrompt["images"];
+  /** 被引用消息的原文，已标注每层发言人；只供模型上下文。 */
+  quoteText?: string;
+  /** 飞书事件中真实 @ 到的人（入站预处理已补姓名）。 */
+  people?: Array<{ openId: string; name: string; alias?: string }>;
 }
 
 /** 一次回复的生命周期句柄：流式更新正文，close 时收尾并写统计小字。 */

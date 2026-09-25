@@ -11,28 +11,21 @@ async function writePolicy(content: unknown): Promise<{ dir: string; file: strin
   return { dir, file };
 }
 
-describe("PermissionPolicy：管理员 + 唯一团队", () => {
-  it("管理员只由 FEISHU_PI_ADMIN 解析后的 open_id 识别；团队只存在 group", async () => {
-    const { dir, file } = await writePolicy({ allow: { admin: [], group: [] } });
-    const usersFile = join(dir, "users.json");
-    await writeFile(usersFile, JSON.stringify({ ou_team: { en_name: "Lee" } }), "utf8");
-    const policy = new PermissionPolicy(file, { adminId: "ou_admin", groupMembership: { group: ["Lee"] }, usersFile });
+describe("PermissionPolicy：管理员 + 非管理员团队", () => {
+  it("管理员只由 FEISHU_PI_ADMIN 解析后的 open_id 识别；其余用户自动属于 group", async () => {
+    const { file } = await writePolicy({ allow: { admin: [], group: [] } });
+    const policy = new PermissionPolicy(file, { adminId: "ou_admin" });
 
     expect(await policy.groupsFor("ou_admin")).toEqual(["admin"]);
     expect(await policy.groupsFor("ou_team")).toEqual(["group"]);
-    expect(await policy.groupsFor("ou_guest", "访客")).toEqual([]);
+    expect(await policy.groupsFor("ou_guest", "访客")).toEqual(["group"]);
   });
 
-  it("团队成员可以按部门名命中，open_id 不会被当部门子串匹配", async () => {
-    const { dir, file } = await writePolicy({ allow: { group: [] } });
-    const usersFile = join(dir, "users.json");
-    await writeFile(usersFile, JSON.stringify({
-      ou_in: { department_name: ["研发部-平台团队"] },
-      ou_out: { department_name: ["ou_member-子部门"] },
-    }), "utf8");
-    const policy = new PermissionPolicy(file, { groupMembership: { group: ["平台团队", "ou_member"] }, usersFile });
-    expect(await policy.groupsFor("ou_in")).toEqual(["group"]);
-    expect(await policy.groupsFor("ou_out")).toEqual([]);
+  it("管理员未配置时，所有用户都属于 group", async () => {
+    const { file } = await writePolicy({ allow: { group: [] } });
+    const policy = new PermissionPolicy(file);
+    expect(await policy.groupsFor("ou_first")).toEqual(["group"]);
+    expect(await policy.groupsFor("ou_second")).toEqual(["group"]);
   });
 
   it("只有 admin / group 配置会生效；common 和第二团队被忽略", async () => {

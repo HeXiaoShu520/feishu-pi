@@ -41,47 +41,22 @@ export const SHELL_META = /[;&|`$<>\()\r\n]/;
 export class PermissionPolicy {
   private readonly filePath: string;
   private readonly adminId?: string;
-  private readonly usersFile?: string;
   private readonly cwd: string;
-  private readonly groupMembership: Record<string, string[]>;
 
   private groups: Record<RoleName, GroupFields> = { admin: {}, group: {} };
   private denyRules: DenyRule[] = [];
   private loadedMtimeMs = -1;
   private warned = false;
-  private profileCache = new Map<string, { name?: string; en_name?: string; department_name?: string[] }>();
-  private profileMtimeMs = -1;
 
-  constructor(filePath: string, options: { adminId?: string; groupMembership?: Record<string, string[]>; usersFile?: string; cwd?: string } = {}) {
+  constructor(filePath: string, options: { adminId?: string; cwd?: string } = {}) {
     this.filePath = filePath;
     this.adminId = options.adminId || undefined;
-    this.groupMembership = options.groupMembership ?? {};
-    this.usersFile = options.usersFile;
     this.cwd = options.cwd ?? process.cwd();
   }
 
-  /** 只有管理员和唯一团队两个角色；管理员身份只认 FEISHU_PI_ADMIN。 */
-  async groupsFor(userId: string, userName?: string): Promise<RoleName[]> {
-    await this.ensureLoaded();
-    const groups = new Set<RoleName>();
-    if (this.adminId && userId === this.adminId) groups.add("admin");
-
-    const members = this.groupMembership.group ?? [];
-    if (members.length > 0) {
-      const identifiers = new Set<string>([userId]);
-      if (userName) identifiers.add(userName);
-      const profile = await this.loadProfile(userId);
-      if (profile?.name) identifiers.add(profile.name);
-      if (profile?.en_name) identifiers.add(profile.en_name);
-      if (members.some((member) => identifiers.has(member))) {
-        groups.add("group");
-      } else if ((profile?.department_name ?? []).some((path) =>
-        members.some((member) => !member.startsWith("ou_") && member.length >= 2 && path.toLowerCase().includes(member.toLowerCase())),
-      )) {
-        groups.add("group");
-      }
-    }
-    return ROLE_NAMES.filter((name) => groups.has(name));
+  /** 只有管理员和团队两个角色；所有非管理员自动属于 group，不读取团队名单或用户资料。 */
+  async groupsFor(userId: string, _userName?: string): Promise<RoleName[]> {
+    return this.adminId && userId === this.adminId ? ["admin"] : ["group"];
   }
 
   async preload(): Promise<void> {
@@ -175,21 +150,6 @@ export class PermissionPolicy {
       this.groups = { admin: {}, group: {} };
       this.denyRules = [];
       this.loadedMtimeMs = -1;
-    }
-  }
-
-  private async loadProfile(openId: string): Promise<{ name?: string; en_name?: string; department_name?: string[] } | undefined> {
-    if (!this.usersFile) return undefined;
-    try {
-      const mtimeMs = (await stat(this.usersFile)).mtimeMs;
-      if (mtimeMs !== this.profileMtimeMs) {
-        const parsed = JSON.parse(await readFile(this.usersFile, "utf8")) as Record<string, { name?: string; en_name?: string; department_name?: string[] }>;
-        this.profileCache = new Map(Object.entries(parsed));
-        this.profileMtimeMs = mtimeMs;
-      }
-      return this.profileCache.get(openId);
-    } catch {
-      return undefined;
     }
   }
 }

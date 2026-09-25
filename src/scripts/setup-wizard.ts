@@ -11,7 +11,7 @@ async function main(): Promise<void> {
   console.log(existingAppId
     ? `检测到已有应用 ${existingAppId}：扫码后将为其更新/补充预置权限（不会创建新应用）。`
     : "未检测到已配置的应用：扫码后将创建新应用并预置权限。");
-  console.log("预置内容：机器人收发消息、通讯录基础只读、消息事件与卡片回调、Slash Command 管理权限（部门信息不走需审核权限，运行时经 lark-cli 用户态搜索获得）。");
+  console.log("预置内容：机器人收发消息、通讯录基础只读、消息事件与卡片回调、Slash Command 管理权限。");
 
   await runSetupWizard({ existingAppId });
 

@@ -93,7 +93,7 @@ export class CredentialVault {
     return existed;
   }
 
-  /** 列出某 provider 下已有凭证的用户键（供后台保鲜遍历）。 */
+  /** 列出某 provider 下已有凭证的用户键（供历史会话密钥清洗等维护操作）。 */
   async listUsers(provider: string): Promise<string[]> {
     await this.ensureLoaded();
     const prefix = `${provider}:`;

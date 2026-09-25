@@ -62,7 +62,9 @@ export class LarkImageProcessor implements FeishuImageProcessor {
       if (cacheDir) {
         try {
           await mkdir(cacheDir, { recursive: true });
-          savedPath = join(cacheDir, `${sanitizeFileName(imageKey)}.jpg`);
+          const mimeType = this.detectMimeType(imageData);
+          const extension = mimeType === "image/png" ? "png" : mimeType === "image/gif" ? "gif" : mimeType === "image/webp" ? "webp" : "jpg";
+          savedPath = join(cacheDir, `${sanitizeFileName(imageKey)}.${extension}`);
           await writeFile(savedPath, imageData);
         } catch (err) {
           savedPath = undefined;

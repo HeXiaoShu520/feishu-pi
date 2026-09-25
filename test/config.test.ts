@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { isValidMiniPetUserOpenId, loadConfig, parseGroupMembership } from "../src/config.ts";
+import { isValidMiniPetUserOpenId, loadConfig } from "../src/config.ts";
 
 const baseEnv = { FEISHU_APP_ID: "cli_x", FEISHU_APP_SECRET: "s", FEISHU_PI_MODEL_API_KEY: "k" };
 
@@ -13,14 +13,9 @@ describe("loadConfig", () => {
     expect(isValidMiniPetUserOpenId("minipet_user")).toBe(false);
   });
 
-  it("只解析唯一团队 FEISHU_PI_GROUP，忽略历史上的第二团队变量", () => {
-    const groups = parseGroupMembership({
-      FEISHU_PI_GROUP: "李雷, 韩梅梅,李雷",
-      FEISHU_PI_GROUP_1: "不应进入团队",
-      FEISHU_PI_GROUP_VIP: "不应进入团队",
-    });
-    expect(groups).toEqual({ group: ["李雷", "韩梅梅"] });
-    expect(parseGroupMembership({ FEISHU_PI_GROUP_1: "李雷" })).toEqual({});
+  it("不再从环境变量读取团队成员名单", () => {
+    const config = loadConfig({ ...baseEnv, FEISHU_PI_GROUP: "李雷,韩梅梅" });
+    expect("groupMembership" in config).toBe(false);
   });
 
   it("模型供应商仍由模型名推断", () => {

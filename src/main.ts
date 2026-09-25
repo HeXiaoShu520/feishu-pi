@@ -8,7 +8,7 @@ import { isValidMiniPetUserOpenId, loadConfig } from "./config.ts";
 import { SessionStore } from "./runtime/session-store.ts";
 import { MessageStore } from "./feishu/message-store.ts";
 import { DataCleaner } from "./runtime/data-cleaner.ts";
-import { resolveAdminOpenId, resolveAdminFromLogins } from "./feishu/admin-resolver.ts";
+import { resolveAdminOpenId } from "./feishu/admin-resolver.ts";
 import { ScheduleService } from "./schedule/service.ts";
 import { PermissionPolicy } from "./permission/policy.ts";
 import { LogoutCommand, StatusCommand, UserAuthService } from "./feishu/user-auth.ts";
@@ -17,13 +17,12 @@ import { PeopleRoster } from "./feishu/people-roster.ts";
 import { RestartCommand } from "./feishu/commands.ts";
 import { toggleTrailingBlankLine } from "./utils/restart-toggle.ts";
 import { createIdentityBashTool } from "./runtime/identity-bash.ts";
+import { createMentionProfileLookup } from "./feishu/lark-cli-search.ts";
 import { runSetupWizard } from "./feishu/setup-wizard.ts";
-import { createCliSearchUser, resolveLarkCliBinary } from "./feishu/lark-cli-search.ts";
 import { delimiter, join } from "node:path";
 import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { Client, LoggerLevel } from "@larksuiteoapi/node-sdk";
-import qr from "qrcode-terminal";
 import { logger } from "./utils/logger.ts";
 import { scrubSecretsInDir } from "./utils/session-scrub.ts";
 import { PermissionBroker } from "./guard/broker.ts";
@@ -125,6 +124,7 @@ export async function main(): Promise<void> {
   // —— 启动第 1 步：机器人身份（openId）是硬门槛 ——
   // 本机网络（TLS 代理）偶发抖动：自动重试 5 次（间隔 2s），最终失败带真实原因退出
   let botOpenId: string | undefined;
+  let botName = "机器人";
   let botInfoDetail = "";
   for (let attempt = 1; attempt <= 5 && !botOpenId; attempt++) {
     try {
@@ -135,6 +135,7 @@ export async function main(): Promise<void> {
       // SDK 拦截器直接返回响应体；/bot/v3/info 的 bot 字段在顶层（无 data 包裹）
       if (res.code === 0 && res.bot?.open_id) {
         botOpenId = res.bot.open_id;
+        botName = typeof res.bot.app_name === "string" && res.bot.app_name.trim() ? res.bot.app_name.trim() : botName;
         logger.info(`[Main] 启动 1/4 机器人身份就绪: ${botOpenId}${attempt > 1 ? `（第 ${attempt} 次尝试成功）` : ""}`);
         break;
       }
@@ -160,14 +161,14 @@ export async function main(): Promise<void> {
     logger.warn(`[Main] Slash Command 同步失败（请确认应用已开通并发布 application:app_slash_command:* 权限）: ${error instanceof Error ? error.message : String(error)}`);
   });
 
-  // —— 启动第 2 步前置：管理员 openId 在第 3 步登录完成后解析 ——
+  // 管理员 openId 在用户授权流程装配后解析。
   let adminOpenId: string | undefined;
-  // 用户缓存文件（data/users/{appId}_users.json）：资料查询与冷启动管理员识别共用
+  // 用户缓存文件（data/users/{appId}_users.json）：本人登录资料与管理员识别共用。
   const usersFile = join(config.dataDir, "users", `${config.feishuAppId}_users.json`);
 
   // ---------- 多 CLI 凭证库（按 CLI 分文件，data/credentials/ 子目录） ----------
 
-  // userAuth 先声明（transport 的资料查询/搜索通道闭包引用它的 token；实际实例在其后创建）
+  // userAuth 先声明；运行时回调稍后引用它的当前用户凭证。
   let userAuth: UserAuthService | undefined;
 
   // onLoginBound 处理器在装配后期才定义；终端登录（启动第 2 步）可能早于装配完成触发，
@@ -178,7 +179,7 @@ export async function main(): Promise<void> {
   const credentialsDir = join(config.dataDir, "credentials");
   const vaultKeyFile = join(config.dataDir, ".vault-key");
   // Meegle（飞书项目）静态凭证：Device Flow 授权后 token 加密入库，
-  // 会话 bash 命中 meegle 命令时注入（MEEGLE_USER_ACCESS_TOKEN / MEEGLE_HOST）
+  // 会话中的 Meegle CLI 实际启动时才注入（MEEGLE_USER_ACCESS_TOKEN / MEEGLE_HOST）
   const meegleAuth = new StaticCredentialService(
     join(credentialsDir, "meegle.vault.json"),
     vaultKeyFile,
@@ -188,7 +189,7 @@ export async function main(): Promise<void> {
   // `/new` 换代 = 新会话 id + 新目录，旧目录留在磁盘上等过期清理
   const sessions = new SessionStore(config.sessionsFile, config.sessionsRoot);
   // 用户飞书身份授权（Device Flow，RFC 8628）：按 openId 加密存取 user_access_token；
-  // 未登录/失效时由 CLI 调用链路自动弹出授权链接（见 identityBash.onNotLoggedIn / 启动 3.5 步）。
+  // 未登录/失效时由当前用户的 CLI 调用链路自动弹出授权链接。
   // 先于 transport 创建（冷启动管理员识别要在 transport 装配前完成）；
   // updateCard/sendCard 闭包后置引用 transport，仅在实际收发卡片时才会执行。
   userAuth = new UserAuthService({
@@ -207,8 +208,8 @@ export async function main(): Promise<void> {
     },
   });
 
-  // Meegle Device Flow 授权：会话 bash 命中 meegle 且该用户无凭证时，自动把授权链接卡发到其私聊，
-  // 后台轮询 meegle CLI → token 加密入库 → 原地更新卡片
+  // Meegle Device Flow 授权：当前用户无凭证时把授权卡发到其私聊，
+  // 后台通过 OAuth 接口轮询 → token 加密入库 → 原地更新卡片。
   const meegleDeviceLogin = new MeegleDeviceLogin(
     meegleAuth,
     {
@@ -225,71 +226,8 @@ export async function main(): Promise<void> {
     if (replaced > 0) logger.info(`[Main] 已清洗历史会话文件中的明文凭证（处理 ${replaced} 个文件）`);
   })().catch((error) => logger.warn("[Main] 会话清洗失败:", error));
 
-  // —— 启动第 2 步：lark-cli 就绪（二进制存在 + 管理员已登录）——
-  // 登录指管理员绑定自己的用户身份；其余成员可各自 /login 绑定凭证（运行时身份 bash 用），
-  // 启动门槛只看管理员。
-  if (!resolveLarkCliBinary(config.cwd)) {
-    throw new Error("lark-cli 二进制缺失（node_modules/@larksuite/cli），请重新 npm install 后启动");
-  }
-
-  /** 管理员登录态：FEISHU_PI_ADMIN 为 open_id 直接查；否则经用户缓存姓名匹配出 openId 再查；
-   *  缓存为空/未命中时回退用凭证库登录记录匹配（否则新环境会误报"尚未登录"）。
-   *  返回 active=有效 / expired=已过期 / none=找不到管理员对应的登录。 */
-  const adminLoginState = async (): Promise<"active" | "expired" | "none"> => {
-    const identifier = config.feishuAdmin;
-    if (!identifier) return "none";
-    let openId = identifier.startsWith("ou_") ? identifier : undefined;
-    if (!openId) {
-      try {
-        const cache = JSON.parse(await readFile(usersFile, "utf8")) as Record<string, { name?: string; en_name?: string }>;
-        openId = Object.entries(cache).find(([, p]) => p.name === identifier || p.en_name === identifier)?.[0];
-      } catch {
-        openId = undefined; // 缓存不存在/损坏按未匹配处理
-      }
-    }
-    if (!openId) openId = await resolveAdminFromLogins(userAuth, identifier, usersFile).catch(() => undefined);
-    if (!openId) return "none";
-    return (await userAuth.loginStatus(openId)).state;
-  };
-
-  let loginUsers: string[] = [];
-  try {
-    loginUsers = await userAuth.listLoginUsers();
-  } catch {
-    loginUsers = []; // 凭证库不可读按未登录处理
-  }
-  if (loginUsers.length === 0) {
-    if (!process.stdout.isTTY) {
-      throw new Error("lark 尚未登录，且当前非交互终端无法扫码。请在交互终端启动一次完成管理员授权。");
-    }
-    console.log("\n🔐 启动 2/4 lark 尚未登录：请用【管理员本人】的飞书扫码完成授权（仅一次机会，失败将自动退出）。\n");
-    const login = await userAuth.loginOnTerminal({
-      onLink: ({ link, expiresInMin }) => {
-        qr.generate(link, { small: true });
-        console.log(link, "\n");
-        console.log(`⏱️  约 ${expiresInMin} 分钟内有效，等待扫码中…\n`);
-      },
-    });
-    if (!login.ok || !login.identity) {
-      throw new Error(`lark 授权未完成（${login.reason ?? "未知原因"}），自动退出。请重新运行 npm start 重试。`);
-    }
-    logger.info(`[Main] 启动 2/4 lark-cli 就绪：管理员 ${login.identity.name ?? login.identity.openId} 已登录`);
-  } else {
-    const state = await adminLoginState();
-    if (state === "active") {
-      logger.info("[Main] 启动 2/4 lark-cli 就绪：管理员已登录");
-    } else if (state === "expired") {
-      logger.warn("[Main] 启动 2/4 lark-cli 管理员登录已失效，授权链接卡将推送到管理员私聊");
-    } else {
-      logger.warn(`[Main] 启动 2/4 lark-cli 管理员（${config.feishuAdmin}）尚未登录，管理员相关能力不可用（授权链接卡将推送到管理员私聊）`);
-    }
-  }
-
-  // —— 启动第 3 步：管理员身份解析（解析不了就当没有管理员，服务照常运行）——
+  // 管理员身份只由机器人应用权限与资料缓存解析，不遍历用户登录凭证。
   adminOpenId = await resolveAdminOpenId(client, config.feishuAdmin, config.feishuAppId);
-  if (!adminOpenId && config.feishuAdmin) {
-    adminOpenId = await resolveAdminFromLogins(userAuth, config.feishuAdmin, usersFile);
-  }
   if (adminOpenId) {
     logger.info(
       config.feishuAdmin === adminOpenId
@@ -302,19 +240,6 @@ export async function main(): Promise<void> {
     logger.warn("[Main] 未配置 FEISHU_PI_ADMIN：管理员能力不可用");
   }
 
-  // —— 启动第 3.5 步：管理员 lark 未登录/已失效 → 主动把授权链接卡推送到管理员私聊 ——
-  // （此前只打日志提示 /login lark，链接不会自己出现；expired 档案先清掉 ensureScopes 才会重新发卡）
-  if (adminOpenId) {
-    const loginState = (await userAuth.loginStatus(adminOpenId)).state;
-    if (loginState !== "active") {
-      if (loginState === "expired") await userAuth.logout(adminOpenId);
-      void userAuth
-        .ensureScopes(adminOpenId, config.userAuthScopes)
-        .catch((error) => logger.warn("[Main] 管理员授权链接推送失败:", error));
-      logger.info("[Main] 管理员 lark 未登录/已失效，授权链接卡已推送到管理员私聊，点击完成即可");
-    }
-  }
-
   // ---------- 消息传输 ----------
 
   // runtime 先声明（transport 的 onModelSwitch 回调引用它）
@@ -325,22 +250,24 @@ export async function main(): Promise<void> {
     appId: config.feishuAppId,
     appSecret: config.feishuAppSecret,
     botOpenId,
+    botName,
     client,
     sessions,
     messages,
     maxResourceBytes: config.maxResourceBytes,
     maxMessageResourceBytes: config.maxMessageResourceBytes,
+    audioTranscription: {
+      model: config.audioTranscriptionModel,
+      baseUrl: config.audioTranscriptionBaseUrl,
+      apiKey: config.audioTranscriptionApiKey,
+    },
 
     adminOpenId,
-    // lark-cli 用户态搜索通道（contact +search-user）：部门信息的主要来源，不依赖需审核权限；
-    // 普通消息发送者不需要先 /login：资料查询只使用管理员已授权的 user token；
-    // 管理员凭证不可用时保留 open_id，不改用目标用户凭证。
-    searchUserProfile: createCliSearchUser({
-      appId: config.feishuAppId,
+    searchMentionedUserProfile: createMentionProfileLookup({
       cwd: config.cwd,
+      appId: config.feishuAppId,
       adminOpenId,
-      getToken: (openId) => userAuth?.getUserAccessToken(openId) ?? Promise.resolve(undefined),
-      refreshToken: (openId) => userAuth?.refreshUserAccessToken(openId) ?? Promise.resolve(undefined),
+      getAdminToken: (openId) => userAuth?.getUserAccessToken(openId) ?? Promise.resolve(undefined),
     }),
     // /model 切换时通知运行时热切换（持久化到 .env 仍在 transport 内完成）
     onModelSwitch: (name) => {
@@ -349,8 +276,7 @@ export async function main(): Promise<void> {
     },
   });
 
-  /** /login 绑定完成时：① 身份 API 给出的姓名是权威资料，直接写入用户缓存
-   *  （无需等搜索通道，冷却空档案立即被覆盖）；② 管理员尚未识别且登录者与
+  /** /login 绑定完成时：① 身份 API 给出的姓名写入用户缓存；② 管理员尚未识别且登录者与
    *  FEISHU_PI_ADMIN 匹配 → 记录资料，重启后走缓存通道自动识别。 */
   const handleLoginBound = (info: { openId: string; name?: string; en_name?: string; email?: string }): void => {
     void transport
@@ -370,23 +296,11 @@ export async function main(): Promise<void> {
   handleLoginBoundImpl = handleLoginBound;
   for (const args of pendingLoginBound.splice(0)) handleLoginBound(...args);
 
-  // 后台保鲜：定时把已登录用户（含管理员）的 access token 刷新一遍——
-  // 会话 bash 的凭证注入走同步内存缓存，靠这里保证缓存里的 token 始终有效
-  const TOKEN_REFRESH_INTERVAL_MS = 30 * 60 * 1000;
-  const tokenRefresher = setInterval(() => {
-    void userAuth?.refreshAllKnown().catch((error) => {
-      logger.warn("[Main] 用户 token 后台保鲜失败:", error);
-    });
-  }, TOKEN_REFRESH_INTERVAL_MS);
-  tokenRefresher.unref?.();
-
   // ---------- 权限闸门：策略 → 智能体审核 → 管理员授权卡 ----------
 
   const policyFile = join(config.cwd, ".agent", "permissions.json");
   const policy = new PermissionPolicy(policyFile, {
     adminId: adminOpenId ?? "",
-    groupMembership: config.groupMembership,
-    usersFile: join(config.dataDir, "users", `${config.feishuAppId}_users.json`),
     cwd: config.cwd,
   });
   // bridge 在下方创建，先用闭包引用（授权卡撤回需查询该会话的详细模式开关）
@@ -539,17 +453,19 @@ ${trimmed}` }] },
     permissionPolicy: policy,
     toolGuard: (groupPolicy, params, signal) => toolGuard.check(groupPolicy, params, signal),
     scheduleService,
-    // 会话级带身份 bash：按发起人（含管理员）注入 lark-cli 凭证 env；
-    // 同步读内存缓存，未登录时拒绝执行并推送授权链接。
-    // 工厂调用即异步预热该用户的内存缓存（快路径命中时零开销），保证首条 bash 前缓存就绪。
+    // 会话级带身份 bash：在每次 CLI 真正启动时绑定发起人；管理员用户令牌不进入 AI CLI。
+    // 普通 shell 命令不接收凭证，未登录时拒绝该次 CLI 并推送授权链接。
+    // 用户态命令执行前按需刷新当前发起人的 token，不预热其他用户。
     identityBash: (userId, context) => {
-      void userAuth?.getUserAccessToken(userId).catch(() => undefined);
       return createIdentityBashTool({
         cwd: config.cwd,
         appId: config.feishuAppId,
+        appSecret: config.feishuAppSecret,
+        adminSender: Boolean(adminOpenId && userId === adminOpenId),
         userId,
         chatId: context?.chatId,
         getLarkToken: () => userAuth?.peekUserAccessToken(userId),
+        ensureLarkToken: () => userAuth?.getUserAccessToken(userId) ?? Promise.resolve(undefined),
         // lark-cli 用户态命令缺 scope 时：发起增量 Device Flow（授权卡发到当前会话），
         // 同意后 token 自动入库并刷新，重试即生效——用户无需手动 /login
         onMissingScopes: (uid, _chatId, scopes) => {
@@ -563,11 +479,11 @@ ${trimmed}` }] },
           // lark-cli 未登录/凭证失效：自动发起 Device Flow，授权链接卡推送到用户私聊
           void userAuth?.ensureLogin(uid).catch((error) => logger.warn("[Main] lark-cli 登录链接推送失败:", error));
         },
-        // Meegle（飞书项目）：/login meegle 授权的静态 token，命令命中 meegle 时注入；
+        // Meegle（飞书项目）：/login meegle 授权的静态 token，仅在启动 CLI 时注入；
         // 站点固定为飞书项目（MEEGLE_DEFAULT_HOST）；无凭证时自动发起到该用户私聊的授权
         extraInjections: [
           {
-            commandPattern: /meegle/,
+            commandPattern: /^\s*meegle(?:\.exe)?(?:\s|$)/i,
             envToken: "MEEGLE_USER_ACCESS_TOKEN",
             staticEnv: { MEEGLE_HOST: MEEGLE_DEFAULT_HOST },
             getToken: () => {
@@ -656,7 +572,8 @@ ${trimmed}` }] },
       ],
       // 回复末尾的模型统计小字开关（工具过程状态不受影响）
       showModelStats: config.showModelStats,
-      // 预制人员名单：消息里按名字提到的人补 open_id 提示（与权限策略/管理员识别共用 data/users 名单）
+      botName,
+      // 已知人员提示：消息里按名字提到的人补 open_id（资料缓存与管理员识别共用 data/users 文件）
       peopleRoster: new PeopleRoster(usersFile),
       // /model 指令的运行时模型信息（config 对象即 runtime 热切换的同一引用，取到的是实时值）
       modelInfo: () => ({
@@ -670,10 +587,6 @@ ${trimmed}` }] },
 
   // ---------- 启动 ----------
 
-  // —— 启动第 3 步：团队成员 openId 解析（仅姓名入库；部门在该成员实际互动后经搜索补全）——
-  await userAuth.refreshAllKnown().catch((error) => logger.warn("[Main] 用户 token 预热失败:", error));
-  const rosterCount = await transport.ingestTeamOpenIds({ botOpenId });
-  logger.info(`[Main] 启动 3/4 团队成员名单就绪: ${rosterCount} 人入缓存`);
 
   // —— 启动第 4 步：开始工作 ——
 
@@ -707,7 +620,6 @@ ${trimmed}` }] },
     );
 
     clearInterval(cleanupTimer);
-    clearInterval(tokenRefresher);
     scheduleService.stop();
     await miniPetServer?.stop();
     await instanceLock.release();

@@ -1,4 +1,4 @@
-import { EventDispatcher, LoggerLevel, normalize, normalizeCardAction, WSClient, type Client } from "@larksuiteoapi/node-sdk";
+import { EventDispatcher, LoggerLevel, normalize, normalizeCardAction, WSClient, type Client, type NormalizedMessage } from "@larksuiteoapi/node-sdk";
 import type { FeishuInboundMessage, FeishuTransport } from "./types.ts";
 import { LarkCli } from "./lark-cli.ts";
 import { LarkImageProcessor } from "./image-processor.ts";
@@ -9,6 +9,8 @@ import { attachmentsDirOfSession, imagesDirOfSession, sanitizeFileName } from ".
 import { upsertEnvLine } from "../utils/env-file.ts";
 import { toBuffer } from "./resource-buffer.ts";
 import { mentionedUserIds } from "./people-roster.ts";
+import { cardMentionNames, cardReferenceId, cardVisibleText, expandCardMentions, personLabel, postAttachments, speechText, type InboundResource } from "./inbound-content.ts";
+import { transcribeAudio, type AudioTranscriptionOptions } from "./audio-transcriber.ts";
 import { SessionStore } from "../runtime/session-store.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -25,10 +27,21 @@ export interface CardCallbackParams {
 /** 会话模式缓存条目上限（超出驱逐最久未用） */
 const CHAT_MODE_CACHE_MAX = 500;
 
+interface FetchedMessageItem {
+  message_id?: string;
+  msg_type?: string;
+  parent_id?: string;
+  create_time?: string;
+  body?: { content?: string };
+  sender?: { id?: string; sender_type?: string };
+  mentions?: Array<{ key: string; name?: string; id?: { open_id?: string } }>;
+}
+
 export interface LarkTransportConfig {
   appId: string;
   appSecret: string;
   botOpenId?: string;
+  botName?: string;
   source?: string;
   userProfileDir?: string;
   handshakeTimeoutMs?: number;
@@ -39,11 +52,12 @@ export interface LarkTransportConfig {
   sessions: SessionStore;
   /** 管理员 Open ID（可选） */
   adminOpenId?: string;
-  /** lark-cli 用户态搜索通道（contact +search-user，见 lark-cli-search.ts）：部门信息的来源 */
-  searchUserProfile?: (openId: string) => Promise<{ name?: string; en_name?: string; department_name?: string[] } | undefined>;
+  /** 仅在真实 @ 提及时自动查询被 @ 者；该通道不暴露给 Agent。 */
+  searchMentionedUserProfile?: (mentionedOpenId: string) => Promise<{ name?: string; en_name?: string; department_name?: string[] } | undefined>;
   /** 单个资源和单条消息资源总大小限制 */
   maxResourceBytes?: number;
   maxMessageResourceBytes?: number;
+  audioTranscription?: AudioTranscriptionOptions;
   /** 消息处理状态持久化，用于在预处理前去重 */
   messages?: MessageStore;
   /** 模型切换回调（/model 指令确认后触发，用于运行时热切换） */
@@ -64,12 +78,16 @@ export class LarkTransport implements FeishuTransport {
   private readonly appId: string;
   private readonly appSecret: string;
   private readonly botOpenId?: string;
+  private readonly botName: string;
   private readonly source: string;
   private readonly handshakeTimeoutMs: number;
   private readonly pingTimeout: number;
   private readonly larkCli: LarkCli;
   private readonly imageProcessor?: LarkImageProcessor;
   private readonly adminOpenId?: string;
+  private readonly searchMentionedUserProfile?: LarkTransportConfig["searchMentionedUserProfile"];
+  private readonly mentionLookupInflight = new Map<string, Promise<void>>();
+  private readonly failedSenderLookups = new Map<string, number>();
   private readonly onModelSwitch?: (modelName: string) => void;
   private readonly client: Client;
   private handler?: (message: FeishuInboundMessage) => Promise<void>;
@@ -82,24 +100,26 @@ export class LarkTransport implements FeishuTransport {
   private readonly messages?: MessageStore;
   private readonly maxResourceBytes: number;
   private readonly maxMessageResourceBytes: number;
+  private readonly audioTranscription?: AudioTranscriptionOptions;
 
   constructor(config: LarkTransportConfig) {
     this.appId = config.appId;
     this.appSecret = config.appSecret;
     this.botOpenId = config.botOpenId;
+    this.botName = config.botName || "机器人";
     this.source = config.source ?? "feishu-pi";
     this.handshakeTimeoutMs = config.handshakeTimeoutMs ?? 15_000;
     this.pingTimeout = config.pingTimeout ?? 30;
     this.adminOpenId = config.adminOpenId;
+    this.searchMentionedUserProfile = config.searchMentionedUserProfile;
     this.onModelSwitch = config.onModelSwitch;
     this.client = config.client;
     this.sessions = config.sessions;
     this.messages = config.messages;
     this.maxResourceBytes = config.maxResourceBytes ?? 20 * 1024 * 1024;
     this.maxMessageResourceBytes = config.maxMessageResourceBytes ?? this.maxResourceBytes * 2;
-    this.larkCli = new LarkCli(config.appId, config.userProfileDir, {
-      searchUser: config.searchUserProfile,
-    });
+    this.audioTranscription = config.audioTranscription;
+    this.larkCli = new LarkCli(config.appId, config.userProfileDir);
     this.imageProcessor = new LarkImageProcessor(config.client, {
       maxResourceBytes: this.maxResourceBytes,
       maxMessageResourceBytes: this.maxMessageResourceBytes,
@@ -130,13 +150,20 @@ export class LarkTransport implements FeishuTransport {
       // 普通消息：normalize 归一化（content/resources/mentions），交给 handler 后台处理
       "im.message.receive_v1": async (raw: Record<string, unknown>) => {
         try {
+          const rawMessage = raw.message as { chat_type?: string; mentions?: Array<{ id?: { open_id?: string } }> } | undefined;
+          if (rawMessage?.chat_type === "group" && this.botOpenId &&
+              !rawMessage.mentions?.some((mention) => mention.id?.open_id === this.botOpenId)) return;
+          const forwardedNames = new Map<string, string>();
           const message = await normalize(raw as never, {
             botIdentity: this.botOpenId ? { openId: this.botOpenId } : undefined,
             stripBotMentions: true,
             includeRaw: true,
+            fetchSubMessages: async (messageId: string) => await this.getMessageItems(messageId) as never,
+            batchResolveNames: async (ids: string[]) => await this.fillForwardedNames(ids, forwardedNames),
+            resolveUserName: (id: string) => forwardedNames.get(id) || id,
           } as never);
           if (!message) return;
-          await this.dispatchMessage(message as unknown as { messageId: string; chatId: string; threadId?: string; senderId: string; content: string; resources?: Array<{ type: string; fileKey: string; fileName?: string }>; mentions?: Array<{ openId?: string; name?: string; isBot?: boolean }>; mentionedBot?: boolean });
+          await this.dispatchMessage(message);
         } catch (error) {
           logger.error("[LarkTransport] 消息归一化/分发失败:", error);
         }
@@ -181,16 +208,7 @@ export class LarkTransport implements FeishuTransport {
    * SDK 的事件处理会被阻塞。交给 handler 后台处理，
    * 会话内的顺序由 ConversationManager 保证，消息去重在附件预处理前完成。
    */
-  private async dispatchMessage(message: {
-    messageId: string;
-    chatId: string;
-    threadId?: string;
-    senderId: string;
-    content: string;
-    resources?: Array<{ type: string; fileKey: string; fileName?: string }>;
-    mentions?: Array<{ openId?: string; name?: string; isBot?: boolean }>;
-    mentionedBot?: boolean;
-  }): Promise<void> {
+  private async dispatchMessage(message: NormalizedMessage): Promise<void> {
     if (this.botOpenId && message.senderId === this.botOpenId) return;
     const chatId = message.chatId;
     let claimed = false;
@@ -214,24 +232,52 @@ export class LarkTransport implements FeishuTransport {
       const conversationId = buildConversationId(chatId, chatMode, threadId, message.messageId);
       const sessionDir = await this.sessions.dirFor(conversationId, message.senderId);
 
-      const profile = await this.larkCli.getUserProfile(message.senderId);
-      const displayName = profile.name || profile.en_name || message.senderId;
-
-      // @ 提及入库（后台，不阻塞消息处理）：被 @ 的人也走资料查询链路写入用户名单
-      // （data/users/{appId}_users.json，人员提示/权限分组/管理员识别共用）。
-      // 查询链路自带 3 天缓存与并发合并：已入库的人零 API 开销。
-      for (const mentioned of mentionedUserIds(message.mentions ?? [], message.senderId)) {
-        void this.larkCli.getUserProfile(mentioned).catch(() => undefined);
+      let profile = await this.larkCli.getUserProfile(message.senderId);
+      if (!profile.name && !profile.en_name) {
+        await this.resolveSenderProfile(message.senderId);
+        profile = await this.larkCli.getUserProfile(message.senderId);
       }
+      const displayName = profile.name || profile.en_name || message.senderName || message.senderId;
+
+      // 只对消息里真实 @ 的人使用固定资料查询，且在模型开始前等其完成。
+      const mentionedIds = mentionedUserIds(message.mentions ?? [], message.senderId).filter((id) => id !== this.botOpenId);
+      await Promise.all(mentionedIds.map((id) => this.resolveMentionProfile(id)));
+      const people = await Promise.all(mentionedIds.map(async (openId) => {
+        const saved = await this.larkCli.getUserProfile(openId);
+        const raw = message.mentions.find((mention) => mention.openId === openId);
+        return { openId, name: saved.name || saved.en_name || raw?.name || openId, alias: raw?.name };
+      }));
+
+      // SDK 默认把 @_user_1 压成 @名字，丢失 open_id；用已确认的人物资料重新归一化一次。
+      const rawEvent = message.raw as { message?: { content?: string; mentions?: Array<{ key?: string; name?: string; id?: { open_id?: string } }> } } | undefined;
+      let normalizedContent = message.content;
+      if (rawEvent?.message?.mentions?.length) {
+        const enrichedMentions = rawEvent.message.mentions.map((mention) => {
+          const person = people.find((item) => item.openId === mention.id?.open_id);
+          if (!person) return mention;
+          const alias = mention.name || person.name;
+          const name = alias === person.name ? personLabel(person.name, person.openId) : `${alias}(${person.name},${person.openId})`;
+          return { ...mention, name };
+        });
+        const enriched = await normalize({ ...rawEvent, message: { ...rawEvent.message, mentions: enrichedMentions } } as never, {
+          botIdentity: { openId: this.botOpenId || "", name: this.botName },
+          stripBotMentions: true,
+        });
+        normalizedContent = enriched.content;
+      }
+
+      const rawContent = rawEvent?.message?.content || "";
+      const messageType = message.rawContentType;
+      const resources: InboundResource[] = [...message.resources, ...postAttachments(rawContent, messageType)];
+      const uniqueResources = resources.filter((item, index) => item.fileKey && resources.findIndex((other) => other.type === item.type && other.fileKey === item.fileKey) === index);
 
       // 处理图片附件（含 post 富文本里的图片：SDK 会把它们放进 resources）
       let images;
       let imageCount = 0;
       let imageBytes = 0;
       let imageNotes: string[] = [];
-      const resources = (message as unknown as { resources?: Array<{ type: string; fileKey: string; fileName?: string }> }).resources ?? [];
-      if (resources.length > 0) {
-        const imageKeys = resources.filter((r) => r.type === "image").map((r) => r.fileKey);
+      if (uniqueResources.length > 0) {
+        const imageKeys = uniqueResources.filter((r) => r.type === "image").map((r) => r.fileKey);
         if (imageKeys.length > 0) {
           imageCount = imageKeys.length;
           const processed = await this.imageProcessor?.processImages(
@@ -250,27 +296,59 @@ export class LarkTransport implements FeishuTransport {
       }
 
       // 过滤消息中的 @ 机器人标记（normalize 已按占位符替换，这里兜底清洗）
-      let cleanedText = stripBotMentions(message.content, this.botOpenId);
+      let cleanedText = stripBotMentions(normalizedContent, this.botOpenId);
+      if (messageType === "interactive") {
+        const card = await this.fetchCardText(message.messageId, rawContent);
+        if (card) {
+          cleanedText = `[卡片内容]\n${card.text}`;
+          for (const person of card.people) {
+            if (!people.some((known) => known.openId === person.openId)) people.push({ ...person, alias: undefined });
+          }
+        }
+      }
+      let nativeTranscript: string | undefined;
+      if (messageType === "audio") {
+        let transcript = speechText(rawContent, messageType);
+        if (!transcript) {
+          const fetched = await this.getMessageItem(message.messageId).catch(() => undefined);
+          transcript = speechText(fetched?.body?.content || "", messageType);
+        }
+        nativeTranscript = transcript;
+        cleanedText = transcript ? `[语音转写] ${transcript}` : "[语音消息，飞书未提供转写]";
+      }
 
       // 下载文件类附件（file/audio/video/media），保存到本会话目录的 files/ 并把路径写进消息文本，
       // Agent 可用 read/bash 直接访问
       {
         const attachmentNote = await downloadFileAttachments(
           attachmentsDirOfSession(sessionDir),
-          resources,
+          uniqueResources,
           (fileKey, type) => this.downloadResource(message.messageId, fileKey, type),
           {
             maxResourceBytes: this.maxResourceBytes,
             maxTotalBytes: Math.max(0, this.maxMessageResourceBytes - imageBytes),
           },
+          nativeTranscript ? undefined : async (data) => await transcribeAudio(data, this.audioTranscription ?? {}),
         );
-        if (attachmentNote) cleanedText += attachmentNote;
+        if (attachmentNote) {
+          if (attachmentNote.includes("[语音转写]")) cleanedText = cleanedText.replace("[语音消息，飞书未提供转写]", "").trim();
+          cleanedText += attachmentNote;
+        }
       }
 
       if (imageNotes.length > 0) {
         // 图片本体不入会话记录，只留路径（与文件类附件的 [附件] 说明同格式）
         cleanedText += imageNotes.map((p) => `\n[图片] 已保存到: ${p}`).join("");
       }
+
+      const quote = message.replyToMessageId
+        ? await this.fetchQuotedContext(message.replyToMessageId, sessionDir).catch((error) => {
+            logger.warn(`[LarkTransport] 引用消息读取失败 ${message.replyToMessageId}: ${error instanceof Error ? error.message : String(error)}`);
+            return undefined;
+          })
+        : undefined;
+      const quoteText = quote?.text ?? (message.replyToMessageId ? `[引用消息 ${message.replyToMessageId}：暂时无法读取原文]` : undefined);
+      if (quote?.images.length) images = [...quote.images, ...(images ?? [])];
 
       // 记录收到的消息
       const imageInfo = imageCount > 0 ? `（含 ${imageCount} 张图片）` : "";
@@ -298,6 +376,8 @@ export class LarkTransport implements FeishuTransport {
         },
         text: cleanedText,
         images,
+        quoteText,
+        people: [...people, ...(quote?.people ?? [])],
       }).catch((error) => {
         logger.error(`[LarkTransport] 消息处理失败: ${error instanceof Error ? error.message : error}`);
       }).finally(() => stopLease?.());
@@ -515,45 +595,204 @@ export class LarkTransport implements FeishuTransport {
     return messageId;
   }
 
-  /**
-   * 启动第 3 步：收集机器人所在会话（群聊 + 私聊）的成员 openId + 姓名，
-   * 以姓名写入用户名单（不查部门——部门在该成员实际互动时经 search-user 补全）。
-   * 上限 50 会话 / 500 人，返回入库人数。
-   */
-  async ingestTeamOpenIds(opts: { botOpenId?: string; maxChats?: number; maxMembers?: number } = {}): Promise<number> {
-    const maxChats = opts.maxChats ?? 50;
-    const maxMembers = opts.maxMembers ?? 500;
-    const entries = new Map<string, string>();
-    let chatCount = 0;
-    let pageToken: string | undefined;
-    const collectChat = async (chatId: string): Promise<void> => {
-      chatCount += 1;
-      let memberToken: string | undefined;
-      do {
-        const res = await this.client.im.chatMembers.get({
-          path: { chat_id: chatId },
-          params: { member_id_type: "open_id", page_size: 100, page_token: memberToken },
-        });
-        for (const member of ((res.data?.items ?? []) as Array<{ member_id?: string; name?: string }>)) {
-          const id = member.member_id;
-          if (!id || id === opts.botOpenId || entries.has(id) || entries.size >= maxMembers) continue;
-          entries.set(id, member.name ?? "");
-        }
-        memberToken = (res.data as { page_token?: string } | undefined)?.page_token;
-      } while (memberToken && entries.size < maxMembers);
-    };
+  /** 发言人用机器人应用权限查询本人资料；管理员用户令牌只用于真实 @ 的固定入库流程。 */
+  private async resolveSenderProfile(openId: string): Promise<void> {
+    if (!/^ou_[A-Za-z0-9_-]+$/.test(openId)) return;
+    if ((this.failedSenderLookups.get(openId) ?? 0) > Date.now()) return;
     try {
-      do {
-        const res = await this.client.im.v1.chat.list({ params: { page_size: 100, page_token: pageToken } });
-        for (const chat of ((res.data?.items ?? []) as Array<{ chat_id?: string }>)) {
-          if (chat.chat_id && chatCount < maxChats && entries.size < maxMembers) await collectChat(chat.chat_id);
-        }
-        pageToken = (res.data as { page_token?: string } | undefined)?.page_token;
-      } while (pageToken && chatCount < maxChats && entries.size < maxMembers);
+      const response = await this.client.request({
+        method: "GET",
+        url: `/open-apis/contact/v3/users/${encodeURIComponent(openId)}`,
+        params: { user_id_type: "open_id" },
+      }) as { code?: number; data?: { user?: { name?: string; en_name?: string } } };
+      const user = response.data?.user;
+      if (response.code === 0 && user && (user.name || user.en_name)) {
+        await this.larkCli.putProfile(openId, user);
+      } else {
+        this.failedSenderLookups.set(openId, Date.now() + 60 * 60_000);
+      }
     } catch (error) {
-      logger.warn(`[Roster] 团队成员收集中断（已完成部分保留）: ${error instanceof Error ? error.message : String(error)}`);
+      this.failedSenderLookups.set(openId, Date.now() + 60 * 60_000);
+      logger.warn(`[LarkTransport] 发言人资料读取失败 ${openId}: ${error instanceof Error ? error.message : String(error)}`);
     }
-    return this.larkCli.upsertRosterNames([...entries].map(([openId, name]) => ({ openId, name })));
+  }
+
+  private async resolveMentionProfile(openId: string): Promise<void> {
+    const existing = this.mentionLookupInflight.get(openId);
+    if (existing) return existing;
+    const task = (async () => {
+      const cached = await this.larkCli.getUserProfile(openId);
+      const ageMs = Date.now() - Date.parse(cached.updatedAt);
+      if ((cached.name || cached.en_name || cached.department_name.length) && ageMs < 3 * 24 * 60 * 60_000) return;
+      const found = await this.searchMentionedUserProfile?.(openId);
+      if (found) await this.larkCli.putProfile(openId, found);
+    })().catch((error) => logger.warn(`[LarkTransport] @ 用户资料补全失败 ${openId}: ${error instanceof Error ? error.message : String(error)}`))
+      .finally(() => this.mentionLookupInflight.delete(openId));
+    this.mentionLookupInflight.set(openId, task);
+    return task;
+  }
+
+  /** 合并转发里的每条发言也标注姓名和 ID，使用机器人应用权限查询。 */
+  private async fillForwardedNames(ids: string[], names: Map<string, string>): Promise<void> {
+    const unique = [...new Set(ids)].slice(0, 50);
+    for (let index = 0; index < unique.length; index += 5) {
+      await Promise.all(unique.slice(index, index + 5).map(async (id) => {
+        if (id.startsWith("ou_")) await this.resolveSenderProfile(id);
+        const profile = id.startsWith("ou_") ? await this.larkCli.getUserProfile(id) : undefined;
+        names.set(id, personLabel(profile?.name || profile?.en_name || (id === this.appId || id === this.botOpenId ? this.botName : undefined), id));
+      }));
+    }
+  }
+
+  /** 卡片 2.0 的事件内容常是 card_id 引用；按消息 ID 向飞书取可读原卡。 */
+  private async fetchCardText(messageId: string, fallbackContent: string): Promise<{ text: string; people: Array<{ openId: string; name: string }> } | undefined> {
+    let content = fallbackContent;
+    let item: FetchedMessageItem | undefined;
+    try {
+      item = await this.getMessageItem(messageId, "user_card_content");
+      content = item?.body?.content || content;
+    } catch (error) {
+      logger.warn(`[LarkTransport] 卡片原文读取失败 ${messageId}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    let text = cardVisibleText(content);
+    const cardId = cardReferenceId(content);
+    if (!text && cardId && /^[A-Za-z0-9_-]+$/.test(cardId)) {
+      try {
+        const response = await this.client.request({ method: "GET", url: `/open-apis/cardkit/v1/cards/${cardId}` }) as { data?: { card?: unknown } };
+        text = cardVisibleText(JSON.stringify(response.data?.card ?? response.data ?? {}));
+      } catch (error) {
+        logger.warn(`[LarkTransport] CardKit 内容读取失败 ${cardId}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+    if (!text) return undefined;
+    const names = cardMentionNames(content);
+    for (const mention of item?.mentions ?? []) {
+      const id = mention.id?.open_id;
+      if (id && mention.name) names.set(id, mention.name);
+    }
+    const ids = [...new Set([...text.matchAll(/<at\s+(?:id|user_id)=["']?(ou_[A-Za-z0-9_-]+)/gi)].map((match) => match[1]))].slice(0, 20);
+    await Promise.all(ids.map(async (id) => {
+      const cached = await this.larkCli.getUserProfile(id);
+      if (!cached.name && !cached.en_name && !names.has(id)) {
+        await this.resolveSenderProfile(id);
+      }
+      const profile = await this.larkCli.getUserProfile(id);
+      const name = profile.name || profile.en_name;
+      if (name) names.set(id, name);
+    }));
+    return {
+      text: expandCardMentions(text, names),
+      people: ids.map((openId) => ({ openId, name: names.get(openId) || openId })),
+    };
+  }
+
+  private async getMessageItem(messageId: string, cardContentType = "raw_card_content"): Promise<FetchedMessageItem | undefined> {
+    return (await this.getMessageItems(messageId, cardContentType))[0];
+  }
+
+  private async getMessageItems(messageId: string, cardContentType = "raw_card_content"): Promise<FetchedMessageItem[]> {
+    if (!/^om_[A-Za-z0-9_-]+$/.test(messageId)) return [];
+    const response = await this.client.request({
+      method: "GET",
+      url: `/open-apis/im/v1/messages/${encodeURIComponent(messageId)}`,
+      params: { card_msg_content_type: cardContentType },
+    }) as { code?: number; data?: { items?: FetchedMessageItem[] } };
+    if (response.code !== 0) throw new Error(`消息读取失败：${response.code ?? "无响应码"}`);
+    return response.data?.items ?? [];
+  }
+
+  /** 引用链最多读取三层；每层保留自己的发言人、类型和可见内容。 */
+  private async fetchQuotedContext(parentId: string, sessionDir: string): Promise<{ text: string; images: NonNullable<FeishuInboundMessage["images"]>; people: NonNullable<FeishuInboundMessage["people"]> } | undefined> {
+    const lines: string[] = [];
+    const images: NonNullable<FeishuInboundMessage["images"]> = [];
+    const people: NonNullable<FeishuInboundMessage["people"]> = [];
+    const visited = new Set<string>();
+    let current = parentId;
+    for (let depth = 0; depth < 3 && current && !visited.has(current); depth++) {
+      visited.add(current);
+      const item = await this.getMessageItem(current).catch((error) => {
+        logger.warn(`[LarkTransport] 引用第 ${depth + 1} 层读取失败 ${current}: ${error instanceof Error ? error.message : String(error)}`);
+        return undefined;
+      });
+      if (!item) break;
+      const senderId = item.sender?.id || "未知ID";
+      const senderType = item.sender?.sender_type;
+      if (senderType !== "app" && senderId.startsWith("ou_")) await this.resolveSenderProfile(senderId);
+      const profile = senderType === "app" ? undefined : await this.larkCli.getUserProfile(senderId);
+      const senderName = senderType === "app"
+        ? senderId === this.appId || senderId === this.botOpenId ? this.botName : "其他机器人"
+        : profile?.name || profile?.en_name || senderId;
+      if (senderId.startsWith("ou_") && !people.some((person) => person.openId === senderId)) {
+        people.push({ openId: senderId, name: senderName });
+      }
+      const type = item.msg_type || "text";
+      const rawContent = item.body?.content || "";
+      const mentions = await Promise.all((item.mentions || []).map(async (mention) => {
+        const openId = mention.id?.open_id;
+        if (!openId || !openId.startsWith("ou_")) return mention;
+        const saved = await this.larkCli.getUserProfile(openId);
+        const name = saved.name || saved.en_name || mention.name || openId;
+        if (!people.some((person) => person.openId === openId)) people.push({ openId, name, alias: mention.name });
+        return { ...mention, name: personLabel(name, openId) };
+      }));
+      const forwardedNames = new Map<string, string>();
+      const synthetic = await normalize({
+        sender: { sender_id: { open_id: senderId } },
+        message: {
+          message_id: current,
+          chat_id: "quote",
+          chat_type: "group",
+          message_type: type,
+          content: rawContent,
+          mentions,
+        },
+      } as never, {
+        botIdentity: { openId: this.botOpenId || "", name: this.botName },
+        stripBotMentions: false,
+        fetchSubMessages: async (id: string) => await this.getMessageItems(id) as never,
+        batchResolveNames: async (ids: string[]) => await this.fillForwardedNames(ids, forwardedNames),
+        resolveUserName: (id: string) => forwardedNames.get(id) || id,
+      } as never);
+      const quotedCard = type === "interactive" ? await this.fetchCardText(current, rawContent) : undefined;
+      for (const person of quotedCard?.people ?? []) {
+        if (!people.some((known) => known.openId === person.openId)) people.push(person);
+      }
+      let body = quotedCard?.text;
+      body ||= speechText(rawContent, type) || synthetic.content;
+      if (type === "audio" && !speechText(rawContent, type)) {
+        const audioKey = synthetic.resources.find((resource) => resource.type === "audio")?.fileKey;
+        if (audioKey) {
+          try {
+            const audio = await this.downloadResource(current, audioKey, "audio");
+            const transcript = await transcribeAudio(audio, this.audioTranscription ?? {});
+            if (transcript) body = `[语音转写] ${transcript}`;
+          } catch (error) {
+            logger.warn(`[LarkTransport] 引用语音转写失败 ${current}: ${error instanceof Error ? error.message : String(error)}`);
+          }
+        }
+      }
+      const imageKeys = synthetic.resources.filter((resource) => resource.type === "image").map((resource) => resource.fileKey);
+      if (imageKeys.length && images.length < 10) {
+        const processed = await this.imageProcessor?.processImages(current, imageKeys.slice(0, 10 - images.length), imagesDirOfSession(sessionDir));
+        if (processed) {
+          images.push(...processed);
+          body += processed.map((image) => image.savedPath ? `\n[引用图片] 已保存到: ${image.savedPath}` : "\n[引用图片]").join("");
+        }
+      }
+      const attachmentNote = await downloadFileAttachments(
+        attachmentsDirOfSession(sessionDir),
+        synthetic.resources,
+        (key, resourceType) => this.downloadResource(current, key, resourceType),
+        { maxResourceBytes: this.maxResourceBytes, maxTotalBytes: this.maxMessageResourceBytes },
+      ).catch((error) => {
+        logger.warn(`[LarkTransport] 引用附件保存失败 ${current}: ${error instanceof Error ? error.message : String(error)}`);
+        return "";
+      });
+      body += attachmentNote;
+      lines.unshift(`[引用 ${depth + 1}] ${personLabel(senderName, senderId)}: ${body}`);
+      current = item.parent_id || "";
+    }
+    return lines.length ? { text: lines.join("\n"), images, people } : undefined;
   }
 
   /** 登录绑定：把身份 API 给出的权威姓名直接写入用户资料缓存（冷却空档案立即被覆盖）。 */
@@ -605,6 +844,7 @@ export async function downloadFileAttachments(
     maxResourceBytes: 20 * 1024 * 1024,
     maxTotalBytes: 40 * 1024 * 1024,
   },
+  transcribe?: (data: Buffer, fileName: string) => Promise<string | undefined>,
 ): Promise<string> {
   const fileResources = resources.filter((r) => ["file", "audio", "video", "media"].includes(r.type) && r.fileKey);
   if (fileResources.length === 0) return "";
@@ -623,11 +863,19 @@ export async function downloadFileAttachments(
       if (totalBytes + buffer.length > limits.maxTotalBytes) {
         throw new Error(`附件超过单条消息总大小限制（${limits.maxTotalBytes} 字节）`);
       }
-      const fileName = sanitizeFileName(resource.fileName || resource.fileKey);
+      const fileName = sanitizeFileName(resource.fileName || (resource.type === "audio" ? `${resource.fileKey}.ogg` : resource.fileKey));
       const filePath = join(targetDir, `${Date.now()}-${randomUUID()}-${fileName}`);
       await writeFile(filePath, buffer);
       totalBytes += buffer.length;
-      attachmentNote += `\n[附件] ${fileName} 已保存到: ${filePath}`;
+      attachmentNote += `\n[${resource.type === "audio" ? "语音" : resource.type === "video" ? "视频" : "附件"}] ${fileName} 已保存到: ${filePath}`;
+      if (resource.type === "audio" && transcribe) {
+        try {
+          const words = await transcribe(buffer, fileName);
+          if (words) attachmentNote += `\n[语音转写] ${words}`;
+        } catch (error) {
+          logger.warn(`[LarkTransport] 语音转写失败 ${fileName}: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
     } catch (error) {
       logger.warn(`[LarkTransport] 下载附件失败 ${resource.fileKey}: ${error instanceof Error ? error.message : error}`);
     }

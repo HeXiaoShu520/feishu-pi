@@ -148,8 +148,10 @@ export class MeegleDeviceLogin {
       const result = await meegleDevicePollOnce({
         deviceCode: begin.deviceCode,
         clientId: begin.clientId,
-        cwd: this.cwd,
-      }).catch(() => ({ status: "error" as const, reason: "轮询调用失败" }));
+      }).catch((error) => {
+        logger.warn(`[MeegleAuth] 轮询调用失败：${error instanceof Error ? error.message : String(error)}`);
+        return { status: "error" as const, reason: "轮询调用失败，请稍后重新授权" };
+      });
       if (result.status === "success" && result.accessToken) {
         await this.meegleAuth.submitToken(openId, result.accessToken);
         if (messageId) {

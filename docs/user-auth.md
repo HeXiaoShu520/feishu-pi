@@ -4,7 +4,7 @@
 
 机器人身份用于收发消息和卡片；飞书用户 token 用于以当前用户身份调用 CLI；Meegle token 用于飞书项目。它们按 provider 和 openId 分开保存，不应混用。
 
-首次无登录记录时，交互启动会在终端引导 Device Flow。运行中可私聊 `/login lark` 或 `/login meegle`，也可由缺凭证的工具调用自动发起授权。群内登录指令会提示转到私聊，自动授权链接也只发本人私聊。
+机器人启动不要求任何用户登录。运行中可私聊 `/login lark` 或 `/login meegle`，也可由当前用户缺凭证的工具调用自动发起授权。群内登录指令会提示转到私聊，自动授权链接也只发本人私聊。
 
 ## 飞书授权流程
 
@@ -15,13 +15,13 @@
 
 默认申请 `contact:contact.base:readonly`、`contact:user.base:readonly`、`contact:department.base:readonly`，并附加 `offline_access`。`FEISHU_USER_AUTH_SCOPES` 可覆盖业务 scope。是否可用取决于飞书应用的实际权限和用户授权结果。
 
-access token 临近到期时刷新；同用户并发刷新合并，后台每 30 分钟预热所有已登录用户。refresh token 过期需重新授权，实际有效期以接口返回为准，不保证永久续期。
+当前用户实际执行用户态命令前，按需加载或刷新其 access token；同用户并发刷新合并。启动与后台定时任务不遍历、刷新其他用户凭证。refresh token 过期需重新授权，实际有效期以接口返回为准，不保证永久续期。
 
-`ensureScopes` 合并已有和新 scope 发起增量授权。资料查询使用 `lark-cli contact +search-user`，只使用管理员 token，因此普通用户不需要登录；管理员 token 不可用时直接保留目标用户的 `open_id`。遇到飞书拒绝当前 token 时会强制刷新一次并自动重试。
+`ensureScopes` 合并已有和新 scope 发起增量授权。普通消息发送者资料只读已有缓存和本人登录返回的姓名；没有资料时显示 `open_id`。唯一允许使用管理员用户 token 的自动查询是：消息中真实 @ 了其他人时，预处理程序查询被 @ 者资料并缓存；AI 不参与或取得该 token。
 
 ## 执行与存储
 
-`identity-bash.ts` 为每个子进程现取当前会话用户凭证。省略身份或 `--as user` 使用用户身份；显式 `--as bot` 不注入用户 token。用户态调用没有有效凭证时拒绝执行，避免使用机器上其他账号的 CLI 缓存。
+`identity-bash.ts` 在 shell 中提供 `lark-cli`、`lark` 和 `meegle` 入口。shell 自行处理 `cd`、`;`、`&&`、管道和重定向；每条 CLI 真正启动时，本地身份通道才把当前发起人的凭证交给该 CLI 子进程。普通 `cat`、`tail`、`ls` 等 shell 命令不接收真实用户 token 或机器人密钥。省略身份或 `--as user` 使用当前发消息者；显式 `--as bot` 使用当前机器人应用的 App ID/Secret。管理员用户令牌仅供固定资料入库；管理员本人发起的 AI CLI 用户态调用也会拒绝。每次调用使用独立临时 CLI 配置目录；shell 环境另设无效的用户令牌，直接调用本机 CLI 时也不应回退到本机登录缓存。当前用户没有有效凭证时拒绝该次 CLI 执行。简单命令可按白名单直通；复杂 shell 语法仍由工具门禁审核，身份处理不等于白名单放行。
 
 飞书凭证在 `data/credentials/lark.vault.json`，Meegle 凭证在 `data/credentials/meegle.vault.json`，主密钥在 `data/.vault-key`。文件加密使用 AES-256-GCM；同一数据目录只支持单进程写入。
 

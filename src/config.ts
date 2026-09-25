@@ -17,6 +17,10 @@ export interface FeishuPiAppConfig {
   modelProvider: string;
   modelName: string;
   modelBaseUrl?: string;
+  /** 可选语音转写；不配置时只读取飞书消息自带的 speech_to_text。 */
+  audioTranscriptionModel?: string;
+  audioTranscriptionBaseUrl?: string;
+  audioTranscriptionApiKey?: string;
   /** 思考档位：off=关闭思考，low/high/max 各模型自动适配等效等级（FEISHU_PI_THINKING_LEVEL，默认 off） */
   thinkingLevel: ThinkingLevelConfig;
   /** 智能体审核接口（OpenAI 兼容）；未配置则策略外调用直接弹卡 */
@@ -26,8 +30,6 @@ export interface FeishuPiAppConfig {
   /** 未配置时回退主模型 Key */
   guardApiKey?: string;
   guardTimeoutMs: number;
-  /** 唯一团队成员名单（FEISHU_PI_GROUP）：管理员身份单独由 FEISHU_PI_ADMIN 判定 */
-  groupMembership: Record<string, string[]>;
   /** 授权卡片等待管理员点击的超时时间（超时视为拒绝） */
   approvalTimeoutMs: number;
   /** 回复卡末尾是否显示模型统计小字（模型 · token · ctx · 费用 · 耗时 · 会话别名）；工具过程状态不受影响 */
@@ -98,12 +100,6 @@ function parseThinkingLevel(value: string | undefined): ThinkingLevelConfig {
   return "off";
 }
 
-/** 只保留一个团队：FEISHU_PI_GROUP=成员1,成员2,... → group。 */
-export function parseGroupMembership(env: NodeJS.ProcessEnv): Record<string, string[]> {
-  const members = (env.FEISHU_PI_GROUP ?? "").split(",").map((item) => item.trim()).filter(Boolean);
-  return members.length > 0 ? { group: [...new Set(members)] } : {};
-}
-
 /** 从环境变量读取 feishu-pi 启动配置。 */
 export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppConfig {
   const required = (name: string): string => {
@@ -126,13 +122,16 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     // 非会话数据（用户资料、凭证、记忆、共享缓存）统一在 data/ 下
     dataDir: `${process.cwd()}/data`,
     // 用户身份授权 scope（Device Flow）：默认内置"用户资料查询"所需最小集合；FEISHU_USER_AUTH_SCOPES 可覆盖。
-    // 部门路径类 scope 需要管理员审核，默认不申请：部门信息走 lark-cli 用户态搜索通道获得
+    // 部门路径类 scope 需要管理员审核，默认不申请；仅真实 @ 提及时自动补被提及者资料。
     userAuthScopes: parsedUserAuthScopes.length > 0 ? parsedUserAuthScopes : ["contact:contact.base:readonly", "contact:user.base:readonly", "contact:department.base:readonly"],
     modelName: env.FEISHU_PI_MODEL_NAME ?? "claude-sonnet-4-6",
     // 供应商由模型名推断：带 claude → anthropic、带 deepseek → deepseek、其余 → openai
     // （FEISHU_PI_MODEL_PROVIDER 环境变量已移除）
     modelProvider: deriveModelProvider(env.FEISHU_PI_MODEL_NAME ?? "claude-sonnet-4-6"),
     modelBaseUrl: env.FEISHU_PI_MODEL_BASE_URL,
+    audioTranscriptionModel: env.FEISHU_PI_STT_MODEL || undefined,
+    audioTranscriptionBaseUrl: env.FEISHU_PI_STT_BASE_URL || env.FEISHU_PI_MODEL_BASE_URL,
+    audioTranscriptionApiKey: env.FEISHU_PI_STT_API_KEY || env.FEISHU_PI_MODEL_API_KEY,
     // 思考档位默认 off（关闭思考，pi 会显式发 thinking:disabled）：想开思考配 low/high/max
     thinkingLevel: parseThinkingLevel(env.FEISHU_PI_THINKING_LEVEL),
     // 智能体审核（策略外调用的综合判断）：OpenAI 兼容接口，支持逗号分隔多模型取安全交集
@@ -140,9 +139,6 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     guardModels: (env.FEISHU_GUARD_MODELS ?? "").split(",").map((m) => m.trim()).filter(Boolean),
     guardApiKey: env.FEISHU_GUARD_API_KEY ?? env.FEISHU_PI_MODEL_API_KEY,
     guardTimeoutMs: 6_000,
-    // 唯一团队成员名单：FEISHU_PI_GROUP；成员除 open_id/中英文名外还支持组织架构部门名
-    // （用户缓存的部门路径包含该部门名即视为组成员，见 PermissionPolicy.groupsFor）。
-    groupMembership: parseGroupMembership(env),
     approvalTimeoutMs: 5 * 60_000,
     // 回复末尾的模型统计小字：默认显示；FEISHU_SHOW_MODEL_STATS=0/false/off 关闭（工具过程状态不受影响）
     showModelStats: parseBoolEnv(env.FEISHU_SHOW_MODEL_STATS, true),

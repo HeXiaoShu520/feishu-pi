@@ -29,7 +29,11 @@ MiniPet 由桌面端拉起 mini-claw 子进程，使用 `minipet.v1` 本地 JSON
 
 根消息直接用自身 messageId；回复用 threadId，不用群级“待定话题根”猜测归属。不同新话题因此不会合并。
 
-`FeishuContext` 携带 `userOpenId`、`userName`、`en_name`、`department_name`、`chatId`、`threadId`、`chatMode`、`conversationId`、`isAdmin`。它用于权限和工具身份，不会自动作为完整对象注入模型。人员名单提示会补充消息中提到的其他人的 openId。
+`FeishuContext` 携带 `userOpenId`、`userName`、`en_name`、`department_name`、`chatId`、`threadId`、`chatMode`、`conversationId`、`isAdmin`。它用于权限和工具身份，不会自动作为完整对象注入模型。入站预处理把当前发言人写成 `姓名(open_id): 内容`；真实 @、本地已知姓名和引用链中的人物在内容里标注 open_id。引用原文按层标记发言人，图片和附件也随引用传入。卡片 2.0 按消息 ID 读取可见原文；合并转发逐条标识发言人。回复卡片使用机器人应用名称和飞书原生人物提及标签。
+
+机器人经受控 `lark-cli` 读取飞书聊天历史时，历史输出里的 Card 2.0 也按消息 ID 补取可见原文，使用该命令本来的用户或机器人身份。给模型的历史条目增加 `speaker: 姓名(open_id)`；飞书回复卡片只显示可点击的人名，不在卡片上额外显示 open_id。
+
+语音优先读取飞书消息自带的 `speech_to_text`。没有转写时，可通过 `FEISHU_PI_STT_MODEL` 配置 OpenAI 兼容转写服务；没有配置则保留语音附件及其路径，并明确标记未转写。
 
 每个会话使用 Promise 队列。新消息中断当前生成并排队；不同会话并行。共享会话换发言人时，在队列内从同一历史文件重建 Pi 会话，重新绑定凭证、记忆、定时任务创建者及授权对象。共享的是历史，不是前一人的工具身份。
 
@@ -49,7 +53,7 @@ Pi 事件的异步处理按顺序排空后才结算回复。初始化失败不�
 }
 ```
 
-身份只有两层：`admin` 由 `FEISHU_PI_ADMIN` 解析出的 open_id 识别；`group` 是唯一团队，由 `FEISHU_PI_GROUP` 配置成员（open_id、中英文名或部门名）。访客不具有白名单。管理员也只获得显式配置的权限；配置缺失、损坏或字段未配置不会补全权限。`deny` 完全来自配置，没有隐藏的内置禁止清单。
+身份只有两层：`admin` 由 `FEISHU_PI_ADMIN` 解析出的 open_id 识别；其余所有用户自动属于 `group`。管理员未配置或解析失败时，所有用户均属于 `group`。管理员也只获得显式配置的权限；配置缺失、损坏或字段未配置不会补全权限。`deny` 完全来自配置，没有隐藏的内置禁止清单。
 
 内置 `read/write/edit/bash` 和自定义工具注册到会话，执行时统一检查权限，而不是按组隐藏技能说明。`ask_user_question` 是所有人可用的交互工具。
 
@@ -64,9 +68,9 @@ Pi 事件的异步处理按顺序排空后才结算回复。初始化失败不�
 
 ## 用户资料与登录
 
-资料查询使用项目内 `lark-cli contact +search-user`，只取管理员已授权的用户 token，普通消息发送者无需登录，也不会使用其 token。管理员凭证不可用时保留 `open_id` 作为身份显示；查询会从凭证库加载有效 token，若飞书拒绝当前 token，会强制刷新一次并重试。成功资料缓存 3 天，空档案冷却 1 天；启动时从机器人所在群预填姓名。群名单尚未完成资料查询的记录会在实际互动时补全。
+普通消息发送者资料只读取已有缓存与本人登录时返回的资料，缺少姓名时显示 `open_id`。消息里真实 @ 其他人时，由消息预处理程序自动用管理员用户 token 查询被 @ 者资料并缓存；此通道不暴露给 AI，也不用于发卡或业务命令。启动时不扫描团队名单，也不遍历或预热所有用户凭证。
 
-`UserAuthService` 管理飞书 Device Flow 和刷新；`StaticCredentialService` 管理 Meegle 凭证。`identity-bash.ts` 仅为本次子进程注入当前用户凭证；用户态 CLI 缺凭证时拒绝执行并引导授权，不能回退到本机缓存账号。显式 `--as bot` 使用应用身份。
+`UserAuthService` 管理飞书 Device Flow 和按需刷新；`StaticCredentialService` 管理 Meegle 凭证。`identity-bash.ts` 在 Bash 内提供 CLI 入口，`cli-proxy.ts` 在每条 CLI 真正启动时按当前发起人绑定身份；普通 shell 命令不接收用户凭证。用户态 CLI 缺凭证时拒绝执行并引导授权。显式 `--as bot` 使用当前机器人应用的 App ID/Secret；管理员用户凭证仅供固定的被 @ 人资料入库流程。每次 Bash 调用采用独立的临时 CLI 配置目录，避免使用宿主机 CLI 账号缓存。
 
 ## 模型与资源
 

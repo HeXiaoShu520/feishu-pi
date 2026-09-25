@@ -13,6 +13,7 @@ import { randomUUID } from "node:crypto";
 import { formatStatsLine, formatToolCall, toolIcon, ReplyParts } from "./reply-parts.ts";
 import { STATS_PLACEHOLDER } from "./cardkit-stream.ts";
 import type { PeopleRoster } from "./people-roster.ts";
+import { annotatePeople, personLabel, renderTextPeople } from "./inbound-content.ts";
 
 /** 工具段延迟上屏阈值：工具运行满该时长才显示工具段与小字动画，快速指令不刷屏。 */
 const TOOL_SEGMENT_DELAY_MS = 1000;
@@ -32,6 +33,7 @@ export class FeishuAgentBridge {
   private readonly showModelStats: boolean;
   /** 预制人员名单（可选）：把消息中按名字提到的人补成提示词，模型才能识别/@ 到人 */
   private readonly peopleRoster?: PeopleRoster;
+  private readonly botName: string;
 
   /** 查询某会话是否开启详细模式（供授权卡撤回等外部逻辑判断）。 */
   isDetailMode(chatId: string): boolean {
@@ -53,6 +55,7 @@ export class FeishuAgentBridge {
       modelInfo?: () => { baseUrl?: string; modelName: string; apiKey: string };
       /** 预制人员名单（可选）：按名字提到的人自动补 open_id 提示 */
       peopleRoster?: PeopleRoster;
+      botName?: string;
     },
   ) {
     this.conversations = conversations;
@@ -62,6 +65,7 @@ export class FeishuAgentBridge {
     this.client = options?.client;
     this.showModelStats = options?.showModelStats ?? true;
     this.peopleRoster = options?.peopleRoster;
+    this.botName = options?.botName || "机器人";
     this.reactionController = options?.client ? new ReactionController(options.client) : undefined;
     this.commandRegistry = createDefaultRegistry(options?.modelInfo);
     // /detail on|off 设置详细/精简模式，状态由 bridge 持有（按 chatId 记忆，默认精简）
@@ -95,6 +99,17 @@ export class FeishuAgentBridge {
       return;
     }
 
+    const rosterHits = await this.peopleRoster?.match(message.text, { senderOpenId: message.context.userOpenId }).catch(() => []) ?? [];
+    const knownPeople = [...(message.people ?? [])];
+    if (!knownPeople.some((item) => item.openId === message.context.userOpenId)) {
+      knownPeople.push({ openId: message.context.userOpenId, name: userName || message.context.userOpenId });
+    }
+    for (const person of rosterHits) {
+      if (!knownPeople.some((item) => item.openId === person.openId)) {
+        knownPeople.push({ openId: person.openId, name: person.name || person.enName });
+      }
+    }
+
     // 添加随机表情 reaction
     await this.reactionController?.start(message.messageId);
 
@@ -105,6 +120,8 @@ export class FeishuAgentBridge {
     const reply = new CardKitReply({
       client: this.client,
       chatId: message.chatId,
+      botName: this.botName,
+      people: knownPeople,
       messageId: message.messageId,
       replyInThread: resolveReplyInThread(message.context.chatMode, message.context.threadId),
       onError: (err) => logger.error("[CardKit]", err),
@@ -113,7 +130,7 @@ export class FeishuAgentBridge {
           path: { message_id: message.messageId },
           data: {
             msg_type: "text",
-            content: JSON.stringify({ text }),
+            content: JSON.stringify({ text: `${this.botName}：${renderTextPeople(text, knownPeople)}` }),
             reply_in_thread: resolveReplyInThread(message.context.chatMode, message.context.threadId),
           },
         });
@@ -187,13 +204,14 @@ export class FeishuAgentBridge {
         await pendingAnimWrite;
       };
 
-      // 预制人员名单：消息里按名字提到的人在 prompt 末尾补 open_id 提示（仅影响发给模型的内容，
-      // 指令路由/日志/消息原文不受影响）；名单查询失败按无提示处理
-      let promptText = message.text;
-      if (this.peopleRoster) {
-        const hint = await this.peopleRoster.buildHint(message.text, message.context.userOpenId).catch(() => undefined);
-        if (hint) promptText = `${message.text}\n\n${hint}`;
-      }
+      // 每一轮明确标出真正的发言人；引用的原文保留原作者，实际 @ 与已知姓名附 open_id。
+      const speaker = personLabel(userName, message.context.userOpenId);
+      const body = annotatePeople(message.text, knownPeople);
+      const promptText = [
+        message.quoteText,
+        `${speaker}: ${body}`,
+        knownPeople.length ? "[飞书人物显示：回复中提到飞书人物时写 @姓名(open_id)；卡片只显示蓝色姓名，open_id 仅留在模型上下文。]" : undefined,
+      ].filter(Boolean).join("\n");
 
       session = await this.conversations.prompt(
         {

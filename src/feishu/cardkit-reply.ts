@@ -14,6 +14,8 @@ import { logger } from "../utils/logger.ts";
 export interface CardKitReplyOptions {
   client: Client;
   chatId: string;
+  botName?: string;
+  people?: ReadonlyArray<{ openId: string; name?: string; alias?: string }>;
   messageId?: string;
   /** 是否以话题形式回复（由会话模式决定，见 resolveReplyInThread） */
   replyInThread?: boolean;
@@ -63,6 +65,8 @@ export function findBlockBoundary(text: string): number {
  */
 export class CardKitReply implements FeishuReply {
   private readonly client: Client;
+  private readonly botName?: string;
+  private readonly people: ReadonlyArray<{ openId: string; name?: string; alias?: string }>;
   private readonly chatId: string;
   private readonly messageId?: string;
   /** 本轮卡片消息的 message_id（sendCardReference 时记录），撤回用 */
@@ -84,6 +88,8 @@ export class CardKitReply implements FeishuReply {
 
   constructor(options: CardKitReplyOptions) {
     this.client = options.client;
+    this.botName = options.botName;
+    this.people = options.people ?? [];
     this.chatId = options.chatId;
     this.messageId = options.messageId;
     this.replyInThread = options.replyInThread ?? false;
@@ -197,6 +203,8 @@ export class CardKitReply implements FeishuReply {
       // 创建流式卡片
       this.stream = new CardKitStream({
         client: this.client,
+        botName: this.botName,
+        people: this.people,
         onError: this.onError,
       });
 
@@ -272,7 +280,7 @@ export class CardKitReply implements FeishuReply {
       await oldStream.finalize(head);
 
       // 新卡承载剩余内容
-      const newStream = new CardKitStream({ client: this.client, onError: this.onError });
+      const newStream = new CardKitStream({ client: this.client, botName: this.botName, people: this.people, onError: this.onError });
       const newCardId = await newStream.create(tail);
       await newStream.replace(tail);
       this.stream = newStream;

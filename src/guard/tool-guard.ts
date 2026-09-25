@@ -3,6 +3,7 @@ import type { PermissionBroker } from "./broker.ts";
 import type { PolicyJudge, PermissionOverview } from "./judge.ts";
 import { logger } from "../utils/logger.ts";
 import { isAbsolute, join, resolve, sep } from "node:path";
+import { cliPolicyCommand, parseShellSteps, resolveSafeCd } from "../utils/shell-command.ts";
 
 export function splitShellSegments(command: string): string[] {
   const segments: string[] = [];
@@ -88,7 +89,23 @@ export class ToolGuard {
     if (toolName === "ask_user_question") return true;
     if (toolName === "bash") {
       const command = extractCommand(args);
-      return command !== undefined && (policy.bashAllowed(command) || allowCompositeCommand(command, this.cwd, (segment) => policy.bashAllowed(segment)));
+      if (command === undefined) return false;
+      const allowed = (value: string): boolean => policy.bashAllowed(value) || policy.bashAllowed(cliPolicyCommand(value));
+      const steps = parseShellSteps(command);
+      if (steps && steps.length > 1) {
+        let currentCwd = this.cwd;
+        for (const step of steps) {
+          if (/^cd\s+/i.test(step.command)) {
+            const target = resolveSafeCd(step.command, currentCwd, this.cwd);
+            if (!target) return false;
+            currentCwd = target;
+          } else if (!allowed(step.command)) {
+            return false;
+          }
+        }
+        return true;
+      }
+      return allowed(command) || allowCompositeCommand(command, this.cwd, allowed);
     }
     if (toolName === "read") {
       const path = extractPath(args);

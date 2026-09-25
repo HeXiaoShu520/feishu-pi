@@ -322,18 +322,12 @@ export class UserAuthService {
 
   /**
    * 同步读取内存中的有效 token（供会话 bash 工具的同步 spawnHook 注入）；
-   * 只读不刷新——新鲜度由消息入口预刷新与后台保鲜任务保证，未登录/未加载返回 undefined。
+   * 只读不刷新；当前用户执行业务命令前先按需刷新，未登录/未加载返回 undefined。
    */
   peekUserAccessToken(openId: string): string | undefined {
     const cached = this.memToken.get(openId);
     if (!cached || cached.expiresAt - 30_000 <= this.now()) return undefined;
     return cached.accessToken;
-  }
-
-  /** 后台保鲜：把所有已登录用户的后台刷新跑一遍（各自经 singleflight 合并）；供定时任务调用。 */
-  async refreshAllKnown(): Promise<void> {
-    const openIds = await this.store.listUsers();
-    await Promise.all(openIds.map((openId) => this.getUserAccessToken(openId).catch(() => undefined)));
   }
 
   /** 已登录用户 openId 列表（凭证库 lark 命名空间的用户键）；冷启动管理员识别用。 */
