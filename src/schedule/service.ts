@@ -79,6 +79,8 @@ export interface ScheduleServiceOptions {
   storeFile: string;
   /** 触发执行：运行智能体并把结果卡片推回目标会话（由 main 注入，复用会话链路与飞书传输） */
   runTask: (task: ScheduleTask) => Promise<void>;
+  /** Personal deployments can ignore previously saved tasks from other users. */
+  shouldRun?: (task: ScheduleTask) => boolean;
 }
 
 /**
@@ -93,17 +95,19 @@ export class ScheduleService {
   private readonly runTask: (task: ScheduleTask) => Promise<void>;
   private readonly running = new Set<string>();
   private started = false;
+  private readonly shouldRun: (task: ScheduleTask) => boolean;
 
   constructor(options: ScheduleServiceOptions) {
     this.store = new ScheduleStore(options.storeFile);
     this.runTask = options.runTask;
+    this.shouldRun = options.shouldRun ?? (() => true);
   }
 
   /** 启动：恢复所有已启用任务的调度（服务启动后调用一次）。 */
   async start(): Promise<void> {
     this.started = true;
     for (const task of await this.store.list()) {
-      if (task.enabled) this.scheduleJob(task);
+      if (task.enabled && this.shouldRun(task)) this.scheduleJob(task);
     }
     logger.info(`[Schedule] 定时任务调度已启动，共 ${this.jobs.size} 个在期任务`);
   }

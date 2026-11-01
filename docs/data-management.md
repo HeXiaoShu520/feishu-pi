@@ -1,48 +1,26 @@
-# 数据管理
+# 个人数据
 
-## 布局
+运行数据和会话均不提交 Git。删除 `.git` 或更换远端不会删除这些数据。
 
-```text
-work_space/{sessionId}/
-  session.json                 # 会话目录自述
-  *.jsonl                      # Pi 历史
-  images/                      # 图片
-  files/                       # 文件、语音、视频附件
+| 路径 | 内容 |
+|---|---|
+| `data/memory/MEMORY.md` | 一份个人长期记忆 |
+| `data/memory/archive/` | rewrite 前的记忆版本 |
+| `data/memory/index.json` | 可重建的记忆与本人历史检索索引 |
+| `data/tasks/tasks.json` | 后台任务记录 |
+| `data/tasks/<id>/output.log` | 合并 stdout/stderr 的任务日志，最多 10 MiB |
+| `data/browser/profile/` | 独立浏览器登录状态，不是日常 Edge 默认 profile |
+| `data/browser/artifacts/` | 截图和页面产物 |
+| `data/credentials/`、`data/.vault-key` | 本工程授权凭证和加密密钥 |
+| `data/users/` | 本人及被提及人员的资料缓存 |
+| `data/schedules.json` | 本人显式创建的定时任务 |
+| `data/sessions.json` | 当前会话映射 |
+| `work_space/<sessionId>/` | Pi 会话 jsonl、图片、附件与会话元数据 |
 
-data/
-  sessions.json                # conversationId → 当前会话目录与历史文件
-  messages.json                # 消息认领和处理状态
-  schedules.json               # 定时任务
-  memory/{openId}.md           # 个人长期记忆
-  users/{appId}_users.json      # 用户资料缓存
-  credentials/lark.vault.json  # 飞书用户凭证，AES-256-GCM
-  credentials/meegle.vault.json
-  .vault-key                   # 凭证库主密钥
-```
+首次使用新记忆服务时，如果 `MEMORY.md` 不存在，只迁移本人的旧 `<openId>.md`，不会合并其他人的记忆。历史来源以 `session.json` 的 ownerOpenId 或旧 conversationId 的本人归属判断，不导入无法确认归属的旧群聊。
 
-`data/` 和 `work_space/` 不入版本库。当前没有技能使用事件库；旧 `topic-roots.json` 已不再读取。
+索引按需更新；已被清理的会话会从索引中移除。索引可以删除后重建。修改长期记忆不会删除会话原文；rewrite 保存旧版本归档。
 
-## 会话生命周期
+后台任务记录跨重启保留，进程不能跨服务重启恢复。异常结束的任务显示 interrupted，不自动重跑。完成通知发送失败会写日志；记录可继续查询。
 
-`SessionStore` 分配 `{日期}-{时间}-{尾段}` 目录（尾段为发起人 openId 后 6 位加短随机串，`mkdir` 非递归保证不覆盖），传输层和 Pi 共用目录。`conversationId` 对应飞书会话或话题，`sessionId` 对应一代历史。路由规则见 [架构](architecture.md)。
-
-创建 Pi 会话后尽早持久化索引。`/new` 新建一代，旧目录留存；迟到的旧会话写入受代次校验限制。目录被清理后，下次访问自动重建。
-
-历史写入时移除 thinking 块和顶层 reasoning 字段，图片 base64 替换为路径提示；当轮内存仍保留原始图片。普通文本和工具结果仍可能包含敏感内容，不能把这一步视为通用脱敏。启动时会用已知凭证值清洗历史，完成后才接收新消息。
-
-## 清理
-
-- 启动时、之后每天清理一次。
-- 会话目录树最新 mtime 超过 7 天，整体删除；不单独删除仍在使用的会话里的旧附件。
-- 消息状态按更新时间保留 7 天；启动时另清理超过 1 小时的 processing 标记。
-- 消息认领对 processing 使用 10 分钟 TTL，failed 消息允许重试；不是跨进程 exactly-once。
-- 空闲超过 24 小时的 Pi 会话从内存驱逐，下次从文件恢复。
-- 用户缓存、个人记忆、凭证、定时任务和会话索引不按上述 7 天规则删除。
-
-JSON 索引、消息状态和定时任务由进程内存管理并原子写回。服务运行期间不要直接编辑这些文件，也不要让多个实例共用同一数据目录。停服后再手工维护。
-
-## 备份与恢复
-
-保留历史需要同时备份 `data/` 和 `work_space/`。凭证恢复需要 vault 文件和 `data/.vault-key` 成对保存；主密钥损坏不会自动覆盖生成新密钥。加密防护不等于主机隔离：持有主密钥和库文件的人能解密凭证。
-
-更换机器或工程绝对路径后，应检查 `sessions.json` 中的路径；现有索引包含绝对路径，不能保证直接搬迁后无缝续聊。环境配置单独备份并限制访问。
+日志、记忆、截图和浏览器登录状态可能包含个人信息，应与电脑的其他私人数据一起管理。权限规则不替代操作系统文件权限。

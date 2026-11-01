@@ -144,6 +144,7 @@ export class ConversationManager {
         const userId = message.context?.userOpenId ?? message.conversationId.split("-")[0];
         // 话题共享历史，但工具闭包绑定用户。换人时在队列内重建运行时，避免借用前一人的凭证。
         if (state.userId !== userId) {
+          if (message.context?.chatMode === "p2p") throw new Error("私聊会话身份不匹配，拒绝复用历史记录");
           state.session = await this.runtime.createSession(state.session.sessionFile, userId, message.context);
           state.userId = userId;
         }

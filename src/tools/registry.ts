@@ -2,7 +2,8 @@ import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { execFile, execFileSync } from "node:child_process";
 import { join, extname } from "node:path";
-import { pathToFileURL } from "node:url";
+import { loadToolModule } from "./module-loader.ts";
+import { resourceEnabled, type ResourceSelection } from "../resources/config.ts";
 import { logger } from "../utils/logger.ts";
 
 export const DEFAULT_BUILTIN_TOOLS = ["read", "write", "edit", "bash"] as const;
@@ -59,7 +60,7 @@ function readPythonMeta(filePath: string): PythonToolMeta | null {
 }
 
 /** 自定义工具不得占用的内置工具名：同名会覆盖内置实现，绕过对应的 Guard 链（如 read 的可读范围判定） */
-const RESERVED_TOOL_NAMES = new Set<string>(DEFAULT_BUILTIN_TOOLS);
+const RESERVED_TOOL_NAMES = new Set<string>([...DEFAULT_BUILTIN_TOOLS, "browser", "memory", "background_task", "mcp", "ask_user_question", "schedule_manager", "sticker_send"]);
 
 /** 内置同名工具拒绝登记；返回 undefined 表示应跳过该工具 */
 function checkReservedName(name: string, file: string): boolean {
@@ -74,11 +75,8 @@ function checkReservedName(name: string, file: string): boolean {
 let _lastToolSignature: string | null = null;
 
 /**
- * 加载 .agent/tools/ 下的自定义工具（只扫顶层，子目录不认）。
- * - .ts / .js 文件：通过 import() 动态加载，取 default 或首个含 name+execute 的导出；
- *   找不到合法导出时**静默跳过**（不打日志、不报错），写完务必确认启动日志里的 Tools 计数
- * - .py 文件：通过第一行 #! {...} 元数据注册，执行时 spawn python 子进程（缺元数据会告警）
- *
+ * 加载顶层 TS/JS/MJS、目录 index 入口及兼容的 Python 元数据工具。
+ * TS/JS 模块的导出和 schema 在注册前校验；名称冲突会报错。 *
  * 调用方注意：Runtime 用 customToolsOnce 在进程内缓存本函数结果（见 feishu-pi-runtime.ts），
  * 因此实际只在启动时加载一次——**改 .agent/tools/ 必须重启进程**，没有热更新。
  * 下面的签名比对只在重复调用的场景下起作用，避免同一工具集重复刷日志。
@@ -89,10 +87,15 @@ async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
 
   const tools: ToolDefinition[] = [];
   const entries: Array<{ name: string; file: string }> = [];
-  const files = readdirSync(toolsDir).filter((f) => {
-    const ext = extname(f).toLowerCase();
-    return ext === ".ts" || ext === ".js" || ext === ".py";
-  });
+  const files: string[] = [];
+  for (const entry of readdirSync(toolsDir, { withFileTypes: true }).sort((a, b) => a.name.localeCompare(b.name))) {
+    if (entry.isFile() && [".ts", ".js", ".mjs", ".py"].includes(extname(entry.name).toLowerCase())) files.push(entry.name);
+    else if (entry.isDirectory()) {
+      const indexes = readdirSync(join(toolsDir, entry.name), { withFileTypes: true }).filter((child) => child.isFile() && /^index\.(ts|js|mjs)$/.test(child.name));
+      if (indexes.length > 1) throw new Error(`${entry.name}: 只能保留一个 index 入口`);
+      if (indexes[0]) files.push(join(entry.name, indexes[0].name));
+    }
+  }
 
   for (const file of files) {
     const filePath = join(toolsDir, file);
@@ -155,18 +158,15 @@ async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
         });
         entries.push({ name: meta.name, file });
       } else {
-        // ---- TS / JS 脚本工具 ----
-        const module = await import(pathToFileURL(filePath).href);
-        const tool = module.default ??
-          Object.values(module).find((exp) => (exp as ToolDefinition | undefined)?.name && (exp as ToolDefinition | undefined)?.execute);
-
-        if (tool && typeof tool === "object" && "name" in tool && "execute" in tool && checkReservedName((tool as ToolDefinition).name, filePath)) {
-          tools.push(tool as ToolDefinition);
-          entries.push({ name: (tool as ToolDefinition).name, file });
+        // TS/JS modules use explicit exports and validate their schemas before registration.
+        for (const tool of await loadToolModule(filePath)) {
+          if (!checkReservedName(tool.name, filePath)) throw new Error(`工具名 ${tool.name} 与内置能力冲突`);
+          tools.push(tool);
+          entries.push({ name: tool.name, file });
         }
       }
     } catch (error) {
-      logger.warn(`[Registry] 加载工具失败: ${file} ${error instanceof Error ? error.message : error}`);
+      throw new Error(`[Registry] 加载工具失败: ${file} ${error instanceof Error ? error.message : error}`);
     }
   }
 
@@ -179,12 +179,18 @@ async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
     if (!isFirst) logger.info(`[Registry] 工具集变化，已重新加载 ${entries.length} 个自定义工具`);
   }
 
+  const names = new Set<string>();
+  for (const tool of tools) {
+    if (names.has(tool.name)) throw new Error(`工具名 ${tool.name} 重复`);
+    names.add(tool.name);
+  }
   return tools;
 }
 
 /**
  * 创建工具注册表（异步版本，加载 .agent/tools/ 下的用户自定义工具）
  */
-export async function createToolRegistryAsync(cwd: string): Promise<ToolDefinition[]> {
-  return loadCustomTools(cwd);
+export async function createToolRegistryAsync(cwd: string, selection: ResourceSelection = { enabled: true, include: ["*"], exclude: [] }): Promise<ToolDefinition[]> {
+  if (!selection.enabled) return [];
+  return (await loadCustomTools(cwd)).filter((tool) => resourceEnabled(selection, tool.name));
 }

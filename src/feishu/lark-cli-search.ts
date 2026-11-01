@@ -1,15 +1,16 @@
-/** 仅供消息预处理使用：真实 @ 提及时，以管理员用户身份补全被 @ 者资料。 */
+/** 仅供消息预处理使用：真实 @ 提及时，以本人主动授权的用户身份补全被 @ 者资料。 */
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { logger } from "../utils/logger.ts";
+import { processEnvironment } from "../process/environment.ts";
 import type { ProfileName } from "./lark-cli.ts";
 
 interface MentionLookupOptions {
   cwd: string;
   appId: string;
-  adminOpenId?: string;
-  getAdminToken: (openId: string) => Promise<string | undefined>;
+  ownerOpenId?: string;
+  getOwnerToken: (openId: string) => Promise<string | undefined>;
 }
 
 function parseProfile(output: string): ProfileName | undefined {
@@ -40,16 +41,12 @@ function parseProfile(output: string): ProfileName | undefined {
 export function createMentionProfileLookup(options: MentionLookupOptions): (mentionedOpenId: string) => Promise<ProfileName | undefined> {
   return async (mentionedOpenId) => {
     // 只接受飞书 Open ID；调用方只从消息的 mentions 列表传入。
-    if (!/^ou_[A-Za-z0-9_-]+$/.test(mentionedOpenId) || !options.adminOpenId) return undefined;
-    const token = await options.getAdminToken(options.adminOpenId);
+    if (!/^ou_[A-Za-z0-9_-]+$/.test(mentionedOpenId) || !options.ownerOpenId) return undefined;
+    const token = await options.getOwnerToken(options.ownerOpenId);
     if (!token) return undefined;
     const exe = join(options.cwd, "node_modules", "@larksuite", "cli", "bin", `lark-cli${process.platform === "win32" ? ".exe" : ""}`);
     if (!existsSync(exe)) return undefined;
-    const env = { ...process.env };
-    delete env.FEISHU_APP_ID;
-    delete env.FEISHU_APP_SECRET;
-    delete env.LARKSUITE_CLI_APP_SECRET;
-    delete env.LARKSUITE_CLI_TENANT_ACCESS_TOKEN;
+    const env = processEnvironment();
     env.LARKSUITE_CLI_USER_ACCESS_TOKEN = token;
     env.LARKSUITE_CLI_APP_ID = options.appId;
     env.LARKSUITE_CLI_CONFIG_DIR = join(options.cwd, "data", "lark-cli-runtime");

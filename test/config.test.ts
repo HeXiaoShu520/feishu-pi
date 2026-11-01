@@ -1,16 +1,21 @@
 import { describe, expect, it } from "vitest";
-import { isValidMiniPetUserOpenId, loadConfig } from "../src/config.ts";
+import { loadConfig } from "../src/config.ts";
 
 const baseEnv = { FEISHU_APP_ID: "cli_x", FEISHU_APP_SECRET: "s", FEISHU_PI_MODEL_API_KEY: "k" };
 
 describe("loadConfig", () => {
-  it("保留稳定的资源和 MiniPet 配置", () => {
-    const config = loadConfig({ ...baseEnv, MINIPET_USER_OPEN_ID: "mini_user", FEISHU_PI_MAX_RESOURCE_MB: "8" });
+  it("保留稳定的资源配置", () => {
+    const config = loadConfig({ ...baseEnv, FEISHU_PI_MAX_RESOURCE_MB: "8" });
     expect(config.showModelStats).toBe(true);
     expect(config.maxResourceBytes).toBe(8 * 1024 * 1024);
-    expect(config.miniPetUserOpenId).toBe("mini_user");
-    expect(isValidMiniPetUserOpenId("ou_c34b02e41beb83e64f2ca8efaaf9299d")).toBe(true);
-    expect(isValidMiniPetUserOpenId("minipet_user")).toBe(false);
+  });
+
+  it("B站自动化服务默认不加载，可显式开启或关闭", () => {
+    expect(loadConfig(baseEnv).biliAutoAvailable).toBe(false);
+    expect(loadConfig({ ...baseEnv, FEISHU_BILI_AUTO_AVAILABLE: "true" }).biliAutoAvailable).toBe(true);
+    expect(loadConfig({ ...baseEnv, FEISHU_BILI_AUTO_AVAILABLE: "false" }).biliAutoAvailable).toBe(false);
+    expect(loadConfig(baseEnv).biliShareAvailable).toBe(false);
+    expect(loadConfig({ ...baseEnv, FEISHU_BILI_SHARE_AVAILABLE: "true" }).biliShareAvailable).toBe(true);
   });
 
   it("不再从环境变量读取团队成员名单", () => {

@@ -91,4 +91,13 @@ describe("DataCleaner 以会话目录为清理单位", () => {
     const stats = await new DataCleaner({ sessionsRoot: join(root, "nope"), retentionDays: 7 }).cleanup();
     expect(stats.sessionsDeleted).toBe(0);
   });
+  it("启用历史保留时不删除过期会话", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clean-preserve-"));
+    const dir = await makeSession(root, "history");
+    await ageTree(dir);
+    const stats = await new DataCleaner({ sessionsRoot: root, retentionDays: 7, preserveSessions: true }).cleanup();
+    expect(stats.sessionsDeleted).toBe(0);
+    expect(await readdir(root)).toContain("history");
+  });
+
 });

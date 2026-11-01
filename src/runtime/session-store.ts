@@ -8,7 +8,7 @@
  * 都从同一个记录取目录，二者永远落在同一个会话目录里。
  */
 import { randomUUID } from "node:crypto";
-import { mkdir, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { JsonMapStore } from "../utils/json-store.ts";
 import { newSessionId, SESSION_META_FILE } from "../utils/session-paths.ts";
@@ -51,12 +51,24 @@ export class SessionStore extends JsonMapStore<SessionRecord> {
   /** 该会话当前的记录；不存在（或目录已被清理掉）时新建一个会话。 */
   async getOrCreate(conversationId: string, callerOpenId?: string): Promise<SessionRecord> {
     const inflight = this.pending.get(conversationId);
-    if (inflight) return inflight;
+    if (inflight) {
+      const record = await inflight;
+      await this.checkPrivateOwner(conversationId, callerOpenId, record);
+      return record;
+    }
     const task = this.getOrCreateInner(conversationId, callerOpenId).finally(() => {
       if (this.pending.get(conversationId) === task) this.pending.delete(conversationId);
     });
     this.pending.set(conversationId, task);
-    return task;
+    const record = await task;
+    await this.checkPrivateOwner(conversationId, callerOpenId, record);
+    return record;
+  }
+
+  private async checkPrivateOwner(conversationId: string, callerOpenId: string | undefined, record: SessionRecord): Promise<void> {
+    if (!conversationId.startsWith("p2p-") || !callerOpenId) return;
+    const metadata = JSON.parse(await readFile(join(record.dir, SESSION_META_FILE), "utf8")) as { ownerOpenId?: unknown };
+    if (typeof metadata.ownerOpenId === "string" && metadata.ownerOpenId !== callerOpenId) throw new Error("私聊会话身份不匹配，拒绝复用历史记录");
   }
 
   /** 会话目录绝对路径（需要时先建目录）。传输层下载图片/附件前调用。 */
@@ -112,17 +124,17 @@ export class SessionStore extends JsonMapStore<SessionRecord> {
     await mkdir(dir);
     const now = Date.now();
     const record: SessionRecord = { sessionId, dir, createdAt: now, updatedAt: now };
-    await this.writeMeta(dir, conversationId, sessionId, now);
+    await this.writeMeta(dir, conversationId, sessionId, now, callerOpenId);
     this.records.set(conversationId, record);
     await this.persist();
     return record;
   }
 
   /** 目录自述文件：让人一眼看出这是哪次会话的目录（也会随目录一起被清理）。 */
-  private async writeMeta(dir: string, conversationId: string, sessionId: string, createdAt: number): Promise<void> {
+  private async writeMeta(dir: string, conversationId: string, sessionId: string, createdAt: number, ownerOpenId?: string): Promise<void> {
     await writeFile(
       join(dir, SESSION_META_FILE),
-      `${JSON.stringify({ sessionId, conversationId, createdAt: new Date(createdAt).toISOString() }, null, 2)}\n`,
+      `${JSON.stringify({ sessionId, conversationId, ownerOpenId, createdAt: new Date(createdAt).toISOString() }, null, 2)}\n`,
       "utf8",
     );
   }

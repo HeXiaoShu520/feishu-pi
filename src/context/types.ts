@@ -12,5 +12,5 @@ export interface FeishuContext {
   /** 会话模式：p2p 私聊 / group 普通群 / topic 话题群（传输层查询并缓存；查询失败按 group 兜底） */
   chatMode?: "p2p" | "group" | "topic";
   conversationId: string;
-  isAdmin?: boolean; // 是否为管理员
+  isOwner?: boolean; // 是否为本工程的本人身份
 }

@@ -111,6 +111,14 @@ function deferred() {
 }
 
 describe("会话并发与身份回归", () => {
+  it("私聊会话不能切换用户后复用原有历史", async () => {
+    const runtime = new FakeRuntime();
+    const manager = new ConversationManager(runtime as never, await makeSessions());
+    const context = { conversationId: "p2p-oc", chatId: "oc", userOpenId: "ou_1", chatMode: "p2p" as const };
+    await manager.prompt({ conversationId: context.conversationId, context, prompt: { text: "hi" } }, () => {});
+    await expect(manager.prompt({ conversationId: context.conversationId, context: { ...context, userOpenId: "ou_2" }, prompt: { text: "hi" } }, () => {})).rejects.toThrow("私聊会话身份不匹配");
+    expect(runtime.createCount).toBe(1);
+  });
   it("并发投递同一消息只有一个请求能认领", async () => {
     const dir = await mkdtemp(join(tmpdir(), "message-race-"));
     const store = new MessageStore(join(dir, "messages.json"));

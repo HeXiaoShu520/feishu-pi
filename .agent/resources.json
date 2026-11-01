@@ -1,0 +1,5 @@
+{
+  "_说明": "控制扩展的发现与注册，重启生效。Skill 默认仅项目 .agent/skills，外部来源显式放进 skills.paths。include/exclude 按 skill/tool 名匹配 glob；执行授权仍由 permissions.json 决定。MCP 独立配置在 mcp.json。",
+  "skills": { "enabled": true, "paths": [], "include": ["*"], "exclude": [] },
+  "tools": { "enabled": true, "include": ["*"], "exclude": [] }
+}

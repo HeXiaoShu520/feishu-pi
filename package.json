@@ -1,33 +1,37 @@
 {
-  "name": "feishu-pi",
-  "version": "0.1.0",
+  "name": "mini-claw",
+  "version": "0.2.0",
   "private": true,
   "type": "module",
   "scripts": {
     "start": "tsx src/main.ts",
     "dev": "tsx watch src/main.ts",
-    "minipet": "node apps/minipet/tools/dev_launcher.js",
-    "dev:all": "node tools/dev-all.mjs",
     "check": "tsc --noEmit -p tsconfig.json",
     "test": "vitest --run",
-    "setup": "tsx src/scripts/setup-wizard.ts"
+    "setup": "tsx src/scripts/setup-wizard.ts",
+    "resources": "tsx src/scripts/resources.ts",
+    "persona": "tsx src/scripts/persona.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "0.85.1",
-    "@earendil-works/pi-ai": "0.85.1",
-    "@earendil-works/pi-coding-agent": "0.85.1",
-    "@lark-project/meegle": "1.0.23",
-    "@larksuite/cli": "1.0.95",
-    "@larksuiteoapi/node-sdk": "1.73.0",
-    "croner": "^10.0.1",
-    "dotenv": "^17.4.2"
+    "@earendil-works/pi-agent-core": "1.4.0",
+    "@earendil-works/pi-ai": "1.4.0",
+    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@lark-project/meegle": "1.0.27",
+    "@larksuite/cli": "1.0.98",
+    "@larksuiteoapi/node-sdk": "1.76.0",
+    "@modelcontextprotocol/client": "2.4.0",
+    "@playwright/cli": "0.1.23",
+    "croner": "^11.0.0",
+    "dotenv": "^18.0.9",
+    "openai": "7.47.0"
   },
   "devDependencies": {
-    "@types/node": "22.19.19",
+    "@types/node": "26.6.6",
     "@types/qrcode-terminal": "^0.12.2",
     "qrcode-terminal": "^0.12.0",
-    "tsx": "4.22.1",
-    "typescript": "5.9.3",
-    "vitest": "^3.2.4"
-  }
+    "tsx": "4.23.15",
+    "typescript": "7.0.2",
+    "vitest": "5.0.5"
+  },
+  "description": "Personal Pi agent with Feishu, browser automation, memory, background tasks and MCP"
 }

@@ -2,7 +2,12 @@ import { logger } from "./utils/logger.ts";
 export interface FeishuPiAppConfig {
   feishuAppId: string;
   feishuAppSecret: string;
-  feishuAdmin: string;
+  feishuOwner: string;
+  browserChannel: string;
+  allowPersonalUserCli: boolean;
+  /** 是否加载 B 站自动化服务；运行状态另由飞书指令控制。 */
+  biliAutoAvailable: boolean;
+  biliShareAvailable: boolean;
   cwd: string;
   /** 数据根目录（data/，已被 .gitignore 排除）：非会话数据（记忆/用户/凭证/会话索引/共享缓存） */
   dataDir: string;
@@ -23,20 +28,20 @@ export interface FeishuPiAppConfig {
   audioTranscriptionApiKey?: string;
   /** 思考档位：off=关闭思考，low/high/max 各模型自动适配等效等级（FEISHU_PI_THINKING_LEVEL，默认 off） */
   thinkingLevel: ThinkingLevelConfig;
-  /** 智能体审核接口（OpenAI 兼容）；未配置则策略外调用直接弹卡 */
+  /** 智能体审核接口（OpenAI 兼容）；未配置则ask 命中且无审核模型时弹本人卡 */
   guardBaseUrl?: string;
   /** 审核模型列表（多个时全部 allow 才放行，任一 ask 即弹卡） */
   guardModels: string[];
   /** 未配置时回退主模型 Key */
   guardApiKey?: string;
   guardTimeoutMs: number;
-  /** 授权卡片等待管理员点击的超时时间（超时视为拒绝） */
+  /** 授权卡片等待本人点击的超时时间（超时视为拒绝） */
   approvalTimeoutMs: number;
   /** 回复卡末尾是否显示模型统计小字（模型 · token · ctx · 费用 · 耗时 · 会话别名）；工具过程状态不受影响 */
   showModelStats: boolean;
-  /** 服务完全就绪后发给管理员的私聊文本（FEISHU_PI_ONLINE_NOTICE） */
+  /** 服务完全就绪后发给本人的私聊文本（FEISHU_PI_ONLINE_NOTICE） */
   onlineNotice: string;
-  /** 服务收到退出信号时发给管理员的私聊文本；可用 {signal} 插入信号名（FEISHU_PI_OFFLINE_NOTICE） */
+  /** 服务收到退出信号时发给本人的私聊文本；可用 {signal} 插入信号名（FEISHU_PI_OFFLINE_NOTICE） */
   offlineNotice: string;
   /** 单个图片/附件允许的最大字节数 */
   maxResourceBytes: number;
@@ -44,8 +49,6 @@ export interface FeishuPiAppConfig {
   maxMessageResourceBytes: number;
   /** 单个会话最多保留的在途/排队消息数 */
   maxPendingMessages: number;
-  /** MiniPet 本地前端使用的稳定调用者标识 */
-  miniPetUserOpenId: string;
 }
 
 /** 由模型名推断供应商：带 claude → anthropic，带 deepseek → deepseek，其余 → openai。 */
@@ -66,11 +69,6 @@ function parseBoolEnv(value: string | undefined, fallback: boolean): boolean {
 function parseNoticeEnv(value: string | undefined, fallback: string): string {
   const parsed = value?.replaceAll("\\n", "\n").trim();
   return parsed || fallback;
-}
-
-/** MiniPet 只能绑定真实飞书用户，禁止使用占位身份进入 stdio 内核。 */
-export function isValidMiniPetUserOpenId(value: string | undefined): boolean {
-  return /^ou_[A-Za-z0-9_]+$/.test(value ?? "");
 }
 
 /** 读取正整数配置；非法值回退默认值，避免启动阶段因可选参数失败。 */
@@ -113,7 +111,11 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
   return {
     feishuAppId: required("FEISHU_APP_ID"),
     feishuAppSecret: required("FEISHU_APP_SECRET"),
-    feishuAdmin: env.FEISHU_PI_ADMIN || "", // 可选：支持中文名、英文名、open_id、邮箱
+    feishuOwner: env.FEISHU_PI_OWNER || env.FEISHU_PI_ADMIN || "",
+    browserChannel: env.MINICLAW_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chrome"),
+    allowPersonalUserCli: parseBoolEnv(env.MINICLAW_USER_CLI, false),
+    biliAutoAvailable: parseBoolEnv(env.FEISHU_BILI_AUTO_AVAILABLE, false),
+    biliShareAvailable: parseBoolEnv(env.FEISHU_BILI_SHARE_AVAILABLE, false),
     cwd: process.cwd(),
     // 会话目录根：会话的第一句话就为它建立一个专属目录，jsonl/图片/附件全在里面
     sessionsRoot: `${process.cwd()}/work_space`,
@@ -144,11 +146,9 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     showModelStats: parseBoolEnv(env.FEISHU_SHOW_MODEL_STATS, true),
     onlineNotice: parseNoticeEnv(env.FEISHU_PI_ONLINE_NOTICE, "🟢 mini-claw 已上线，飞书通道、权限门禁和定时任务已就绪。"),
     offlineNotice: parseNoticeEnv(env.FEISHU_PI_OFFLINE_NOTICE, "🔴 mini-claw 正在下线（{signal}）。"),
-    // 资源和会话背压：单位分别为 MiB、MiB、条；默认值适合普通内部机器人，可按部署调整。
+    // 资源和会话背压：单位分别为 MiB、MiB、条；默认值适合个人助理，可按部署调整。
     maxResourceBytes: parsePositiveIntEnv(env.FEISHU_PI_MAX_RESOURCE_MB, 20, 1024) * 1024 * 1024,
     maxMessageResourceBytes: parsePositiveIntEnv(env.FEISHU_PI_MAX_MESSAGE_RESOURCE_MB, 40, 2048) * 1024 * 1024,
     maxPendingMessages: parsePositiveIntEnv(env.FEISHU_PI_MAX_PENDING_MESSAGES, 3, 100),
-    // MiniPet 由本地 stdio 子进程接入，不监听端口；只保留服务端注入的调用者身份。
-    miniPetUserOpenId: env.MINIPET_USER_OPEN_ID || "minipet_user",
   };
 }

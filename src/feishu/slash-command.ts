@@ -57,7 +57,7 @@ export const DEFAULT_SLASH_COMMANDS: readonly SlashCommandDefinition[] = [
   },
   {
     command: "restart",
-    description: { default_value: "重启开发服务（仅管理员）", i18n: { zh_cn: "重启开发服务（仅管理员）", en_us: "Restart the dev service (admin only)" } },
+    description: { default_value: "重启开发服务（仅本人）", i18n: { zh_cn: "重启开发服务（仅本人）", en_us: "Restart the dev service (owner only)" } },
     icon: { icon_key: "update-ai_outlined" },
   },
   {

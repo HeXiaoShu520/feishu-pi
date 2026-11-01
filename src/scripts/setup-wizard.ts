@@ -16,8 +16,8 @@ async function main(): Promise<void> {
   await runSetupWizard({ existingAppId });
 
   console.log("\n下一步：");
-  console.log("  1. npm run dev（开发，改码自动重启）或 npm start（稳定运行）");
-  console.log("  2. 在飞书私聊机器人发 /login lark，为管理员开启用户身份能力");
+  console.log("  1. 在 .env 配置 FEISHU_PI_OWNER=本人的 ou_...，并填写模型接口与密钥");
+  console.log("  2. npm start；要用本人账号操作时显式启用 MINICLAW_USER_CLI=1，再私聊 /login lark");
   console.log("  3. 如开发者后台显示有待发布版本，请发布后权限方可全量生效");
 }
 

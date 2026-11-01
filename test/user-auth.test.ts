@@ -3,13 +3,13 @@ import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CredentialVault } from "../src/utils/credential-vault.ts";
-import { StatusCommand, LogoutCommand, UserAuthService } from "../src/feishu/user-auth.ts";
+import { StatusCommand, LogoutCommand, UserAuthService, type PostForm } from "../src/feishu/user-auth.ts";
 import type { FeishuInboundMessage } from "../src/feishu/types.ts";
 
 /** 构造注入版 UserAuthService：HTTP 全走脚本应答（postForm：第 1 次为 begin，其余为轮询/刷新） */
 function makeService(opts: {
   dir: string;
-  postForm: ReturnType<typeof vi.fn>;
+  postForm: PostForm;
   updateCard: (messageId: string, card: object) => Promise<void>;
   sendCard?: (chatId: string, card: object) => Promise<string | undefined>;
   /** 实际授权者身份（默认=发起人本人） */
@@ -64,7 +64,7 @@ describe("UserAuthService（Device Flow）", () => {
   it("发起授权返回指引卡；轮询 pending→成功后落库并把原卡更新为成功", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-"));
     const updates: Array<{ messageId: string; card: object }> = [];
-    const postForm = vi.fn()
+    const postForm = vi.fn<PostForm>()
       .mockResolvedValueOnce(BEGIN_OK)
       .mockResolvedValueOnce({ error: "authorization_pending" })
       .mockResolvedValueOnce({ error: "authorization_pending" })
@@ -99,7 +99,7 @@ describe("UserAuthService（Device Flow）", () => {
   it("slow_down 按 +5s 退避；access_denied 终止并更新失败卡", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-"));
     const updates: Array<{ messageId: string; card: object }> = [];
-    const postForm = vi.fn()
+    const postForm = vi.fn<PostForm>()
       .mockResolvedValueOnce(BEGIN_OK)
       .mockResolvedValueOnce({ error: "slow_down" })
       .mockResolvedValueOnce({ error: "access_denied" });
@@ -168,7 +168,7 @@ describe("UserAuthService 增量授权（ensureScopes）", () => {
     await seed(dir);
     const updates: object[] = [];
     const sentCards: object[] = [];
-    const postForm = vi.fn()
+    const postForm = vi.fn<PostForm>()
       .mockResolvedValueOnce({
         device_code: "dc_9",
         user_code: "CODE-9",
@@ -216,7 +216,7 @@ describe("UserAuthService 链接代点绑定", () => {
   it("链接被他人代点 → token 绑定实际授权账号（人人可绑定自己的飞书）", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-"));
     const updates: object[] = [];
-    const postForm = vi.fn()
+    const postForm = vi.fn<PostForm>()
       .mockResolvedValueOnce(BEGIN_OK)
       .mockResolvedValueOnce(TOKEN_OK);
     const { service } = makeService({
@@ -302,7 +302,7 @@ describe("getUserAccessToken 刷新", () => {
 
   it("/logout 清除登录记录", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-"));
-    const postForm = vi.fn()
+    const postForm = vi.fn<PostForm>()
       .mockResolvedValueOnce(BEGIN_OK)
       .mockResolvedValue(TOKEN_OK);
     const { service } = makeService({
@@ -338,7 +338,7 @@ describe("/status 指令（各 CLI 凭证状态总览）", () => {
   it("展示已登录用户的 scope 与有效期，以及各 provider 就绪状态", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-status-"));
     const updates: Array<{ messageId: string; card: object }> = [];
-    const postForm = vi.fn()
+    const postForm = vi.fn<PostForm>()
       .mockResolvedValueOnce(BEGIN_OK)
       .mockResolvedValueOnce({ error: "authorization_pending" })
       .mockResolvedValueOnce(TOKEN_OK);
@@ -366,7 +366,7 @@ describe("登录态数据面（startLogin/onLoginBound/listLoginUsers）", () =>
   it("登录成功触发 onLoginBound 回调（携带反查身份），供冷启动管理员识别落缓存", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-bound-"));
     const updates: Array<{ messageId: string; card: object }> = [];
-    const postForm = vi.fn()
+    const postForm = vi.fn<PostForm>()
       .mockResolvedValueOnce(BEGIN_OK)
       .mockResolvedValueOnce(TOKEN_OK);
     const onLoginBound = vi.fn();
@@ -398,7 +398,7 @@ describe("登录态数据面（startLogin/onLoginBound/listLoginUsers）", () =>
 
   it("listLoginUsers / describeIdentity 暴露登录态（冷启动管理员识别的数据面）", async () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-list-"));
-    const postForm = vi.fn()
+    const postForm = vi.fn<PostForm>()
       .mockResolvedValueOnce(BEGIN_OK)
       .mockResolvedValueOnce(TOKEN_OK);
     const { service } = makeService({ dir, postForm, updateCard: async () => {} });
@@ -416,7 +416,7 @@ describe("/login 去重锁生命周期", () => {
     const dir = await mkdtemp(join(tmpdir(), "uauth-lock-"));
     // 手工构造：sleep 用门控（不放行就不轮询），保证断言时序确定
     let releaseNextSleep: () => void = () => undefined;
-    const postForm = vi.fn()
+    const postForm = vi.fn<PostForm>()
       .mockResolvedValueOnce(BEGIN_OK)                          // 第一次发起
       .mockResolvedValueOnce(BEGIN_OK)                          // 第二次发起（重试）
       .mockResolvedValueOnce({ error: "authorization_pending" }) // 轮询 1：继续等待

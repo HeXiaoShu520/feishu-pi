@@ -1,0 +1,28 @@
+{
+  "_说明": "按需连接；没有配置的服务不会启动。示例见 docs/assistant-capabilities.md。密钥用 ${ENV_NAME} 引用，勿写入此文件。",
+  "mcpServers": {
+    "bilibili": {
+      "transport": "stdio",
+      "command": "data/bilibili/venv/Scripts/python.exe",
+      "args": [
+        "tools/bilibili-mcp/mcp_server.py"
+      ],
+      "cwd": ".",
+      "include": [
+        "bili_search",
+        "bili_comments",
+        "bili_subtitle",
+        "bili_video_info",
+        "bili_watch",
+        "bili_explore",
+        "bili_reply",
+        "bili_check_credential",
+        "bili_history",
+        "bili_check_replies",
+        "bili_person",
+        "bili_remember_person"
+      ],
+      "timeoutMs": 60000
+    }
+  }
+}

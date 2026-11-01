@@ -13,6 +13,17 @@ async function makeStore(): Promise<{ store: SessionStore; root: string; indexFi
 }
 
 describe("SessionStore 会话注册表", () => {
+  it("重启或并发读取时阻止其他人复用私聊目录", async () => {
+    const base = await mkdtemp(join(tmpdir(), "session-private-"));
+    const index = join(base, "sessions.json");
+    const root = join(base, "work_space");
+    const store = new SessionStore(index, root);
+    const results = await Promise.allSettled([store.getOrCreate("p2p-oc_private", "ou_a"), store.getOrCreate("p2p-oc_private", "ou_b")]);
+    expect(results.filter(result => result.status === "fulfilled")).toHaveLength(1);
+    const reopened = new SessionStore(index, root);
+    await expect(reopened.getOrCreate("p2p-oc_private", "ou_b")).rejects.toThrow("私聊会话身份不匹配");
+    await expect(reopened.getOrCreate("p2p-oc_private", "ou_a")).resolves.toBeDefined();
+  });
   it("首次使用时建立会话目录，同一会话复用同一个目录", async () => {
     const { store, root } = await makeStore();
 

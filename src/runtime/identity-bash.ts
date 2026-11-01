@@ -1,6 +1,7 @@
 import { createBashTool, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { join } from "node:path";
 import { startCliProxy } from "./cli-proxy.ts";
+import { processEnvironment } from "../process/environment.ts";
 
 /**
  * 会话级"带身份"的 bash 工具：以同名自定义工具覆盖 Pi 内置 bash（pi 的工具注册为
@@ -48,8 +49,8 @@ export interface IdentityBashOptions {
   /** 读取飞书历史卡片时用于排除机器人自己的 @。 */
   botOpenId?: string;
   botName?: string;
-  /** 管理员用户令牌只供固定资料入库，不交给 AI CLI。 */
-  adminSender?: boolean;
+  /** 禁用个人用户态 CLI；保留固定资料查询，不交给 AI CLI。 */
+  restrictUserCredentials?: boolean;
   /** 当前会话用户的飞书 user token（同步读内存缓存）；undefined 表示未登录，用户态调用拒绝执行 */
   getLarkToken?: () => string | undefined;
   /** 仅在当前发起人实际执行 lark-cli 用户命令前加载或刷新其令牌。 */
@@ -119,7 +120,7 @@ export function isDirectIdentityCliCommand(command: string, cli: "lark" | "meegl
 /**
  * 命令是否以"用户身份"调用 lark-cli（纯函数，供单测与授权分流）：
  * 省略身份（或显式 --as user）时注入用户 token → 用户身份；显式 --as bot 是机器人身份 → 否。
- * 用于授权分流：用户身份操作弹"用户卡"由发起者本人确认，其余走管理员卡。
+ * 用于识别命令是否请求用户身份；授权由统一的个人权限门禁处理。
  */
 export function matchesUserIdentityCli(command: string): boolean {
   // 本人授权只能覆盖一条直接 CLI 调用，不能靠字符串里出现 lark-cli 就审批任意 shell。
@@ -181,8 +182,10 @@ export function extractMissingScopes(output: string): string[] {
 /** lark-cli 用户态未登录/凭证失效的错误特征（此时补授权没用，应提示 /login）。 */
 const NOT_LOGGED_IN_PATTERN = /99991668|token_invalid|user_access_token.{0,40}(invalid|expired|缺失|无效)/i;
 
-export function createIdentityBashTool(options: IdentityBashOptions): ToolDefinition {
-  const metadata = createBashTool(options.cwd) as ToolDefinition;
+export interface IdentityShellLease { commandPrefix: string; env: NodeJS.ProcessEnv; close(): Promise<void> }
+
+/** Foreground calls and background tasks share this lease; its owner controls cleanup. */
+export async function openIdentityShell(options: IdentityBashOptions): Promise<IdentityShellLease> {
   const clientPath = join(options.cwd, "src", "runtime", "cli-proxy-client.mjs").replaceAll("\\", "/");
   const quotedClient = `'${clientPath.replaceAll("'", "'\\''")}'`;
   const commandPrefix = [
@@ -195,52 +198,49 @@ export function createIdentityBashTool(options: IdentityBashOptions): ToolDefini
     `function meegle.exe { meegle "$@"; }`,
   ].join("\n");
   const meegle = options.extraInjections?.find((rule) => rule.commandPattern.test("meegle help"));
+  const proxy = await startCliProxy({
+    cwd: options.cwd,
+    appId: options.appId,
+    appSecret: options.appSecret,
+    botOpenId: options.botOpenId,
+    botName: options.botName,
+    restrictUserCredentials: options.restrictUserCredentials,
+    getLarkToken: async () => await options.ensureLarkToken?.() ?? options.getLarkToken?.(),
+    onLarkMissing: () => options.onNotLoggedIn?.(options.userId ?? ""),
+    onLarkOutput: (output) => {
+      const scopes = extractMissingScopes(output);
+      if (scopes.length > 0) return options.onMissingScopes?.(options.userId ?? "", options.chatId, scopes);
+      if (NOT_LOGGED_IN_PATTERN.test(output)) options.onNotLoggedIn?.(options.userId ?? "");
+      return undefined;
+    },
+    getMeegleToken: meegle?.getToken,
+    meegleEnv: meegle?.staticEnv,
+  });
+  return {
+    commandPrefix,
+    env: {
+      ...processEnvironment(),
+      LARKSUITE_CLI_USER_ACCESS_TOKEN: "mini-claw-no-local-account", MEEGLE_USER_ACCESS_TOKEN: "mini-claw-no-local-account",
+      LARKSUITE_CLI_CONFIG_DIR: proxy.configDir,
+      FEISHU_PI_CLI_PROXY_PORT: String(proxy.port), FEISHU_PI_CLI_PROXY_KEY: proxy.key,
+    },
+    close: () => proxy.close(),
+  };
+}
+
+export function createIdentityBashTool(options: IdentityBashOptions): ToolDefinition {
+  const metadata = createBashTool(options.cwd) as ToolDefinition;
   return {
     ...metadata,
-    description: `${metadata.description}\n飞书/Meegle CLI 在实际启动时由机器人绑定当前发消息者身份，shell 可以正常使用 cd、管道、重定向和组合命令。用户可发送 /status 或 /login 管理授权；不要自行调用 CLI auth status/login/logout。机器人回复与卡片由内置飞书通道发送。`,
+    description: `${metadata.description}\n飞书/Meegle CLI 由服务绑定本人身份，shell 可使用 cd、管道和重定向。不要调用 CLI auth status/login/logout，授权使用 /status 或 /login。机器人回复与卡片由飞书通道发送。长时间运行且需查询进度的命令使用 background_task；执行后检查结果，退出码为 0 不代表业务一定成功。`,
     execute: async (toolCallId, params, signal, onUpdate, ctx) => {
-      const proxy = await startCliProxy({
-        cwd: options.cwd,
-        appId: options.appId,
-        appSecret: options.appSecret,
-        botOpenId: options.botOpenId,
-        botName: options.botName,
-        adminSender: options.adminSender,
-        getLarkToken: async () => await options.ensureLarkToken?.() ?? options.getLarkToken?.(),
-        onLarkMissing: () => options.onNotLoggedIn?.(options.userId ?? ""),
-        onLarkOutput: (output) => {
-          const scopes = extractMissingScopes(output);
-          if (scopes.length > 0) return options.onMissingScopes?.(options.userId ?? "", options.chatId, scopes);
-          if (NOT_LOGGED_IN_PATTERN.test(output)) options.onNotLoggedIn?.(options.userId ?? "");
-          return undefined;
-        },
-        getMeegleToken: meegle?.getToken,
-        meegleEnv: meegle?.staticEnv,
-      });
+      const lease = await openIdentityShell(options);
       try {
-        const scopedTool = createBashTool(options.cwd, {
-          commandPrefix,
-          spawnHook: (context) => {
-            for (const name of [
-              "LARKSUITE_CLI_USER_ACCESS_TOKEN", "LARKSUITE_CLI_TENANT_ACCESS_TOKEN",
-              "LARKSUITE_CLI_APP_ID", "LARKSUITE_CLI_APP_SECRET", "FEISHU_APP_ID", "FEISHU_APP_SECRET",
-              "MEEGLE_USER_ACCESS_TOKEN",
-            ]) delete context.env[name];
-            // 绕过 shell 函数直接启动 CLI 时，仍强制进入“显式但无效的令牌”模式。
-            // Meegle 在该环境变量存在时不会读取系统 keychain；lark-cli 也不会回退到本机用户配置。
-            // 真正的令牌只由代理交给受控的 CLI 子进程。
-            context.env.LARKSUITE_CLI_USER_ACCESS_TOKEN = "mini-claw-no-local-account";
-            context.env.MEEGLE_USER_ACCESS_TOKEN = "mini-claw-no-local-account";
-            context.env.LARKSUITE_CLI_CONFIG_DIR = proxy.configDir;
-            context.env.FEISHU_PI_CLI_PROXY_PORT = String(proxy.port);
-            context.env.FEISHU_PI_CLI_PROXY_KEY = proxy.key;
-            return context;
-          },
-        });
+        const scopedTool = createBashTool(options.cwd, { commandPrefix: lease.commandPrefix, spawnHook: (context) => ({ ...context, env: lease.env }) });
         const executeWithContext = scopedTool.execute as unknown as (...args: unknown[]) => ReturnType<typeof scopedTool.execute>;
         return await executeWithContext(toolCallId, params, signal, onUpdate, ctx);
       } finally {
-        await proxy.close();
+        await lease.close();
       }
     },
   };

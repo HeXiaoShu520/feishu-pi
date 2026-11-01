@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import { mkdtemp, readFile, writeFile, mkdir, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildConversationId } from "../src/feishu/lark-transport.ts";
+import { buildConversationId, scopeGuestConversation } from "../src/feishu/lark-transport.ts";
 import { ScheduleService } from "../src/schedule/service.ts";
 import { CredentialVault } from "../src/utils/credential-vault.ts";
 import { MessageStore } from "../src/feishu/message-store.ts";
@@ -19,6 +19,10 @@ it("不同话题根不合并，回复回到自己的根", () => {
   expect(buildConversationId("oc", "topic", undefined, "a")).toBe("topic:oc:a");
   expect(buildConversationId("oc", "topic", undefined, "b")).toBe("topic:oc:b");
   expect(buildConversationId("oc", "topic", "a", "reply")).toBe("topic:oc:a");
+  expect(scopeGuestConversation("group-oc", "group", "ou_a", "ou_admin")).toBe("group-oc:guest:ou_a");
+  expect(scopeGuestConversation("group-oc", "group", "ou_b", "ou_admin")).toBe("group-oc:guest:ou_b");
+  expect(scopeGuestConversation("group-oc", "group", "ou_admin", "ou_admin")).toBe("group-oc");
+  expect(scopeGuestConversation("p2p-oc", "p2p", "ou_a", "ou_admin")).toBe("p2p-oc");
 });
 
 it("清理消息后正常写入不会把已清理记录复活", async () => {
@@ -76,8 +80,8 @@ it("取消提问立即释放等待，不依赖卡片更新完成", async () => {
 
 it("已中断的调用不会发送授权卡", async () => {
   const sendCard = vi.fn();
-  const broker = new PermissionBroker({ adminOpenIds: ["ou"], timeoutMs: 100, sendCard, sendCardToUser: vi.fn(), updateCard: vi.fn() });
-  const result = await broker.requestApproval({ chatId: "oc", toolName: "bash", args: {}, reason: "test" }, AbortSignal.abort());
+  const broker = new PermissionBroker({ ownerOpenId: "ou", timeoutMs: 100, sendCard, updateCard: vi.fn() });
+  const result = await broker.requestApproval({ chatId: "oc", toolName: "bash", args: {}, reason: "test", requesterOpenId: "ou" }, AbortSignal.abort());
   expect(result.allowed).toBe(false);
   expect(sendCard).not.toHaveBeenCalled();
 });

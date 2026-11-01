@@ -30,4 +30,3 @@ export function sessionAlias(sessionId?: string): string {
   aliasToSessionId.set(alias, sessionId);
   return alias;
 }
-

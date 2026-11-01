@@ -37,4 +37,3 @@ describe("findBlockBoundary（分卡安全边界）", () => {
     expect(findBlockBoundary("```js\n\n\n```")).toBe(-1); // 唯一空行都在围栏内
   });
 });
-

@@ -2,18 +2,17 @@ import { describe, expect, it } from "vitest";
 import { ToolGuard } from "../src/guard/tool-guard.ts";
 import { PermissionBroker, type ApprovalRequest } from "../src/guard/broker.ts";
 import type { PolicyJudge } from "../src/guard/judge.ts";
-import type { GroupPolicy } from "../src/permission/policy.ts";
+import type { ToolPolicy } from "../src/permission/policy.ts";
 
-function makePolicy(overrides: Partial<GroupPolicy> = {}): GroupPolicy {
+function makePolicy(overrides: Partial<ToolPolicy> = {}): ToolPolicy {
   return {
-    groups: ["group"],
-    isAdmin: false,
-    isTeam: true,
+    valid: true,
     bashAllowed: (command) => command.startsWith("npm run test") && !/[;&|`]|\$\(/.test(command),
     readAllowed: (path) => path.startsWith("docs/"),
     writeAllowed: (path) => path.startsWith("docs/"),
     toolsAllowed: (name) => name === "memory",
     denied: () => undefined,
+    asked: () => undefined,
     describe: () => ({ bash: ["npm run test:*"], read: ["docs/**"], write: ["docs/**"], tools: ["memory"] }),
     ...overrides,
   };
@@ -22,7 +21,7 @@ function makePolicy(overrides: Partial<GroupPolicy> = {}): GroupPolicy {
 class FakeBroker extends PermissionBroker {
   calls: ApprovalRequest[] = [];
   constructor() {
-    super({ adminOpenIds: [], timeoutMs: 10, sendCard: async () => "m", sendCardToUser: async () => "m", updateCard: async () => {} });
+    super({ ownerOpenId: "ou_user", timeoutMs: 10, sendCard: async () => "m", updateCard: async () => {} });
   }
   async requestApproval(params: ApprovalRequest, _signal?: AbortSignal) {
     this.calls.push(params);
@@ -30,7 +29,7 @@ class FakeBroker extends PermissionBroker {
   }
 }
 
-function fakeJudge(decision: "allow" | "admin" | "user") {
+function fakeJudge(decision: "allow" | "confirm" | "deny") {
   const calls: unknown[] = [];
   return {
     enabled: true,
@@ -48,53 +47,50 @@ describe("ToolGuard 统一门禁", () => {
     expect(await guard.check(policy, { toolName: "memory", args: { action: "get" } })).toBeUndefined();
   });
 
-  it("任何白名单未命中都交给 LLM，且 LLM 能直接放行", async () => {
+  it("ask 命中才交给模型，模型可以放行", async () => {
     const judge = fakeJudge("allow");
     const guard = new ToolGuard(new FakeBroker(), judge);
-    const result = await guard.check(makePolicy(), { toolName: "read", args: { path: "src/main.ts" }, risky: true });
+    const result = await guard.check(makePolicy({ asked: () => "Read(src/**)" }), { toolName: "read", args: { path: "src/main.ts" } });
     expect(result).toBeUndefined();
     expect(judge.calls).toHaveLength(1);
-    expect(judge.calls[0]).toMatchObject({ groups: ["group"], isAdmin: false, risky: true, toolName: "read" });
+    expect(judge.calls[0]).toMatchObject({ askRule: "Read(src/**)", risky: false, toolName: "read" });
   });
 
-  it("LLM 要管理员确认时发管理员卡", async () => {
+  it("模型要求确认时发本人卡", async () => {
     const broker = new FakeBroker();
-    const guard = new ToolGuard(broker, fakeJudge("admin"));
-    const result = await guard.check(makePolicy(), { toolName: "write", args: { path: "src/x.ts", content: "x" }, chatId: "oc" });
+    const guard = new ToolGuard(broker, fakeJudge("confirm"));
+    const result = await guard.check(makePolicy({ asked: () => "Write(**)" }), { toolName: "write", args: { path: "src/x.ts", content: "x" }, chatId: "oc", requesterOpenId: "ou_user" });
     expect(result?.block).toBe(true);
-    expect(broker.calls).toEqual([expect.objectContaining({ mode: "admin", requesterOpenId: undefined })]);
+    expect(broker.calls).toEqual([expect.objectContaining({ requesterOpenId: "ou_user" })]);
   });
 
-  it("LLM 要用户确认时只发请求者本人卡", async () => {
+  it("高风险标记强制本人确认", async () => {
     const broker = new FakeBroker();
-    const guard = new ToolGuard(broker, fakeJudge("user"));
-    const result = await guard.check(makePolicy(), { toolName: "calendar", args: { action: "create" }, chatId: "oc", requesterOpenId: "ou_user" });
+    const guard = new ToolGuard(broker, fakeJudge("confirm"));
+    const result = await guard.check(makePolicy(), { toolName: "calendar", args: { action: "create" }, risky: true, chatId: "oc", requesterOpenId: "ou_user" });
     expect(result?.block).toBe(true);
-    expect(broker.calls).toEqual([expect.objectContaining({ mode: "self", requesterOpenId: "ou_user" })]);
+    expect(broker.calls).toEqual([expect.objectContaining({ requesterOpenId: "ou_user" })]);
   });
 
-  it("未配置 LLM 时安全回退管理员卡", async () => {
+  it("ask 未配置模型时回退本人确认", async () => {
     const broker = new FakeBroker();
     const guard = new ToolGuard(broker);
-    const result = await guard.check(makePolicy(), { toolName: "read", args: { path: "src/main.ts" }, chatId: "oc" });
+    const result = await guard.check(makePolicy({ asked: () => "Read(src/**)" }), { toolName: "read", args: { path: "src/main.ts" }, chatId: "oc", requesterOpenId: "ou_user" });
     expect(result?.block).toBe(true);
-    expect(broker.calls[0]).toMatchObject({ mode: "admin" });
+    expect(broker.calls[0]).toMatchObject({ requesterOpenId: "ou_user" });
   });
 
-  it("deny 阻止白名单直通，携带规则进入 LLM，并尊重其用户卡决策", async () => {
+  it("deny 直接拒绝，不调用模型或发授权卡", async () => {
     const broker = new FakeBroker();
-    const judge = fakeJudge("user");
+    const judge = fakeJudge("confirm");
     const guard = new ToolGuard(broker, judge);
     const policy = makePolicy({
-      groups: ["admin"],
-      isAdmin: true,
-      isTeam: false,
       readAllowed: () => true,
       denied: (toolName, args) => toolName === "read" && (args as { path?: string }).path === ".env" ? "Read(**/.env*)" : undefined,
     });
     const result = await guard.check(policy, { toolName: "read", args: { path: ".env" }, chatId: "oc", requesterOpenId: "ou_user" });
     expect(result?.block).toBe(true);
-    expect(judge.calls).toEqual([expect.objectContaining({ denyRule: "Read(**/.env*)" })]);
-    expect(broker.calls).toEqual([expect.objectContaining({ mode: "self", requesterOpenId: "ou_user" })]);
+    expect(judge.calls).toEqual([]);
+    expect(broker.calls).toEqual([]);
   });
 });

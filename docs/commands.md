@@ -5,14 +5,14 @@
 | 命令 | 行为 |
 |---|---|
 | `/help` | 查看帮助 |
-| `/model` | 从配置的模型接口查询模型列表，切换按钮仅管理员可操作 |
+| `/model` | 从配置的模型接口查询模型列表，切换按钮仅本人可操作 |
 | `/new` | 新建一代会话，旧目录保留至过期清理；话题内禁用，普通群会重置共享历史 |
 | `/stop` | 中断当前会话生成 |
 | `/detail` | 查看当前详细/精简模式 |
 | `/detail on` / `/detail off` | 按 chatId 切换回复模式，重启后恢复默认精简 |
 | `/login` / `/login lark` | 私聊发起飞书用户授权 |
 | `/login meegle` | 私聊发起飞书项目授权 |
-| `/status` | 查看本人登录状态和身份组 |
+| `/status` | 查看本人登录状态和个人身份 |
 | `/logout` / `/logout all` | 清除本人已接入 provider 的本地凭证 |
 | `/logout lark` / `/logout meegle` | 仅清除指定 provider 的凭证 |
 

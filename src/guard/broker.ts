@@ -1,253 +1,105 @@
-import { randomUUID, randomBytes } from "node:crypto";
-import { buildPermissionCard, buildResultCard, buildNoticeCard } from "./card.ts";
+import { randomBytes, randomUUID } from "node:crypto";
+import { buildPermissionCard, buildResultCard } from "./card.ts";
 import { logger } from "../utils/logger.ts";
 
 export interface BrokerOptions {
-  /** 管理员 Open ID 集合，点击回调时在服务端强制校验 */
-  adminOpenIds: string[];
-  /** 等待管理员点击的超时时间（超时视为拒绝） */
+  ownerOpenId: string;
   timeoutMs: number;
-  /** 向会话发送卡片，返回 messageId（用于后续更新为结果卡） */
   sendCard: (chatId: string, card: object) => Promise<string>;
-  /** 向指定用户私聊发送卡片（receive_id_type=open_id，转发授权卡到管理员用） */
-  sendCardToUser: (openId: string, card: object) => Promise<string>;
-  /** 按 messageId 更新已发送的卡片 */
   updateCard: (messageId: string, card: object) => Promise<void>;
-  /** 按 messageId 撤回消息（精简模式下授权确认后撤回卡片，减少占用） */
   recallCard?: (messageId: string) => Promise<void>;
-  /** 是否在授权确认后撤回卡片（按发起授权的会话判断） */
   shouldRecall?: (chatId: string) => boolean;
 }
-
-/** MiniPet 使用的本地会话 ID 前缀。管理员模式不会走此通道，而是投递管理员私聊。 */
-const MINIPET_CHAT_PREFIX = "minipet:";
 
 export interface ApprovalRequest {
   toolName: string;
   args: unknown;
   chatId: string;
   reason: string;
-  /**
-   * 审批模式：admin=管理员卡（默认，仅管理员可批）；self=用户卡——
-   * 命令使用发起者本人的 CLI 凭证（lark-cli 用户态），
-   * 由发起者本人确认即可，无需管理员。
-   */
-  mode?: "admin" | "self";
-  /** self 模式下的发起者 openId（服务端校验点击者必须一致） */
-  requesterOpenId?: string;
+  requesterOpenId: string;
 }
 
+type ApprovalDecision = "allow_once" | "deny" | "timeout" | "cancelled";
 interface PendingApproval {
   token: string;
   chatId: string;
-  toolName: string;
-  toolArgs: unknown;
   messageId?: string;
-  /** 转发到管理员私聊的卡片（messageId 在发送成功后回填） */
-  forwarded?: { messageId?: string };
+  decision?: ApprovalDecision;
   timer: NodeJS.Timeout;
   resolve: (allowed: boolean) => void;
-  /** 移除 signal 上的 abort 监听（授权以其他方式结束时调用，防监听器残留） */
   offAbort: () => void;
-  mode: "admin" | "self";
-  requesterOpenId?: string;
 }
 
-/**
- * 授权中枢：管理待授权请求，接收卡片回调并在服务端强制校验。
- * 校验项：approval 存在、token 一致、chat_id 一致、点击者是管理员、decision 合法、未处理过。
- * 任一不满足即拒绝，不唤醒工具调用。
- */
+/** One owner, one-use confirmation. No roles, delegation or forwarded cards. */
 export class PermissionBroker {
   private readonly options: BrokerOptions;
   private readonly pending = new Map<string, PendingApproval>();
+  private closed = false;
 
-  constructor(options: BrokerOptions) {
-    this.options = options;
-  }
+  constructor(options: BrokerOptions) { this.options = options; }
 
-  /**
-   * 授权结束（点击/超时/中断）后统一收尾所有已知卡片：
-   * 精简模式（shouldRecall 为 true）撤回卡片，详细模式更新为结果卡。
-   */
-  private finalizeCards(pending: PendingApproval, decision: "allow_once" | "deny" | "timeout" | "cancelled"): void {
-    const cardIds = [pending.messageId, pending.forwarded?.messageId].filter((id): id is string => Boolean(id));
-    const recall = this.options.recallCard && this.options.shouldRecall?.(pending.chatId);
-    for (const id of cardIds) {
-      if (recall) {
-        this.options.recallCard!(id).catch((error) =>
-          logger.warn(`[Broker] 撤回授权卡失败: ${error instanceof Error ? error.message : error}`),
-        );
-      } else {
-        this.options.updateCard(id, buildResultCard(decision)).catch((error) =>
-          logger.warn(`[Broker] 更新结果卡失败: ${error instanceof Error ? error.message : error}`),
-        );
-      }
-    }
-  }
-
-  /**
-   * 发起一次授权：发送授权卡片并等待管理员决策；超时按拒绝处理。
-   * signal 中止（如 /stop 中断会话）时立即取消等待、撤下卡片并释放队列。
-   */
   async requestApproval(request: ApprovalRequest, signal?: AbortSignal): Promise<{ allowed: boolean; detail: string }> {
-    if (signal?.aborted) return { allowed: false, detail: "会话已中断" };
-    // 仅管理员卡依赖管理员配置；用户卡由发起者本人确认，无管理员也可用
-    if (this.options.adminOpenIds.length === 0 && (request.mode ?? "admin") === "admin") {
-      return { allowed: false, detail: "未配置管理员，无法授权" };
+    if (signal?.aborted || this.closed) return { allowed: false, detail: "会话已中断或服务正在退出" };
+    if (!this.options.ownerOpenId || request.requesterOpenId !== this.options.ownerOpenId) {
+      return { allowed: false, detail: "个人助理只接受本人的授权请求" };
     }
-
     const approvalId = randomUUID();
     const token = randomBytes(16).toString("hex");
-
-    return new Promise<boolean>((resolve) => {
-      const timer = setTimeout(() => {
-        const pending = this.pending.get(approvalId);
-        if (!pending) return;
-        this.pending.delete(approvalId);
-        pending.offAbort();
-        pending.resolve(false);
-        this.finalizeCards(pending, "timeout");
-      }, this.options.timeoutMs);
-
-      // 会话中断（/stop）：立即取消等待，卡片收尾（精简模式撤回 / 详细模式更新为已取消）
-      const onAbort = () => {
-        const pending = this.pending.get(approvalId);
-        if (!pending) return;
-        clearTimeout(pending.timer);
-        this.pending.delete(approvalId);
-        pending.resolve(false);
-        this.finalizeCards(pending, "cancelled");
+    const allowed = await new Promise<boolean>((resolve) => {
+      const onAbort = () => this.finish(approvalId, "cancelled");
+      const pending: PendingApproval = {
+        token, chatId: request.chatId, resolve,
+        timer: setTimeout(() => this.finish(approvalId, "timeout"), this.options.timeoutMs),
+        offAbort: () => signal?.removeEventListener("abort", onAbort),
       };
+      this.pending.set(approvalId, pending);
       signal?.addEventListener("abort", onAbort, { once: true });
-      const offAbort = () => signal?.removeEventListener("abort", onAbort);
-
-      const mode = request.mode ?? "admin";
-      this.pending.set(approvalId, {
-        token,
-        chatId: request.chatId,
-        toolName: request.toolName,
-        toolArgs: request.args,
-        timer,
-        resolve,
-        offAbort,
-        mode,
-        requesterOpenId: request.requesterOpenId,
+      if (signal?.aborted) { this.finish(approvalId, "cancelled"); return; }
+      const card = buildPermissionCard({ toolName: request.toolName, args: request.args, reason: request.reason, approvalId, token });
+      void Promise.resolve().then(() => this.options.sendCard(request.chatId, card)).then((messageId) => {
+        pending.messageId = messageId;
+        // Sending can complete after timeout or cancellation; never leave a live-looking card behind.
+        if (pending.decision) this.finalizeCard(pending);
+      }).catch((error) => {
+        logger.warn(`[Broker] 发送授权卡失败: ${error instanceof Error ? error.message : String(error)}`);
+        this.finish(approvalId, "deny");
       });
-
-      const card = buildPermissionCard({ toolName: request.toolName, args: request.args, approvalId, token, mode });
-      const pending = this.pending.get(approvalId)!;
-      // MiniPet 的管理员审批不能让桌面端直接批准：把原始授权卡投递到管理员私聊。
-      // 只有 self 模式会走本地卡片通道；本地按钮最终仍须经过下面的 token/身份校验。
-      const directAdminDelivery = mode === "admin" && request.chatId.startsWith(MINIPET_CHAT_PREFIX);
-      if (directAdminDelivery) pending.forwarded = {};
-      const delivery = directAdminDelivery
-        ? this.options.sendCardToUser(this.options.adminOpenIds[0]!, card)
-        : this.options.sendCard(request.chatId, card);
-      delivery
-        .then((messageId) => {
-          const pending = this.pending.get(approvalId);
-          if (!pending) return;
-          if (directAdminDelivery) pending.forwarded = { messageId };
-          else pending.messageId = messageId;
-        })
-        .catch((error) => {
-          // 卡片发送失败：直接拒绝并唤醒等待方
-          logger.error(`[Broker] 发送授权卡失败: ${error instanceof Error ? error.message : error}`);
-          const pending = this.pending.get(approvalId);
-          if (pending) {
-            clearTimeout(pending.timer);
-            this.pending.delete(approvalId);
-            pending.offAbort();
-            pending.resolve(false);
-          }
-        });
-    }).then((allowed) => ({
-      allowed,
-      detail: allowed ? "已授权一次" : "已拒绝、授权超时或会话已中断",
-    }));
+    });
+    return { allowed, detail: allowed ? "已授权一次" : "已拒绝、授权超时或会话已中断" };
   }
 
-  /** 处理授权/拒绝回调。支持原会话卡片和转发到管理员私聊的卡片。 */
   async handleCallback(params: {
-    approvalId?: string;
-    token?: string;
-    decision?: string;
-    messageId: string;
-    chatId: string;
-    operatorOpenId: string;
+    approvalId?: string; token?: string; decision?: string;
+    messageId: string; chatId: string; operatorOpenId: string;
   }): Promise<{ accepted: boolean; detail: string }> {
     const { approvalId, token, decision, messageId, chatId, operatorOpenId } = params;
-
-    if (!approvalId || !token || (decision !== "allow_once" && decision !== "deny")) {
-      return { accepted: false, detail: "回调参数不合法" };
-    }
+    if (!approvalId || !token || (decision !== "allow_once" && decision !== "deny")) return { accepted: false, detail: "回调参数不合法" };
     const pending = this.pending.get(approvalId);
     if (!pending) return { accepted: false, detail: "该授权请求不存在或已处理" };
-
-    // 服务端强制校验：token 一致，且消息必须是已登记的原卡或转发卡；决策者必须是管理员
-    const isOriginal = messageId === pending.messageId && chatId === pending.chatId;
-    const isForwarded = pending.forwarded?.messageId === messageId;
-    if (pending.token !== token || (!isOriginal && !isForwarded)) {
-      return { accepted: false, detail: "token 或卡片来源不匹配" };
-    }
-    // 决策者校验：self 模式（用户卡）仅发起者本人可批；admin 模式（管理员卡）仅管理员可批
-    if (pending.mode === "self") {
-      if (!pending.requesterOpenId || operatorOpenId !== pending.requesterOpenId) {
-        return { accepted: false, detail: "仅发起者本人可操作" };
-      }
-    } else if (!this.options.adminOpenIds.includes(operatorOpenId)) {
-      return { accepted: false, detail: "仅管理员可操作" };
-    }
-
-    clearTimeout(pending.timer);
-    this.pending.delete(approvalId);
-    pending.offAbort();
-    const allowed = decision === "allow_once";
-    pending.resolve(allowed);
-
-    // 决策后收尾所有已知卡片：精简模式撤回，详细模式更新为结果卡
-    this.finalizeCards(pending, decision);
-    return { accepted: true, detail: allowed ? "已授权一次" : "已拒绝" };
+    if (pending.token !== token || pending.messageId !== messageId || pending.chatId !== chatId) return { accepted: false, detail: "token 或卡片来源不匹配" };
+    if (operatorOpenId !== this.options.ownerOpenId) return { accepted: false, detail: "仅本人可操作" };
+    this.finish(approvalId, decision);
+    return { accepted: true, detail: decision === "allow_once" ? "已授权一次" : "已拒绝" };
   }
 
-  /** 处理「申请转发给管理员」回调：校验后把授权卡发到管理员私聊。 */
-  async forwardToAdmin(params: { approvalId?: string; token?: string; messageId: string; chatId: string }): Promise<{ accepted: boolean; detail: string }> {
-    const { approvalId, token, messageId, chatId } = params;
-    if (!approvalId || !token) return { accepted: false, detail: "回调参数不合法" };
+  close(): void { this.closed = true; for (const id of this.pending.keys()) this.finish(id, "cancelled"); }
 
-    const pending = this.pending.get(approvalId);
-    if (!pending) return { accepted: false, detail: "该授权请求不存在或已处理" };
-    if (pending.token !== token || messageId !== pending.messageId || chatId !== pending.chatId) {
-      return { accepted: false, detail: "token 或卡片来源不匹配" };
-    }
-    if (pending.forwarded) return { accepted: false, detail: "该请求已转发过" };
-    if (pending.mode !== "admin" || !this.options.adminOpenIds.length) return { accepted: false, detail: "该请求不能转发管理员" };
+  private finish(id: string, decision: ApprovalDecision): void {
+    const pending = this.pending.get(id);
+    if (!pending) return;
+    this.pending.delete(id);
+    clearTimeout(pending.timer);
+    pending.offAbort();
+    pending.decision = decision;
+    pending.resolve(decision === "allow_once");
+    this.finalizeCard(pending);
+  }
 
-    const target = this.options.adminOpenIds[0]!;
-    const card = buildPermissionCard({ toolName: pending.toolName, args: pending.toolArgs, approvalId, token });
-    pending.forwarded = {}; // 发送前占位，合并并发点击
-    try {
-      // open_id 私聊投递（receive_id_type=open_id）——管理员的 open_id 不能当 chat_id 用
-      const fwdMessageId = await this.options.sendCardToUser(target, card);
-      pending.forwarded = { messageId: fwdMessageId };
-      if (!this.pending.has(approvalId)) {
-        this.finalizeCards(pending, "cancelled");
-        return { accepted: false, detail: "该授权请求已处理" };
-      }
-    } catch (error) {
-      pending.forwarded = undefined;
-      const detail = error instanceof Error ? error.message : String(error);
-      logger.error(`[Broker] 转发授权卡到管理员私聊失败: ${detail}`);
-      return { accepted: false, detail: `转发失败：${detail}` };
-    }
-
-    // 原卡更新为提示，撤掉可点按钮
-    if (pending.messageId) {
-      await this.options
-        .updateCard(pending.messageId, buildNoticeCard("📨 已转发给管理员私聊，等待授权……"))
-        .catch((error) => logger.warn(`[Broker] 更新转发提示卡失败: ${error instanceof Error ? error.message : error}`));
-    }
-    return { accepted: true, detail: "已转发给管理员" };
+  private finalizeCard(pending: PendingApproval): void {
+    if (!pending.messageId || !pending.decision) return;
+    const operation = this.options.recallCard && this.options.shouldRecall?.(pending.chatId)
+      ? this.options.recallCard(pending.messageId)
+      : this.options.updateCard(pending.messageId, buildResultCard(pending.decision));
+    void operation.catch((error) => logger.warn(`[Broker] 授权卡收尾失败: ${error instanceof Error ? error.message : String(error)}`));
   }
 }

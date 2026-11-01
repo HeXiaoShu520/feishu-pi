@@ -8,7 +8,9 @@ import { ReactionController } from "./reaction-controller.ts";
 import { Spinner, randomFrames } from "./spinner.ts";
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "../utils/logger.ts";
-import { createDefaultRegistry, DetailCommand, NewCommand, StopCommand, markdownCard, type CommandRegistry, type CommandHandler } from "./commands.ts";
+import { createDefaultRegistry, DetailCommand, MemoryCommand, NewCommand, StopCommand, markdownCard, type CommandRegistry, type CommandHandler } from "./commands.ts";
+import type { FeishuContext } from "../context/types.ts";
+import type { ManagedMemory, MemoryManagementAction } from "../assistant/memory-management.ts";
 import { randomUUID } from "node:crypto";
 import { formatStatsLine, formatToolCall, toolIcon, ReplyParts } from "./reply-parts.ts";
 import { STATS_PLACEHOLDER } from "./cardkit-stream.ts";
@@ -27,6 +29,7 @@ export class FeishuAgentBridge {
   private readonly client?: Client;
   private readonly reactionController?: ReactionController;
   private readonly commandRegistry: CommandRegistry;
+  private readonly memoryCommand?: MemoryCommand;
   /** 详细模式开关：key 为 chatId，true 表示工具调用保留在正文中 */
   private readonly detailMode = new Map<string, boolean>();
   /** 回复末尾是否显示模型统计小字；关闭时只影响终态小字，工具过程状态照常显示 */
@@ -58,6 +61,7 @@ export class FeishuAgentBridge {
       peopleRoster?: PeopleRoster;
       botName?: string;
       botOpenId?: string;
+      manageMemory?: (context: FeishuContext, action: MemoryManagementAction, id?: string) => Promise<ManagedMemory[]>;
     },
   ) {
     this.conversations = conversations;
@@ -69,6 +73,7 @@ export class FeishuAgentBridge {
     this.peopleRoster = options?.peopleRoster;
     this.botName = options?.botName || "机器人";
     this.botOpenId = options?.botOpenId;
+    this.memoryCommand = options?.manageMemory ? new MemoryCommand(options.manageMemory) : undefined;
     this.reactionController = options?.client ? new ReactionController(options.client) : undefined;
     this.commandRegistry = createDefaultRegistry(options?.modelInfo);
     // /detail on|off 设置详细/精简模式，状态由 bridge 持有（按 chatId 记忆，默认精简）
@@ -96,13 +101,13 @@ export class FeishuAgentBridge {
     const requestStartedAt = Date.now();
 
     // 检测是否为指令
-    const commandHandler = this.commandRegistry.find(message.text);
+    const commandHandler = this.memoryCommand?.match(message.text) ? this.memoryCommand : message.context.isOwner === true ? this.commandRegistry.find(message.text) : undefined;
     if (commandHandler) {
       await this.handleCommand(message, commandHandler);
       return;
     }
 
-    const rosterHits = await this.peopleRoster?.match(message.text, { senderOpenId: message.context.userOpenId }).catch(() => []) ?? [];
+    const rosterHits = message.context.isOwner === true ? await this.peopleRoster?.match(message.text, { senderOpenId: message.context.userOpenId }).catch(() => []) ?? [] : [];
     const knownPeople = (message.people ?? []).filter((person) => person.openId !== this.botOpenId);
     if (!knownPeople.some((item) => item.openId === message.context.userOpenId)) {
       knownPeople.push({ openId: message.context.userOpenId, name: userName || message.context.userOpenId });
@@ -222,7 +227,7 @@ export class FeishuAgentBridge {
       session = await this.conversations.prompt(
         {
           conversationId,
-          prompt: { text: promptText, images: message.images },
+          prompt: { text: promptText, memoryText: message.text, images: message.images },
           context: message.context, // 调用者身份（权限组判定、会话目录归属的依据）
         },
         async (event) => {

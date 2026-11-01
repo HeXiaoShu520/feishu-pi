@@ -2,6 +2,10 @@
 .env
 .env.local
 .env.*.local
+.env.*
+!.env.example
+*.vault.json
+.vault-key
 
 # Python
 __pycache__/
@@ -31,7 +35,7 @@ ENV/
 
 # 数据目录（本地运行时生成）
 ~/.acp-link/
-memory/
+/memory/
 
 # IDE
 .vscode/
@@ -68,3 +72,22 @@ data/
 
 # 会话工作区（运行时生成）
 work_space/
+
+tools/dev-all.mjs
+
+# Local research and previous migration notes.
+docs/agent-comparison.md
+docs/feishu-pi-extension-plan.md
+docs/feishu-pi-to-hermes-guide.md
+docs/hermes-after-install.md
+docs/openclaw-gap-analysis.md
+docs/dsh-lark-link-review.md
+docs/issue-draft-node-sdk-card-callback.md
+docs/jev-api-tutorial.md
+
+# Browser state and captured pages can contain personal information.
+.playwright/
+.playwright-cli/
+
+# IDE-local generated repo knowledge cache (same nature as .pi/)
+.qoder/

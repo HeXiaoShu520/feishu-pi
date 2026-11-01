@@ -20,6 +20,8 @@ export interface CleanupOptions {
   sessionsRoot: string;
   /** 保留天数，默认 7 天 */
   retentionDays?: number;
+  /** 不删除对话目录，让后续长期记忆系统可以处理原始历史。 */
+  preserveSessions?: boolean;
   /** 消息去重表路径（可选；按 updatedAt 用同一保留期清理） */
   messages?: MessageStore;
 }
@@ -37,9 +39,11 @@ export class DataCleaner {
   private readonly sessionsRoot: string;
   private readonly messages?: MessageStore;
   private readonly retentionMs: number;
+  private readonly preserveSessions: boolean;
 
   constructor(options: CleanupOptions) {
     this.sessionsRoot = options.sessionsRoot;
+    this.preserveSessions = options.preserveSessions === true;
     this.messages = options.messages;
     this.retentionMs = (options.retentionDays ?? 7) * 24 * 60 * 60 * 1000;
   }
@@ -48,7 +52,7 @@ export class DataCleaner {
     const stats: CleanupStats = { sessionsChecked: 0, sessionsDeleted: 0, messagesChecked: 0, messagesCleaned: 0 };
     const cutoffTime = Date.now() - this.retentionMs;
 
-    await this.cleanupSessions(cutoffTime, stats);
+    if (!this.preserveSessions) await this.cleanupSessions(cutoffTime, stats);
     if (this.messages) {
       const result = await this.messages.cleanup(cutoffTime);
       stats.messagesChecked = result.checked;

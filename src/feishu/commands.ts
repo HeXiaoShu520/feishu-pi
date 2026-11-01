@@ -8,6 +8,8 @@
 import type { Client } from "@larksuiteoapi/node-sdk";
 import type { FeishuInboundMessage } from "./types.ts";
 import { logger } from "../utils/logger.ts";
+import type { FeishuContext } from "../context/types.ts";
+import type { ManagedMemory, MemoryManagementAction } from "../assistant/memory-management.ts";
 
 /** 指令处理器接口：match 判定是否命中，execute 返回要发送的卡片 */
 export interface CommandHandler {
@@ -40,6 +42,25 @@ export function markdownCard(content: string): object {
     schema: "2.0",
     body: { elements: [{ tag: "markdown", content }] },
   };
+}
+
+/** Manage only the requesting private-chat user's extracted facts. */
+export class MemoryCommand implements CommandHandler {
+  private readonly manage: (context: FeishuContext, action: MemoryManagementAction, id?: string) => Promise<ManagedMemory[]>;
+  constructor(manage: (context: FeishuContext, action: MemoryManagementAction, id?: string) => Promise<ManagedMemory[]>) { this.manage = manage; }
+  match(text: string): boolean { return /^\/memory(?:\s|$)/i.test(text.trim()); }
+  async execute(message: FeishuInboundMessage): Promise<CommandResult> {
+    if (message.context.chatMode !== "p2p") return { card: errorCard("请在私聊中管理自己的记忆。") };
+    const parts = message.text.trim().split(/\s+/);
+    const action = (parts[1] ?? "list").toLowerCase();
+    if (action !== "list" && action !== "disable" && action !== "restore") return { card: markdownCard("用法：`/memory list`、`/memory disable 记忆ID`、`/memory restore 记忆ID`。停用仅影响提炼记忆，不删除原始聊天和其他记录。") };
+    if (action !== "list" && (parts.length !== 3 || !parts[2])) return { card: errorCard("请附上 `/memory list` 中显示的记忆 ID。") };
+    const items = await this.manage(message.context, action, parts[2]);
+    const escape = (text: string) => text.replace(/[\\`*_\[\]<>]/g, "\\$&").replace(/[\r\n]+/g, " ");
+    if (!items.length) return { card: markdownCard("当前还没有提炼出的记忆。") };
+    const lines = items.map(item => `- ${item.active ? "启用" : "停用"} · ${escape(item.category)} · \`${item.id}\`\n  ${escape(item.text)}`);
+    return { card: markdownCard(`${action === "list" ? "**提炼记忆（最多 40 条）**" : "**记忆状态已更新**"}\n\n${lines.join("\n")}\n\n停用仅影响提炼记忆；原始聊天、近期对话和其他记录不会删除。`) };
+  }
 }
 
 /** 错误提示卡（❌ 前缀）。 */
@@ -128,9 +149,9 @@ export class ModelCommand implements CommandHandler {
       const elements = [
         {
           tag: "markdown",
-          content: message.context.isAdmin
+          content: message.context.isOwner
             ? `**可用模型列表**\n\n中转站: ${successBaseURL}\n当前: ${info.modelName}\n\n请选择要切换的模型：`
-            : `**可用模型列表**\n\n中转站: ${successBaseURL}\n当前: ${info.modelName}\n\n⚠️ 仅管理员可切换模型`,
+            : `**可用模型列表**\n\n中转站: ${successBaseURL}\n当前: ${info.modelName}\n\n⚠️ 仅本人可切换模型`,
         },
         ...models.map((model) => ({
           tag: "button",
@@ -216,13 +237,15 @@ export class HelpCommand implements CommandHandler {
     return {
       card: markdownCard(`**可用指令**
 
-\`/model\` - 查看并切换 AI 模型（仅管理员）
+\`/model\` - 查看并切换 AI 模型（仅本人）
 \`/login\` - 登录飞书用户身份（Device Flow 授权，用于"我的视角"能力）
 \`/logout\` - 退出用户身份登录
 \`/help\` - 显示此帮助信息
+\`/memory list\` - 查看自己的提炼记忆（仅私聊）
+\`/bili-auto on|off|status|run\` - 管理 B 站自动互动（仅管理员私聊）
 \`/new\` - 开始新会话（换新的会话 id 与会话目录）
 \`/stop\` - 停止当前 AI 响应
-\`/restart\` - 管理员重启开发服务
+\`/restart\` - 本人重启开发服务
 \`/detail on\` - 开启详细模式（工具调用保留在正文）
 \`/detail off\` - 开启精简模式（工具调用临时显示后清除，默认）`),
     };
@@ -280,7 +303,7 @@ export class StopCommand implements CommandHandler {
   }
 }
 
-/** /restart - 仅管理员可用；实际重启触发器由 main 注入，避免指令层直接依赖文件系统。 */
+/** /restart - 仅本人可用；实际重启触发器由 main 注入，避免指令层直接依赖文件系统。 */
 export class RestartCommand implements CommandHandler {
   private readonly trigger: () => void;
 
@@ -293,8 +316,8 @@ export class RestartCommand implements CommandHandler {
   }
 
   async execute(message: FeishuInboundMessage): Promise<CommandResult | null> {
-    if (message.context.isAdmin !== true) {
-      return { card: markdownCard("❌ 只有管理员可以重启服务。") };
+    if (message.context.isOwner !== true) {
+      return { card: markdownCard("❌ 只有本人可以重启服务。") };
     }
 
     return {

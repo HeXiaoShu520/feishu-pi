@@ -14,11 +14,8 @@ export interface PermissionCardParams {
   approvalId: string;
   /** 一次性随机 token，回调时服务端比对 */
   token: string;
-  /**
-   * 审批模式：admin=管理员卡（默认，仅管理员点击有效，可转发）；
-   * self=用户卡（命令使用发起者本人的 CLI 凭证，仅本人点击有效，无转发按钮）
-   */
-  mode?: "admin" | "self";
+  /** 模型审核或高风险标记要求本人确认的原因。 */
+  reason?: string;
 }
 
 /** 提取工具调用的一句话摘要（command/path 等关键字段，单行截断）。 */
@@ -29,11 +26,9 @@ function summarizeArgs(args: unknown): string {
   return detail.slice(0, COMMAND_MAX_LENGTH).replace(/\n/g, " ").replace(/`/g, "'");
 }
 
-/** 生成授权卡片（CardKit 2.0）：一行工具摘要 + 一行按钮。
- *  admin 模式（默认）：允许/拒绝/转发管理员三键；self 模式（用户卡）：仅允许/拒绝两键。 */
+/** 生成本人确认卡片（CardKit 2.0）：工具摘要、原因与两个按钮。 */
 export function buildPermissionCard(params: PermissionCardParams): object {
-  const { toolName, args, approvalId, token, mode = "admin" } = params;
-  const self = mode === "self";
+  const { toolName, args, approvalId, token, reason } = params;
 
   const summary = summarizeArgs(args);
   // 与流式工具段同形态：统一渲染为代码块——bash 带 bash 语言标注，
@@ -53,8 +48,6 @@ export function buildPermissionCard(params: PermissionCardParams): object {
   const columns = [
     { tag: "column", width: "weighted", weight: 1, vertical_align: "top", elements: [button("✅ 允许一次", "primary", { action: "tool_approval", approval_id: approvalId, token, decision: "allow_once" })] },
     { tag: "column", width: "weighted", weight: 1, vertical_align: "top", elements: [button("❌ 拒绝", "default", { action: "tool_approval", approval_id: approvalId, token, decision: "deny" })] },
-    // 转发按钮仅管理员卡需要（用户卡的使用者就是决策者本人）
-    ...(!self ? [{ tag: "column", width: "weighted", weight: 1, vertical_align: "top", elements: [button("📨 转发管理员", "default", { action: "forward_approval", approval_id: approvalId, token })] }] : []),
   ];
   const buttonsRow = {
     tag: "column_set",
@@ -65,16 +58,15 @@ export function buildPermissionCard(params: PermissionCardParams): object {
 
   return {
     schema: "2.0",
-    header: { title: { tag: "plain_text", content: self ? "🔑 用户身份操作确认" : "🛡 工具调用授权请求" } },
+    header: { title: { tag: "plain_text", content: "🔑 本人操作确认" } },
     body: {
       elements: [
         { tag: "markdown", content: toolBlock },
         {
           tag: "markdown",
-          content: self
-            ? "⚠️ 该命令将以**你的个人凭证**执行（你的飞书账号），仅你本人点击有效，授权仅本次生效"
-            : "⚠️ 仅管理员点击有效，授权仅本次生效",
+          content: "⚠️ 请确认本次工具操作。仅你本人点击有效，授权仅本次生效",
         },
+        ...(reason ? [{ tag: "markdown", content: reason.slice(0, 500).replace(/[<>`]/g, "") }] : []),
         buttonsRow,
       ],
     },

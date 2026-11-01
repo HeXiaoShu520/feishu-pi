@@ -1,4 +1,6 @@
-import type { GroupPolicy } from "../permission/policy.ts";
+import type { ToolPolicy } from "../permission/policy.ts";
+import { toolSelector } from "../permission/rules.ts";
+import { mcpToolName } from "../mcp/names.ts";
 import type { PermissionBroker } from "./broker.ts";
 import type { PolicyJudge, PermissionOverview } from "./judge.ts";
 import { logger } from "../utils/logger.ts";
@@ -49,8 +51,8 @@ export interface ToolGuardCheckParams {
 }
 
 /**
- * 统一门禁：deny 阻止白名单直通并作为风险上下文 → 白名单直接通过 → LLM 决定直接通过、管理员卡或用户卡。
- * read 和自定义工具也走同一条路径，避免各层各自做“名单外拒绝”。
+ * Personal gate: deny > high-risk confirmation > ask model > allow > default deny.
+ * Adapters that execute other capabilities must authorize those capabilities too.
  */
 export class ToolGuard {
   private readonly broker: PermissionBroker;
@@ -65,28 +67,32 @@ export class ToolGuard {
     this.cwd = cwd ?? process.cwd();
   }
 
-  async check(policy: GroupPolicy, params: ToolGuardCheckParams, signal?: AbortSignal): Promise<{ block: true; reason: string } | undefined> {
+  async check(policy: ToolPolicy, params: ToolGuardCheckParams, signal?: AbortSignal): Promise<{ block: true; reason: string } | undefined> {
     if (signal?.aborted) return { block: true, reason: "会话已中断" };
+    if (!policy.valid) return { block: true, reason: "权限配置不可用，默认拒绝工具调用" };
 
-    const denyRule = policy.denied(params.toolName, params.args);
-    // deny 命中不能被白名单直接放行，但不是永久拒绝：仍交 LLM 给出上下文与理由，
-    // 由 LLM 正常决定 allow / admin / user，规则会保留在审核输入与日志审计中。
-    if (!denyRule && this.isWhitelisted(policy, params)) return undefined;
-
-    const fields = policy.describe();
+    const calls = projectedCalls(params);
+    const candidates = ruleCalls(calls);
+    const denyRule = candidates.map((call) => policy.denied(call.toolName, call.args)).find(Boolean);
+    if (denyRule) return { block: true, reason: `权限策略直接拒绝：${denyRule}` };
+    if (params.risky) return this.requireApproval(params, "该工具标记为高风险，需要本人确认", signal);
+    const askRule = candidates.map((call) => policy.asked(call.toolName, call.args)).find(Boolean);
+    if (!askRule) {
+      if (calls.every((call) => this.isWhitelisted(policy, call))) return undefined;
+      return { block: true, reason: `工具 ${params.toolName} 未命中 allow 或 ask，默认拒绝` };
+    }
     const overview = this.getOverview ? await this.getOverview().catch(() => undefined) : undefined;
     const verdict = this.judge
-      ? await this.judge.judge({ groups: policy.groups, isAdmin: policy.isAdmin, fields, toolName: params.toolName, args: params.args, denyRule, risky: Boolean(params.risky), overview })
-      : { decision: "admin" as const, reason: "智能门禁未装配，需管理员确认" };
+      ? await this.judge.judge({ fields: policy.describe(), toolName: params.toolName, args: params.args, askRule, risky: false, overview }, signal)
+      : { decision: "confirm" as const, reason: "审核模型未配置，需要本人确认" };
+    if (signal?.aborted) return { block: true, reason: "会话已中断" };
     if (verdict.decision === "allow") return undefined;
-    // 用户卡必须绑定真实的请求者；上下文缺失时宁可提升为管理员卡，不能产生无人可批准的卡片。
-    const mode = verdict.decision !== "user" || !params.requesterOpenId ? "admin" : "self";
-    return this.requireApproval(params, verdict.reason, mode, signal);
+    if (verdict.decision === "deny") return { block: true, reason: `审核模型拒绝：${verdict.reason}` };
+    return this.requireApproval(params, verdict.reason, signal);
   }
 
-  private isWhitelisted(policy: GroupPolicy, params: ToolGuardCheckParams): boolean {
+  private isWhitelisted(policy: ToolPolicy, params: ToolGuardCheckParams): boolean {
     const { toolName, args } = params;
-    if (toolName === "ask_user_question") return true;
     if (toolName === "bash") {
       const command = extractCommand(args);
       if (command === undefined) return false;
@@ -115,31 +121,53 @@ export class ToolGuard {
       const path = extractPath(args);
       return path !== undefined && policy.writeAllowed(path);
     }
-    return policy.toolsAllowed(toolName);
+    return policy.toolsAllowed(toolName) || policy.toolsAllowed(toolSelector(toolName, args));
   }
 
   private async requireApproval(
     params: ToolGuardCheckParams,
     reason: string,
-    mode: "admin" | "self",
     signal?: AbortSignal,
   ): Promise<{ block: true; reason: string } | undefined> {
-    if (!params.chatId) {
+    if (!params.chatId || !params.requesterOpenId) {
       logger.warn(`[ToolGuard] 无会话 ID，无法发授权卡，按拒绝处理: ${params.toolName}`);
-      return { block: true, reason: `工具 ${params.toolName} 需要${mode === "self" ? "本人" : "管理员"}授权（${reason}），但当前无法发起授权请求` };
+      return { block: true, reason: `工具 ${params.toolName} 需要本人授权（${reason}），但当前缺少会话或本人身份` };
     }
     const { allowed, detail } = await this.broker.requestApproval({
       toolName: params.toolName,
       args: params.args,
       chatId: params.chatId,
       reason,
-      mode,
-      requesterOpenId: mode === "self" ? params.requesterOpenId : undefined,
+      requesterOpenId: params.requesterOpenId,
     }, signal);
     if (allowed) return undefined;
-    const approver = mode === "self" ? "发起者本人" : "管理员";
-    return { block: true, reason: `工具 ${params.toolName} 未获得${approver}授权：${detail}` };
+    return { block: true, reason: `工具 ${params.toolName} 未获得本人授权：${detail}` };
   }
+}
+
+/** Keep nested executors from bypassing Bash/Read/Write rules via a Tools grant. */
+function projectedCalls(params: ToolGuardCheckParams): ToolGuardCheckParams[] {
+  const calls = [params];
+  const args = (params.args && typeof params.args === "object" ? params.args : {}) as Record<string, unknown>;
+  if (params.toolName === "background_task" && args.action === "start" && typeof args.command === "string") {
+    calls.push({ ...params, toolName: "bash", args: { command: args.command } });
+  }
+  if (params.toolName === "browser" && args.action === "upload" && typeof args.path === "string") {
+    calls.push({ ...params, toolName: "read", args: { path: args.path } });
+  }
+  if (params.toolName === "mcp" && args.action === "call" && typeof args.server === "string" && typeof args.tool === "string") {
+    calls.push({ ...params, toolName: mcpToolName(args.server, args.tool), args: args.args });
+  }
+  return calls;
+}
+
+function ruleCalls(calls: ToolGuardCheckParams[]): ToolGuardCheckParams[] {
+  return calls.flatMap((call) => {
+    const command = call.toolName === "bash" ? extractCommand(call.args) : undefined;
+    if (!command) return [call];
+    const steps = parseShellSteps(command)?.map((step) => step.command) ?? splitShellSegments(command);
+    return [call, ...steps.flatMap((command) => [command, cliPolicyCommand(command)]).map((command) => ({ ...call, args: { command } }))];
+  });
 }
 
 function extractPath(args: unknown): string | undefined {

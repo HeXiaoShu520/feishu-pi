@@ -1,0 +1,6 @@
+{
+  "_说明": "表情包黑白名单：用户配置优先，模型不可改，没有任何写接口。规则支持 pack: / tag: / emotion: / group: / code: 前缀，无前缀时精确匹配完整 id、代号或名字。guide 可选 rare / normal / often，只影响工具描述里的使用频率措辞。名单改动下条消息生效，guide 改动需重启进程。",
+  "blacklist": [],
+  "whitelist": [],
+  "guide": "normal"
+}

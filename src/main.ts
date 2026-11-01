@@ -1,22 +1,29 @@
+import { PersonaVersions } from "./resources/persona-versions.ts";
+import { createStickerSendTool } from "./stickers/send.ts";
+import { createGuestStickerSearchTool } from "./stickers/guest-search.ts";
+import { createRulesLoader } from "./stickers/rules.ts";
+import { BiliAutomation } from "./bilibili/automation.ts";
+import { BiliAutoCommand } from "./feishu/bili-auto-command.ts";
+import { mcpToolName } from "./mcp/names.ts";
 import "./bootstrap-env.ts"; // 最早执行：.env 缺失自动拷贝（必须在 dotenv 之前）
 import "dotenv/config";
 import { ConversationManager } from "./runtime/conversation-manager.ts";
 import { FeishuPiRuntime } from "./runtime/feishu-pi-runtime.ts";
 import { FeishuAgentBridge } from "./feishu/agent-bridge.ts";
 import { LarkTransport } from "./feishu/lark-transport.ts";
-import { isValidMiniPetUserOpenId, loadConfig } from "./config.ts";
+import { loadConfig } from "./config.ts";
 import { SessionStore } from "./runtime/session-store.ts";
 import { MessageStore } from "./feishu/message-store.ts";
 import { DataCleaner } from "./runtime/data-cleaner.ts";
-import { resolveAdminOpenId } from "./feishu/admin-resolver.ts";
+import { resolveOwnerOpenId } from "./feishu/owner-resolver.ts";
 import { ScheduleService } from "./schedule/service.ts";
 import { PermissionPolicy } from "./permission/policy.ts";
 import { LogoutCommand, StatusCommand, UserAuthService } from "./feishu/user-auth.ts";
 import { MeegleDeviceLogin, MEEGLE_DEFAULT_HOST, StaticCredentialService } from "./feishu/meegle-auth.ts";
 import { PeopleRoster } from "./feishu/people-roster.ts";
-import { RestartCommand } from "./feishu/commands.ts";
+import { RestartCommand, markdownCard } from "./feishu/commands.ts";
 import { toggleTrailingBlankLine } from "./utils/restart-toggle.ts";
-import { createIdentityBashTool } from "./runtime/identity-bash.ts";
+import { createIdentityBashTool, openIdentityShell, type IdentityBashOptions } from "./runtime/identity-bash.ts";
 import { createMentionProfileLookup } from "./feishu/lark-cli-search.ts";
 import { runSetupWizard } from "./feishu/setup-wizard.ts";
 import { delimiter, join } from "node:path";
@@ -30,12 +37,12 @@ import { ToolGuard } from "./guard/tool-guard.ts";
 import { PolicyJudge } from "./guard/judge.ts";
 import { buildNoticeCard } from "./guard/card.ts";
 import { AskBroker, createAskUserTool } from "./feishu/ask-broker.ts";
-import { createMemoryTool } from "./feishu/memory-tool.ts";
+import { AssistantServices } from "./assistant/services.ts";
+import type { FeishuContext } from "./context/types.ts";
 import { SlashCommandRegistrar } from "./feishu/slash-command.ts";
 import type { CleanupStats } from "./runtime/data-cleaner.ts";
 import { acquireInstanceLock } from "./utils/instance-lock.ts";
-import { MiniPetServer } from "./minipet/server.ts";
-import { sendAdminLifecycleNotice } from "./feishu/admin-lifecycle-notice.ts";
+import { sendOwnerLifecycleNotice } from "./feishu/owner-lifecycle-notice.ts";
 
 /** 授权请求失效（服务重启/已处理）时就地更新的提示卡文案。 */
 const APPROVAL_STALE_NOTICE = "⚠️ 该授权请求已失效（服务已重启或已处理），请重新发起任务。";
@@ -74,9 +81,7 @@ export async function main(): Promise<void> {
   }
 
   const config = loadConfig();
-  if (process.argv.includes("--stdio") && !isValidMiniPetUserOpenId(config.miniPetUserOpenId)) {
-    throw new Error("MiniPet 子进程必须配置真实的 MINIPET_USER_OPEN_ID（ou_...），不能使用占位身份启动。");
-  }
+  await new PersonaVersions(join(config.cwd, ".agent")).save();
   const instanceLock = await acquireInstanceLock(join(config.dataDir, ".instance.lock"));
 
   // 项目内预制 CLI（lark-cli）：把 node_modules/.bin 前插到 PATH，
@@ -86,12 +91,12 @@ export async function main(): Promise<void> {
 
   const messages = new MessageStore(config.messagesFile);
 
-  // 启动时清理过期数据和卡住的消息。清理以「会话目录」为单位：
-  // 整个目录超过保留期就整体删除（历史 jsonl、图片、附件同属一个会话，不拆开删）
+  // 保留历史会话，清理去重记录和卡住的消息。
   const cleaner = new DataCleaner({
     sessionsRoot: config.sessionsRoot,
     messages,
     retentionDays: 7,
+    preserveSessions: true,
   });
 
   logger.info("[DataCleaner] 清理卡住的消息...");
@@ -100,7 +105,7 @@ export async function main(): Promise<void> {
     logger.info(`[DataCleaner] 已清理 ${stuckCount} 条卡住的消息`);
   }
 
-  logger.info("[DataCleaner] 清理过期会话目录（保留 7 天）...");
+  logger.info("[DataCleaner] 保留历史会话，清理过期去重记录...");
   await logCleanupStats(cleaner.cleanup());
 
   // 定期清理（每天一次）；conversations 在下方声明，回调首次触发时早已初始化
@@ -161,9 +166,9 @@ export async function main(): Promise<void> {
     logger.warn(`[Main] Slash Command 同步失败（请确认应用已开通并发布 application:app_slash_command:* 权限）: ${error instanceof Error ? error.message : String(error)}`);
   });
 
-  // 管理员 openId 在用户授权流程装配后解析。
-  let adminOpenId: string | undefined;
-  // 用户缓存文件（data/users/{appId}_users.json）：本人登录资料与管理员识别共用。
+  // 本人 openId 在用户授权流程装配后解析。
+  let ownerOpenId: string | undefined;
+  // 用户缓存文件（data/users/{appId}_users.json）：本人登录资料与本人识别共用。
   const usersFile = join(config.dataDir, "users", `${config.feishuAppId}_users.json`);
 
   // ---------- 多 CLI 凭证库（按 CLI 分文件，data/credentials/ 子目录） ----------
@@ -190,7 +195,7 @@ export async function main(): Promise<void> {
   const sessions = new SessionStore(config.sessionsFile, config.sessionsRoot);
   // 用户飞书身份授权（Device Flow，RFC 8628）：按 openId 加密存取 user_access_token；
   // 未登录/失效时由当前用户的 CLI 调用链路自动弹出授权链接。
-  // 先于 transport 创建（冷启动管理员识别要在 transport 装配前完成）；
+  // 先于 transport 创建（冷启动本人识别要在 transport 装配前完成）；
   // updateCard/sendCard 闭包后置引用 transport，仅在实际收发卡片时才会执行。
   userAuth = new UserAuthService({
     appId: config.feishuAppId,
@@ -201,7 +206,7 @@ export async function main(): Promise<void> {
     updateCard: (messageId, card) => transport.updateCardById(messageId, card),
     // 增量授权：能力需要新 scope 时自动把授权卡发到该用户（open_id 口径，投递到与用户的私聊）
     sendCard: (openId, card) => transport.sendCardToUser(openId, card),
-    // /login 绑定完成时：管理员尚未识别且登录者与管理员配置匹配 → 资料入缓存（重启即生效）
+    // /login 绑定完成时：本人尚未识别且登录者与本人配置匹配 → 资料入缓存（重启即生效）
     onLoginBound: (info) => {
       if (handleLoginBoundImpl) handleLoginBoundImpl(info);
       else pendingLoginBound.push([info]);
@@ -226,19 +231,21 @@ export async function main(): Promise<void> {
     if (replaced > 0) logger.info(`[Main] 已清洗历史会话文件中的明文凭证（处理 ${replaced} 个文件）`);
   })().catch((error) => logger.warn("[Main] 会话清洗失败:", error));
 
-  // 管理员身份只由机器人应用权限与资料缓存解析，不遍历用户登录凭证。
-  adminOpenId = await resolveAdminOpenId(client, config.feishuAdmin, config.feishuAppId);
-  if (adminOpenId) {
+  // 本人身份只由机器人应用权限与资料缓存解析，不遍历用户登录凭证。
+  ownerOpenId = await resolveOwnerOpenId(client, config.feishuOwner, config.feishuAppId);
+  if (ownerOpenId) {
     logger.info(
-      config.feishuAdmin === adminOpenId
-        ? `[Main] 启动 3/4 管理员 Open ID: ${adminOpenId}`
-        : `[Main] 启动 3/4 管理员: ${config.feishuAdmin} → ${adminOpenId}`,
+      config.feishuOwner === ownerOpenId
+        ? `[Main] 启动 3/4 本人 Open ID: ${ownerOpenId}`
+        : `[Main] 启动 3/4 本人: ${config.feishuOwner} → ${ownerOpenId}`,
     );
-  } else if (config.feishuAdmin) {
-    logger.warn(`[Main] 启动 3/4 管理员身份解析失败（FEISHU_PI_ADMIN=${config.feishuAdmin}），本次运行当作没有管理员`);
+  } else if (config.feishuOwner) {
+    logger.warn(`[Main] 启动 3/4 本人身份解析失败（FEISHU_PI_OWNER=${config.feishuOwner}），将停止启动`);
   } else {
-    logger.warn("[Main] 未配置 FEISHU_PI_ADMIN：管理员能力不可用");
+    logger.warn("[Main] 未配置 FEISHU_PI_OWNER：本人身份未配置");
   }
+
+  if (!ownerOpenId) throw new Error("请配置 FEISHU_PI_OWNER 为本人的飞书 open_id（ou_...）；旧 FEISHU_PI_ADMIN 可作为迁移来源。");
 
   // ---------- 消息传输 ----------
 
@@ -262,12 +269,12 @@ export async function main(): Promise<void> {
       apiKey: config.audioTranscriptionApiKey,
     },
 
-    adminOpenId,
+    ownerOpenId,
     searchMentionedUserProfile: createMentionProfileLookup({
       cwd: config.cwd,
       appId: config.feishuAppId,
-      adminOpenId,
-      getAdminToken: (openId) => userAuth?.getUserAccessToken(openId) ?? Promise.resolve(undefined),
+      ownerOpenId,
+      getOwnerToken: (openId) => userAuth?.getUserAccessToken(openId) ?? Promise.resolve(undefined),
     }),
     // /model 切换时通知运行时热切换（持久化到 .env 仍在 transport 内完成）
     onModelSwitch: (name) => {
@@ -276,60 +283,41 @@ export async function main(): Promise<void> {
     },
   });
 
-  /** /login 绑定完成时：① 身份 API 给出的姓名写入用户缓存；② 管理员尚未识别且登录者与
-   *  FEISHU_PI_ADMIN 匹配 → 记录资料，重启后走缓存通道自动识别。 */
+  /** /login 绑定完成时：① 身份 API 给出的姓名写入用户缓存；② 本人尚未识别且登录者与
+   *  FEISHU_PI_OWNER 匹配 → 记录资料，重启后走缓存通道自动识别。 */
   const handleLoginBound = (info: { openId: string; name?: string; en_name?: string; email?: string }): void => {
     void transport
       .seedUserProfile(info.openId, { name: info.name, en_name: info.en_name })
       .catch((error) => logger.warn("[Main] 登录资料写入用户缓存失败:", error));
-    const identifier = config.feishuAdmin;
-    if (!identifier || adminOpenId) return;
+    const identifier = config.feishuOwner;
+    if (!identifier || ownerOpenId) return;
     const matched =
       info.openId === identifier ||
       info.name === identifier ||
       info.en_name === identifier ||
       (Boolean(info.email) && info.email === identifier);
     if (!matched) return;
-    logger.info(`[Main] 管理员已通过登录识别（${info.name ?? info.openId}），重启服务后管理员权限生效`);
+    logger.info(`[Main] 本人已通过登录识别（${info.name ?? info.openId}），重启服务后本人权限生效`);
   };
   // 处理器就绪：回放装配期间积压的登录事件
   handleLoginBoundImpl = handleLoginBound;
   for (const args of pendingLoginBound.splice(0)) handleLoginBound(...args);
 
-  // ---------- 权限闸门：策略 → 智能体审核 → 管理员授权卡 ----------
+  // ---------- 权限闸门：策略 → 智能体审核 → 本人授权卡 ----------
 
   const policyFile = join(config.cwd, ".agent", "permissions.json");
   const policy = new PermissionPolicy(policyFile, {
-    adminId: adminOpenId ?? "",
     cwd: config.cwd,
   });
   // bridge 在下方创建，先用闭包引用（授权卡撤回需查询该会话的详细模式开关）
   let bridgeRef: FeishuAgentBridge | undefined;
-  // MiniPet 本地 stdio 通道稍后才创建；授权通道通过闭包绑定，避免改变现有装配顺序。
-  let miniPetServer: MiniPetServer | undefined;
   const broker = new PermissionBroker({
-    adminOpenIds: adminOpenId ? [adminOpenId] : [],
+    ownerOpenId,
     timeoutMs: config.approvalTimeoutMs,
-    sendCard: (chatId, card) => {
-      if (chatId.startsWith("minipet:")) {
-        if (!miniPetServer) return Promise.reject(new Error("MiniPet 前端尚未就绪"));
-        return miniPetServer.sendApprovalCard(chatId, card);
-      }
-      return transport.sendCardToChat(chatId, card);
-    },
-    // 转发授权卡到管理员私聊：open_id 投递（chat_id 通道不认 ou_ 前缀）
-    sendCardToUser: (openId, card) => transport.sendCardToUser(openId, card),
-    updateCard: (messageId, card) => {
-      if (messageId.startsWith("minipet-card:")) {
-        if (!miniPetServer) return Promise.reject(new Error("MiniPet 前端尚未就绪"));
-        return miniPetServer.updateApprovalCard(messageId, card);
-      }
-      return transport.updateCardById(messageId, card);
-    },
+    sendCard: (chatId, card) => transport.sendCardToChat(chatId, card),
+    updateCard: (messageId, card) => transport.updateCardById(messageId, card),
     // 精简模式下授权确认后撤回卡片，减少会话占用
-    recallCard: (messageId) => messageId.startsWith("minipet-card:")
-      ? (miniPetServer ? miniPetServer.recallApprovalCard(messageId) : Promise.resolve())
-      : transport.recallMessageById(messageId),
+    recallCard: (messageId) => transport.recallMessageById(messageId),
     shouldRecall: (chatId) => bridgeRef?.isDetailMode(chatId) === false,
   });
   const toolGuard = new ToolGuard(broker, new PolicyJudge({
@@ -339,27 +327,10 @@ export async function main(): Promise<void> {
     timeoutMs: config.guardTimeoutMs,
   }), () => policy.describe(), config.cwd);
 
-  // 授权卡回调 → PermissionBroker 服务端校验（token / 卡片来源 / 管理员身份）
+  // 授权卡回调 → PermissionBroker 服务端校验（token / 卡片来源 / 本人身份）
   transport.onApproval(async ({ value, action }) => {
     const approvalId = typeof value.approval_id === "string" ? value.approval_id : undefined;
     const token = typeof value.token === "string" ? value.token : undefined;
-
-    // 「申请转发给管理员」：把授权卡转发到管理员私聊
-    if (value.action === "forward_approval") {
-      const result = await broker.forwardToAdmin({ approvalId, token, messageId: action.messageId, chatId: action.chatId });
-      if (result.accepted) {
-        logger.info(`[Main] 授权请求已转发给管理员私聊（点击者 ${formatCardOperator(action)}）`);
-      } else {
-        logger.warn(`[Main] 转发请求被拒绝: ${result.detail}（点击者 ${formatCardOperator(action)}）`);
-        // 请求确实已失效（服务重启/已处理）才提示失效；转发通道类失败给出真实原因——
-        // 此时请求仍有效，管理员仍可在原卡上直接授权
-        const stale = result.detail.includes("不存在") || result.detail.includes("已转发过");
-        await transport
-          .updateCardById(action.messageId, buildNoticeCard(stale ? APPROVAL_STALE_NOTICE : `❌ 转发管理员失败：${result.detail}（请求仍有效，可在原卡直接授权或稍后重试）`))
-          .catch(() => {});
-      }
-      return;
-    }
 
     const result = await broker.handleCallback({
       approvalId,
@@ -409,7 +380,9 @@ export async function main(): Promise<void> {
   // 注意：runTask 闭包引用下方才声明的 conversations（前向引用），仅在任务触发（启动完成后）才会执行
   const scheduleService = new ScheduleService({
     storeFile: join(dataDir, "schedules.json"),
+    shouldRun: (task) => task.createdBy === ownerOpenId,
     runTask: async (task) => {
+      if (task.createdBy !== ownerOpenId) throw new Error("个人助理不执行其他用户的旧定时任务");
       const conversationId = `${task.createdBy}-schedule:${task.id}`;
       const context = {
         userOpenId: task.createdBy,
@@ -440,10 +413,88 @@ ${trimmed}` }] },
 
   // ---------- 运行时与会话桥接 ----------
 
-  // 两档身份：负责人 = FEISHU_PI_ADMIN，用户 = 其他人；能力全部由策略文件驱动。
+  const identityOptions = (userId: string, context?: Pick<FeishuContext, "chatId">): IdentityBashOptions => ({
+    cwd: config.cwd,
+    appId: config.feishuAppId,
+    appSecret: config.feishuAppSecret,
+    botOpenId,
+    botName,
+    restrictUserCredentials: !config.allowPersonalUserCli,
+    userId,
+    chatId: context?.chatId,
+    getLarkToken: () => userAuth?.peekUserAccessToken(userId),
+    ensureLarkToken: () => userAuth?.getUserAccessToken(userId) ?? Promise.resolve(undefined),
+    // lark-cli 用户态命令缺 scope 时：发起增量 Device Flow（授权卡发到当前会话），
+    // 同意后 token 自动入库并刷新，重试即生效——用户无需手动 /login
+    onMissingScopes: (uid, _chatId, scopes) => {
+      void userAuth?.ensureScopes(uid, scopes).catch((error) => {
+        logger.warn(`[Main] 增量授权发起失败（${scopes.join(", ")}）:`, error);
+      });
+      logger.info(`[Main] lark-cli 缺少用户 scope，已发起增量授权: ${scopes.join(", ")}（用户 ${uid}）`);
+      return `【补充授权已发起】本次调用缺少用户授权 scope：${scopes.join("、")}。已向你的飞书私聊发送补充授权卡片，请完成授权后重试本命令；授权完成后无需其他操作。`;
+    },
+    onNotLoggedIn: (uid) => {
+      // lark-cli 未登录/凭证失效：自动发起 Device Flow，授权链接卡推送到用户私聊
+      void userAuth?.ensureLogin(uid).catch((error) => logger.warn("[Main] lark-cli 登录链接推送失败:", error));
+    },
+    // Meegle（飞书项目）：/login meegle 授权的静态 token，仅在启动 CLI 时注入；
+    // 站点固定为飞书项目（MEEGLE_DEFAULT_HOST）；无凭证时自动发起到该用户私聊的授权
+    extraInjections: [
+      {
+        commandPattern: /^\s*meegle(?:\.exe)?(?:\s|$)/i,
+        envToken: "MEEGLE_USER_ACCESS_TOKEN",
+        staticEnv: { MEEGLE_HOST: MEEGLE_DEFAULT_HOST },
+        getToken: () => {
+          const token = meegleAuth.peekToken(userId);
+          if (!token) meegleDeviceLogin.beginFor(userId);
+          return token;
+        },
+      },
+    ],
+
+  });
+
+  const assistant = new AssistantServices({
+    cwd: config.cwd, dataDir: config.dataDir, sessionsRoot: config.sessionsRoot,
+    ownerOpenId: ownerOpenId, browserChannel: config.browserChannel,
+    openShell: (caller) => openIdentityShell(identityOptions(caller.openId, { chatId: caller.chatId })),
+    notifyTask: async (task) => {
+      const name = task.name.replace(/[<>`]/g, "");
+      const card = markdownCard(`后台任务：${name}\n状态：${task.status}\n任务 ID：${task.id}\n退出码：${task.exitCode ?? "无"}\n使用 background_task 的 log 查看结果。`);
+      await transport.sendCardToChat(task.chatId, card);
+    },
+  });
+  const biliAutomation = config.biliAutoAvailable ? new BiliAutomation(join(dataDir, "bilibili", "automation.json"), {
+    authorize: async (name, args, chatId, signal) => {
+      const result = await toolGuard.check(await policy.current(), { toolName: mcpToolName("bilibili", name), args, chatId, requesterOpenId: ownerOpenId }, signal);
+      if (result?.block) throw new Error(result.reason);
+    },
+    call: async (name, args, _chatId, signal) => {
+      const result = await assistant.mcp.call("bilibili", name, args, signal);
+      if (result.isError) throw new Error("B 站工具调用失败");
+      const text = result.content.find(block => block.type === "text");
+      if (!text || text.type !== "text") throw new Error("B 站工具未返回文本结果");
+      const value: unknown = JSON.parse(text.text);
+      if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error("B 站工具返回格式异常");
+      return value as Record<string, unknown>;
+    },
+    decide: (stage, data, signal) => runtime.biliDecision(stage, data, signal),
+    interests: () => runtime.biliInterests(),
+    share: config.biliShareAvailable ? (chatId, text) => transport.sendTextToChat(chatId, text) : undefined,
+  }) : undefined;
+  await assistant.start();
+
+  // 表情包黑白名单：用户配置优先、模型不可改；检索时按 mtime 热重载，档位只影响工具描述
+  const stickerRoot = join(config.dataDir, "stickers");
+  const stickerRules = createRulesLoader(join(config.cwd, ".agent", "stickers.json"));
+  const stickerGuide = (await stickerRules()).guide;
+
+  // 一个使用者、一份个人策略；前端只负责传输与交互。
+
   // 第二个参数：项目内置交互工具（随会话注册，调用者身份由 runtime 派发时注入）
   runtime = new FeishuPiRuntime({
     cwd: config.cwd,
+    sessionsRoot: config.sessionsRoot,
     modelProvider: config.modelProvider,
     modelName: config.modelName,
     modelBaseUrl: config.modelBaseUrl,
@@ -451,78 +502,27 @@ ${trimmed}` }] },
     // 会话目录的唯一事实来源：Pi 会话 jsonl 与图片/附件同在一个会话目录
     sessions,
     permissionPolicy: policy,
-    toolGuard: (groupPolicy, params, signal) => toolGuard.check(groupPolicy, params, signal),
+    toolGuard: (toolPolicy, params, signal) => toolGuard.check(toolPolicy, params, signal),
     scheduleService,
-    // 会话级带身份 bash：在每次 CLI 真正启动时绑定发起人；管理员用户令牌不进入 AI CLI。
+    // 会话级带身份 bash：在每次 CLI 真正启动时绑定发起人；用户令牌仅在显式启用 MINICLAW_USER_CLI 后交给受控 CLI。
     // 普通 shell 命令不接收凭证，未登录时拒绝该次 CLI 并推送授权链接。
     // 用户态命令执行前按需刷新当前发起人的 token，不预热其他用户。
-    identityBash: (userId, context) => {
-      return createIdentityBashTool({
-        cwd: config.cwd,
-        appId: config.feishuAppId,
-        appSecret: config.feishuAppSecret,
-        botOpenId,
-        botName,
-        adminSender: Boolean(adminOpenId && userId === adminOpenId),
-        userId,
-        chatId: context?.chatId,
-        getLarkToken: () => userAuth?.peekUserAccessToken(userId),
-        ensureLarkToken: () => userAuth?.getUserAccessToken(userId) ?? Promise.resolve(undefined),
-        // lark-cli 用户态命令缺 scope 时：发起增量 Device Flow（授权卡发到当前会话），
-        // 同意后 token 自动入库并刷新，重试即生效——用户无需手动 /login
-        onMissingScopes: (uid, _chatId, scopes) => {
-          void userAuth?.ensureScopes(uid, scopes).catch((error) => {
-            logger.warn(`[Main] 增量授权发起失败（${scopes.join(", ")}）:`, error);
-          });
-          logger.info(`[Main] lark-cli 缺少用户 scope，已发起增量授权: ${scopes.join(", ")}（用户 ${uid}）`);
-          return `【补充授权已发起】本次调用缺少用户授权 scope：${scopes.join("、")}。已向你的飞书私聊发送补充授权卡片，请完成授权后重试本命令；授权完成后无需其他操作。`;
-        },
-        onNotLoggedIn: (uid) => {
-          // lark-cli 未登录/凭证失效：自动发起 Device Flow，授权链接卡推送到用户私聊
-          void userAuth?.ensureLogin(uid).catch((error) => logger.warn("[Main] lark-cli 登录链接推送失败:", error));
-        },
-        // Meegle（飞书项目）：/login meegle 授权的静态 token，仅在启动 CLI 时注入；
-        // 站点固定为飞书项目（MEEGLE_DEFAULT_HOST）；无凭证时自动发起到该用户私聊的授权
-        extraInjections: [
-          {
-            commandPattern: /^\s*meegle(?:\.exe)?(?:\s|$)/i,
-            envToken: "MEEGLE_USER_ACCESS_TOKEN",
-            staticEnv: { MEEGLE_HOST: MEEGLE_DEFAULT_HOST },
-            getToken: () => {
-              const token = meegleAuth.peekToken(userId);
-              if (!token) meegleDeviceLogin.beginFor(userId);
-              return token;
-            },
-          },
-        ],
-
-      });
-    },
+    identityBash: (userId, context) => createIdentityBashTool(identityOptions(userId, context)),
+    ownerOpenId: ownerOpenId,
+    sessionTools: (caller) => [...assistant.sessionTools(caller), createStickerSendTool(client, stickerRoot, caller.chatId, { rules: stickerRules, guide: stickerGuide })],
+    guestTools: (caller) => [createGuestStickerSearchTool(stickerRoot, { rules: stickerRules, guide: stickerGuide }), createStickerSendTool(client, stickerRoot, caller.chatId, { rules: stickerRules, guide: stickerGuide })],
   }, [
     createAskUserTool(askBroker),
-    // 个人长期记忆：按 openId 一人一份（data/memory/<openId>.md），跨会话保留
-    createMemoryTool({ memoryDir: join(config.dataDir, "memory") }),
+    ...assistant.tools(),
   ]);
 
   // 上电预加载：权限策略 + Skills + 自定义工具在首条消息前全部就绪
   await runtime.preload();
 
-  // 启动时打印可用的 Skills 和 Tools（管理员视角）
+  // 启动时打印可用的 Skills 和 Tools（本人视角）
   await runtime.printAvailableResources();
 
   const conversations = new ConversationManager(runtime, sessions, { maxPendingMessages: config.maxPendingMessages });
-
-  // MiniPet 是第二个前端入口：只做本地 JSONL 协议适配，底层复用同一个会话/权限/工具运行时。
-  // 只有由 MiniPet 启动的 --stdio 子进程才开启，避免主服务额外监听端口。
-  miniPetServer = process.argv.includes("--stdio")
-    ? new MiniPetServer({
-        conversations,
-        userOpenId: config.miniPetUserOpenId,
-        maxResourceBytes: config.maxResourceBytes,
-        maxMessageResourceBytes: config.maxMessageResourceBytes,
-        onApproval: (params) => broker.handleCallback(params),
-      })
-    : undefined;
 
   const bridge = new FeishuAgentBridge(
     conversations,
@@ -532,6 +532,7 @@ ${trimmed}` }] },
       client,
       // /status 查看用户与 CLI 凭证状态；/logout 清除飞书用户授权
       extraCommands: [
+        new BiliAutoCommand(biliAutomation),
         new RestartCommand(() => {
           // 先让 /restart 回执卡发出去，再修改入口文件触发 tsx watch 重启。
           setTimeout(() => {
@@ -554,10 +555,9 @@ ${trimmed}` }] },
               ready: (openId) => meegleAuth.peekToken(openId) !== undefined,
             },
           ],
-          // 用户段扩展：所属身份组（权限策略实时判定，permissions.json 改动即时反映）
+          // 个人身份信息
           async (openId, userName) => {
-            const groups = await policy.groupsFor(openId, userName).catch(() => [] as string[]);
-            return [`身份组：${groups.join("、") || "（无）"}`];
+            return [`个人助理：${userName || openId}`];
           },
         ),
         {
@@ -576,7 +576,8 @@ ${trimmed}` }] },
       showModelStats: config.showModelStats,
       botName,
       botOpenId,
-      // 已知人员提示：消息里按名字提到的人补 open_id（资料缓存与管理员识别共用 data/users 文件）
+      manageMemory: (context, action, id) => runtime.manageMemory(context, action, id),
+      // 已知人员提示：消息里按名字提到的人补 open_id（资料缓存与本人识别共用 data/users 文件）
       peopleRoster: new PeopleRoster(usersFile),
       // /model 指令的运行时模型信息（config 对象即 runtime 热切换的同一引用，取到的是实时值）
       modelInfo: () => ({
@@ -595,14 +596,14 @@ ${trimmed}` }] },
 
   bridge.start();
   await transport.connect();
-  if (miniPetServer) await miniPetServer.start();
   // 恢复定时任务调度（任务持久化在 data/schedules.json）
   await scheduleService.start();
+  if (biliAutomation) await biliAutomation.start().catch(error => logger.warn(`[BiliAuto] 自动化未启动：${error instanceof Error ? error.message : error}`));
 
-  // 仅在飞书长连接、MiniPet 通道与定时调度均完成后才报告上线，避免“已上线”但服务尚未可用。
-  await sendAdminLifecycleNotice(
+  // 仅在飞书长连接与定时调度均完成后才报告上线，避免“已上线”但服务尚未可用。
+  await sendOwnerLifecycleNotice(
     (openId, text) => transport.sendTextToUser(openId, text),
-    adminOpenId,
+    ownerOpenId,
     config.onlineNotice,
   );
 
@@ -616,15 +617,18 @@ ${trimmed}` }] },
     logger.info(`[Main] 收到 ${signal} 信号，正在关闭服务...`);
 
     // 此时连接仍在，先投递下线通知；失败或超时不阻塞后续资源回收。
-    await sendAdminLifecycleNotice(
+    await sendOwnerLifecycleNotice(
       (openId, text) => transport.sendTextToUser(openId, text),
-      adminOpenId,
+      ownerOpenId,
       config.offlineNotice.replaceAll("{signal}", signal),
     );
 
     clearInterval(cleanupTimer);
     scheduleService.stop();
-    await miniPetServer?.stop();
+    await biliAutomation?.stop();
+    broker.close();
+    await assistant.close();
+    await runtime.flushMemory();
     await instanceLock.release();
 
     // 断开在后台进行，不 await——挂住也不影响退出

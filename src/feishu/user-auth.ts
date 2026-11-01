@@ -131,8 +131,8 @@ export interface UserAuthOptions {
   getIdentity?: (accessToken: string) => Promise<LoginIdentity | undefined>;
   /**
    * 登录绑定完成回调（Device Flow 成功、token 入库后触发）：
-   * 冷启动管理员识别用——main 侧比对登录者身份与 FEISHU_PI_ADMIN，命中则把资料写入用户缓存，
-   * 重启后走缓存通道自动识别管理员。
+   * 本人登录资料缓存用——main 侧比对登录者身份与 FEISHU_PI_OWNER，命中则把资料写入用户缓存，
+   * 重启后走缓存通道自动识别本人。
    */
   onLoginBound?: (info: LoginIdentity & { openId: string }) => void | Promise<void>;
   /** 以下均为测试注入：HTTP 实现、时钟与睡眠 */
@@ -330,7 +330,7 @@ export class UserAuthService {
     return cached.accessToken;
   }
 
-  /** 已登录用户 openId 列表（凭证库 lark 命名空间的用户键）；冷启动管理员识别用。 */
+  /** 已登录用户 openId 列表（凭证库 lark 命名空间的用户键）；本人登录资料缓存用。 */
   async listLoginUsers(): Promise<string[]> {
     return this.store.listUsers();
   }
@@ -548,7 +548,7 @@ export class UserAuthService {
         await this.store.put(owner, token);
         this.memToken.set(owner, { accessToken: token.accessToken, expiresAt: token.expiresAt });
         logger.info(`[UserAuth] 用户 ${owner} 授权成功（scope: ${token.scope || "默认"}）`);
-        // 登录绑定回调（冷启动管理员识别用）：携带反查到的身份，失败只记日志
+        // 登录绑定回调（本人登录资料缓存用）：携带反查到的身份，失败只记日志
         if (this.options.onLoginBound) {
           void Promise.resolve(this.options.onLoginBound({
             openId: owner,

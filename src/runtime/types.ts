@@ -3,7 +3,7 @@
  */
 import type { AgentTool } from "@earendil-works/pi-agent-core";
 import type { ToolDefinition } from "@earendil-works/pi-coding-agent";
-import type { GroupPolicy, PermissionPolicy } from "../permission/policy.ts";
+import type { ToolPolicy, PermissionPolicy } from "../permission/policy.ts";
 import type { ThinkingLevelConfig } from "../config.ts";
 import type { ScheduleService } from "../schedule/service.ts";
 import type { SessionStore } from "./session-store.ts";
@@ -19,6 +19,8 @@ export type FeishuPiEvent =
 /** 发给 Pi 会话的一条提示词（调用者身份经 ConversationMessage.context 单独传递） */
 export interface FeishuPiPrompt {
   text: string;
+  /** 当前发言人的原始正文，供记忆使用；不包含引用、人物表或平台提示。 */
+  memoryText?: string;
   images?: Array<{ data: Uint8Array; mimeType: string }>;
 }
 
@@ -39,6 +41,8 @@ export interface FeishuPiHistoryMessage {
 /** Runtime 配置：工作目录、模型、权限与可选的 Guard 钩子 */
 export interface FeishuPiConfig {
   cwd: string;
+  sessionsRoot?: string;
+  ownerOpenId?: string;
   modelProvider: string;
   modelName: string;
   modelBaseUrl?: string;
@@ -52,7 +56,10 @@ export interface FeishuPiConfig {
   /** 工具调用 Guard（beforeToolCall 钩子），可选；signal 中止（/stop）时取消授权等待。
    *  risky = 自定义工具标记了 risk: "high"，需要走授权卡。
    *  requesterOpenId = 发起者 openId（用户身份 CLI 命令弹"用户卡"由本人确认）。 */
-  toolGuard?: (policy: GroupPolicy, params: { toolName: string; args: unknown; chatId?: string; risky?: boolean; requesterOpenId?: string }, signal?: AbortSignal) => Promise<{ block: true; reason: string } | undefined>;
+  toolGuard?: (policy: ToolPolicy, params: { toolName: string; args: unknown; chatId?: string; risky?: boolean; requesterOpenId?: string }, signal?: AbortSignal) => Promise<{ block: true; reason: string } | undefined>;
+  sessionTools?: (caller: { openId: string; chatId: string; cwd: string }) => FeishuPiTool[];
+  /** 安全访客工具，由宿主绑定聊天对象；运行时仍严格限制工具名称。 */
+  guestTools?: (caller: { openId: string; chatId: string }) => FeishuPiTool[];
   /** 定时任务服务（可选）；提供时注册定时任务工具，执行权限由策略控制 */
   scheduleService?: ScheduleService;
   /**

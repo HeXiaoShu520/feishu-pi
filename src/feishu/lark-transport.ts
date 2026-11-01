@@ -50,8 +50,8 @@ export interface LarkTransportConfig {
   client: Client;
   /** 会话注册表：一次会话一个目录，图片/附件全部落在那里面 */
   sessions: SessionStore;
-  /** 管理员 Open ID（可选） */
-  adminOpenId?: string;
+  /** 管理员身份；普通用户的工具权限由运行时隔离。 */
+  ownerOpenId?: string;
   /** 仅在真实 @ 提及时自动查询被 @ 者；该通道不暴露给 Agent。 */
   searchMentionedUserProfile?: (mentionedOpenId: string) => Promise<{ name?: string; en_name?: string; department_name?: string[] } | undefined>;
   /** 单个资源和单条消息资源总大小限制 */
@@ -84,7 +84,7 @@ export class LarkTransport implements FeishuTransport {
   private readonly pingTimeout: number;
   private readonly larkCli: LarkCli;
   private readonly imageProcessor?: LarkImageProcessor;
-  private readonly adminOpenId?: string;
+  private readonly ownerOpenId?: string;
   private readonly searchMentionedUserProfile?: LarkTransportConfig["searchMentionedUserProfile"];
   private readonly mentionLookupInflight = new Map<string, Promise<void>>();
   private readonly failedSenderLookups = new Map<string, number>();
@@ -110,7 +110,7 @@ export class LarkTransport implements FeishuTransport {
     this.source = config.source ?? "feishu-pi";
     this.handshakeTimeoutMs = config.handshakeTimeoutMs ?? 15_000;
     this.pingTimeout = config.pingTimeout ?? 30;
-    this.adminOpenId = config.adminOpenId;
+    this.ownerOpenId = config.ownerOpenId;
     this.searchMentionedUserProfile = config.searchMentionedUserProfile;
     this.onModelSwitch = config.onModelSwitch;
     this.client = config.client;
@@ -151,6 +151,8 @@ export class LarkTransport implements FeishuTransport {
       "im.message.receive_v1": async (raw: Record<string, unknown>) => {
         try {
           const rawMessage = raw.message as { chat_type?: string; mentions?: Array<{ id?: { open_id?: string } }> } | undefined;
+          const sender = raw.sender as { sender_type?: string; sender_id?: { open_id?: string } } | undefined;
+          if (sender?.sender_type === "app" || !/^ou_[A-Za-z0-9_-]+$/.test(sender?.sender_id?.open_id ?? "")) return;
           if (rawMessage?.chat_type === "group" && this.botOpenId &&
               !rawMessage.mentions?.some((mention) => mention.id?.open_id === this.botOpenId)) return;
           const forwardedNames = new Map<string, string>();
@@ -229,7 +231,8 @@ export class LarkTransport implements FeishuTransport {
       // 归属与落盘位置即已确定（先于资料查询与模型思考）。
       // 会话目录由会话注册表给出（/new 之后拿到的是新会话目录）
       const threadId = message.threadId;
-      const conversationId = buildConversationId(chatId, chatMode, threadId, message.messageId);
+      const baseConversationId = buildConversationId(chatId, chatMode, threadId, message.messageId);
+      const conversationId = scopeGuestConversation(baseConversationId, chatMode, message.senderId, this.ownerOpenId);
       const sessionDir = await this.sessions.dirFor(conversationId, message.senderId);
 
       let profile = await this.larkCli.getUserProfile(message.senderId);
@@ -354,8 +357,8 @@ export class LarkTransport implements FeishuTransport {
       const imageInfo = imageCount > 0 ? `（含 ${imageCount} 张图片）` : "";
       logger.userInput(displayName, `: ${imageInfo}${formatLogText(cleanedText)}`);
 
-      // 判断是否为管理员
-      const isAdmin = this.adminOpenId ? message.senderId === this.adminOpenId : false;
+      // 判断是否为本人
+      const isOwner = this.ownerOpenId ? message.senderId === this.ownerOpenId : false;
 
       // fire-and-forget：后台处理，失败仅记日志
       const handler = this.handler;
@@ -372,7 +375,7 @@ export class LarkTransport implements FeishuTransport {
           threadId,
           chatMode,
           conversationId,
-          isAdmin,
+          isOwner,
         },
         text: cleanedText,
         images,
@@ -398,6 +401,7 @@ export class LarkTransport implements FeishuTransport {
     action: { value: unknown; tag: string; name?: string; option?: string };
     raw?: unknown;
   }): Promise<void> {
+    if (this.ownerOpenId && action.operator.openId !== this.ownerOpenId) return;
     try {
       // 解析回调数据（value 可能是对象或 JSON 字符串）
       let value: Record<string, unknown> | string = action.action.value as never;
@@ -409,8 +413,8 @@ export class LarkTransport implements FeishuTransport {
         }
       }
 
-      // 授权卡回调（授权/拒绝/申请转发）：交给 PermissionBroker 在服务端校验（含管理员身份）
-      if (typeof value === "object" && (value?.action === "tool_approval" || value?.action === "forward_approval")) {
+      // 授权卡回调（授权/拒绝）：交给 PermissionBroker 在服务端校验（含本人身份）
+      if (typeof value === "object" && value?.action === "tool_approval") {
         await this.approvalHandler?.({
           value,
           action: {
@@ -437,22 +441,22 @@ export class LarkTransport implements FeishuTransport {
         return;
       }
 
-      // 其余卡片（/model）：管理员校验后处理
+      // 其余卡片（/model）：本人校验后处理
       const operatorOpenId = action.operator.openId;
-      const isAdmin = this.adminOpenId ? operatorOpenId === this.adminOpenId : false;
+      const isOwner = this.ownerOpenId ? operatorOpenId === this.ownerOpenId : false;
 
-      if (!isAdmin) {
-        logger.warn(`[CardAction] 非管理员点击卡片: ${operatorOpenId}`);
+      if (!isOwner) {
+        logger.warn(`[CardAction] 非本人点击卡片: ${operatorOpenId}`);
         await this.updateCard(action, {
           schema: "2.0",
           header: { title: { tag: "plain_text", content: "模型切换" } },
-          body: { elements: [{ tag: "markdown", content: "❌ 仅管理员可执行此操作" }] },
+          body: { elements: [{ tag: "markdown", content: "❌ 仅本人可执行此操作" }] },
         });
         return;
       }
 
       if (typeof value === "object" && value?.action === "switch_model") {
-        logger.info(`[CardAction] 管理员切换模型: ${value.model_id}`);
+        logger.info(`[CardAction] 本人切换模型: ${value.model_id}`);
         try {
           const modelName = typeof value.model_id === "string" ? value.model_id.trim() : "";
           if (!modelName || /[\r\n]/.test(modelName)) throw new Error("模型 ID 不合法");
@@ -555,7 +559,7 @@ export class LarkTransport implements FeishuTransport {
     this.handler = handler;
   }
 
-  /** 注册授权卡片回调处理器（PermissionBroker 在服务端校验管理员身份）。 */
+  /** 注册授权卡片回调处理器（PermissionBroker 在服务端校验本人身份）。 */
   onApproval(handler: (params: CardCallbackParams) => Promise<void>): void {
     this.approvalHandler = handler;
   }
@@ -581,7 +585,7 @@ export class LarkTransport implements FeishuTransport {
   }
 
   /** 向指定用户私聊发卡片：receive_id_type=open_id，飞书自动投递到与该用户的会话
-   *  （无需事先知道 oc_ 会话 ID；转发授权卡到管理员私聊用）。 */
+   *  （无需事先知道 oc_ 会话 ID；转发授权卡到本人私聊用）。 */
   async sendCardToUser(openId: string, card: object): Promise<string> {
     const res = await this.client.im.v1.message.create({
       params: { receive_id_type: "open_id" },
@@ -596,7 +600,7 @@ export class LarkTransport implements FeishuTransport {
     return messageId;
   }
 
-  /** 发言人用机器人应用权限查询本人资料；管理员用户令牌只用于真实 @ 的固定入库流程。 */
+  /** 发言人用机器人应用权限查询本人资料；本人用户令牌只用于真实 @ 的固定入库流程。 */
   private async resolveSenderProfile(openId: string): Promise<void> {
     if (!/^ou_[A-Za-z0-9_-]+$/.test(openId)) return;
     if ((this.failedSenderLookups.get(openId) ?? 0) > Date.now()) return;
@@ -898,4 +902,9 @@ export function stripBotMentions(text: string, botOpenId: string | undefined): s
 /** 飞书根消息独立成话题；回复使用 threadId，不猜测群内“待定根”。 */
 export function buildConversationId(chatId: string, chatMode: "p2p" | "group" | "topic", threadId: string | undefined, messageId: string): string {
   return chatMode === "topic" ? `topic:${chatId}:${threadId ?? messageId}` : `${chatMode}-${chatId}`;
+}
+
+/** A guest never inherits the administrator's or another member's agent history. */
+export function scopeGuestConversation(conversationId: string, chatMode: "p2p" | "group" | "topic", senderId: string, ownerId?: string): string {
+  return chatMode !== "p2p" && senderId !== ownerId ? `${conversationId}:guest:${senderId}` : conversationId;
 }

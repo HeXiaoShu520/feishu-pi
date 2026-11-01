@@ -8,6 +8,7 @@ import { join, relative, resolve, sep } from "node:path";
 import { createHistoryCardReader } from "../feishu/history-card-reader.ts";
 import { enrichFeishuHistory, isFeishuHistoryRead } from "../feishu/history-card-content.ts";
 import { LarkCli } from "../feishu/lark-cli.ts";
+import { processEnvironment } from "../process/environment.ts";
 
 export interface CliProxyOptions {
   cwd: string;
@@ -20,8 +21,8 @@ export interface CliProxyOptions {
   onLarkOutput?: (output: string) => string | undefined;
   getMeegleToken?: () => string | undefined;
   meegleEnv?: Record<string, string>;
-  /** 管理员凭证只用于固定的资料入库流程，不供 AI 的 CLI 调用使用。 */
-  adminSender?: boolean;
+  /** 禁用个人用户态 CLI，只保留机器人身份和固定资料查询。 */
+  restrictUserCredentials?: boolean;
 }
 
 export interface CliProxyHandle {
@@ -73,10 +74,10 @@ export async function startCliProxy(options: CliProxyOptions): Promise<CliProxyH
       const kind = input.kind;
       const args = input.args as string[];
       const historyRead = kind === "lark" && isFeishuHistoryRead(args);
-      if (options.adminSender && (kind === "meegle" || !isBot(args))) {
-        throw new Error("管理员用户凭证只用于固定资料入库流程，AI 命令不可使用。飞书机器人权限操作请显式指定 --as bot");
+      if (options.restrictUserCredentials && (kind === "meegle" || !isBot(args))) {
+        throw new Error("个人用户态 CLI 未启用（MINICLAW_USER_CLI=0），AI 命令不可使用用户令牌。飞书机器人权限操作请显式指定 --as bot");
       }
-      const env: NodeJS.ProcessEnv = { ...process.env };
+      const env: NodeJS.ProcessEnv = processEnvironment();
       for (const name of [
         "LARKSUITE_CLI_USER_ACCESS_TOKEN", "LARKSUITE_CLI_TENANT_ACCESS_TOKEN",
         "LARKSUITE_CLI_APP_ID", "LARKSUITE_CLI_APP_SECRET", "LARKSUITE_CLI_CONFIG_DIR",

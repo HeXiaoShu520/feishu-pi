@@ -49,9 +49,8 @@ function colorizeTag(arg: unknown): unknown {
   });
 }
 
-// MiniPet 子进程用 stdout 传 JSONL；日志统一转到 stderr，避免污染协议流。
-const info = (...args: unknown[]) => (process.env.MINIPET_STDIO === "1" ? console.error(...args) : console.info(...args));
-const log = (...args: unknown[]) => (process.env.MINIPET_STDIO === "1" ? console.error(...args) : console.log(...args));
+const info = (...args: unknown[]) => console.info(...args);
+const log = (...args: unknown[]) => console.log(...args);
 
 export const logger = {
   info: (...args: unknown[]) => info(`${colors.gray}[${timestamp()}]${colors.reset}`, ...args.map(colorizeTag)),
