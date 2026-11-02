@@ -32,7 +32,7 @@ flowchart TD
 | `mcp/service.ts` | 按需连接、发现、调用、配置过滤、取消、断线回收 |
 | `process/` | 系统环境白名单、直接 argv 执行、进程树终止 |
 | `permission/` | 个人规则解析、匹配和 mtime 缓存 |
-| `stickers/` | 图库目录 mtime 缓存、加权检索、按 ref 或情绪取图；本地路径不外泄，单包 metadata 损坏只降级该包 |
+| `stickers/` | 图库目录 mtime 缓存、加权检索、按 ref 或情绪取图；返回画面摘要而非本地路径，单包 metadata 损坏只降级该包；最近发送记录（进程内）对搜索与直取统一降权 |
 | `guard/` | 确定性判定、ask 模型审核、本人确认卡 |
 
 ## 身份

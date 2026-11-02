@@ -1,10 +1,13 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { pickSticker, searchStickers, stickerLine } from "../src/stickers/search.ts";
+import { recentSent, recordSent } from "../src/stickers/recent.ts";
 import { EMPTY_RULES, type StickerRules } from "../src/stickers/rules.ts";
 import { createGuestStickerSearchTool } from "../src/stickers/guest-search.ts";
+import { createStickerSendTool } from "../src/stickers/send.ts";
+import type { Client } from "@larksuiteoapi/node-sdk";
 
 const GIF = "GIF89a";
 
@@ -137,6 +140,83 @@ describe("sticker search", () => {
     expect((await searchStickers(root, "西瓜", { pack: "dsh-pet", shuffle: false })).map((item) => item.id)).toEqual(["dsh-pet:anim/chi-xigua"]);
   });
 
+  it("最近发送过的自动降权；空查询 shuffle 关闭时保持 id 序稳定", async () => {
+    const before = (await searchStickers(root, "吃", { pack: "dsh-pet", shuffle: false })).map((item) => item.id);
+    expect(before).toEqual(["dsh-pet:anim/chi-xigua", "dsh-pet:meme/吃白饭的大肥鱼"]);
+
+    recordSent("dsh-pet:anim/chi-xigua");
+    const after = (await searchStickers(root, "吃", { pack: "dsh-pet", shuffle: false, downweight: recentSent() })).map((item) => item.id);
+    expect(after[0]).toBe("dsh-pet:meme/吃白饭的大肥鱼");
+
+    // 空查询 + shuffle 关闭 = 确定性 id 序（随机浏览的随机性只在默认开启时生效）
+    const stable = (await searchStickers(root, "", { shuffle: false, limit: 20 })).map((item) => item.id);
+    expect(stable).toEqual([...stable].sort((a, b) => a.localeCompare(b, "zh-CN")));
+  });
+
+  it("情绪随机直取也避开最近发过的；点名重发不受影响", async () => {
+    // emotion=开心 的候选序是 [10N01_开心猫, bluefish:1]；random=0 取第一个
+    const picked = await pickSticker(root, "开心", { rules: EMPTY_RULES, random: () => 0 });
+    expect(picked?.id).toBe("nekowhale:大肥鱼/10N01_开心猫");
+
+    // 发过候选首位后，随机直取跳到下一位
+    recordSent("nekowhale:大肥鱼/10N01_开心猫");
+    const next = await pickSticker(root, "开心", { rules: EMPTY_RULES, random: () => 0 });
+    expect(next?.id).toBe("bluefish:1");
+
+    // 全发过才回退全池
+    recordSent("bluefish:1");
+    const fallback = await pickSticker(root, "开心", { rules: EMPTY_RULES, random: () => 0 });
+    expect(fallback?.id).toBe("nekowhale:大肥鱼/10N01_开心猫");
+
+    // 点名重发走 exact 分支，不受降权影响
+    const exact = await pickSticker(root, "nekowhale:大肥鱼/10N01_开心猫", { rules: EMPTY_RULES });
+    expect(exact?.id).toBe("nekowhale:大肥鱼/10N01_开心猫");
+  });
+
+  it("招牌同名条目（name === emotion）不劫持情绪随机", async () => {
+    const lib = await mkdtemp(join(tmpdir(), "sticker-sign-"));
+    try {
+      await mkdir(join(lib, "nekowhale", "大肥鱼"), { recursive: true });
+      await writeFile(join(lib, "nekowhale/metadata.json"), JSON.stringify({
+        stickers: [
+          { id: "大肥鱼/S1_思考", emotion: "思考", tags: [], desc: "", text: "", meme: "", en: "", use: "", dir: "" },
+          { id: "大肥鱼/S2_发呆", emotion: "思考", tags: [], desc: "", text: "", meme: "", en: "", use: "", dir: "" },
+        ],
+      }));
+      await writeFile(join(lib, "nekowhale", "大肥鱼", "S1_思考.gif"), GIF);
+      await writeFile(join(lib, "nekowhale", "大肥鱼", "S2_发呆.gif"), GIF);
+
+      // S1 的 name 就是「思考」：若被 exact 劫持，无论怎么发都永远是它
+      const first = await pickSticker(lib, "思考", { random: () => 0 });
+      expect(first?.id).toBe("nekowhale:大肥鱼/S1_思考");
+      recordSent("nekowhale:大肥鱼/S1_思考");
+      const next = await pickSticker(lib, "思考", { random: () => 0 });
+      expect(next?.id).toBe("nekowhale:大肥鱼/S2_发呆");
+    } finally {
+      await rm(lib, { recursive: true, force: true });
+    }
+  });
+
+  it("发送成功记录最近发送；发送失败不记录", async () => {
+    const upload = vi.fn(async () => ({ image_key: "img_key_1" }));
+    let messageResult: unknown = { code: 0, data: { message_id: "om_x1" } };
+    const send = vi.fn(async () => messageResult);
+    const client = { im: { v1: { image: { create: upload }, message: { create: send } } } } as unknown as Client;
+    const tool = createStickerSendTool(client, root, "oc_chat1", { rules: async () => EMPTY_RULES });
+
+    const ok = await tool.execute("t", { id: "nekowhale:大肥鱼和GPT娘/2TT01_喂药" }, undefined);
+    const parsed = JSON.parse((ok.content[0] as { text: string }).text) as { sent: boolean; messageId: string };
+    expect(parsed.sent).toBe(true);
+    expect(parsed.messageId).toBe("om_x1");
+    expect(recentSent()).toContain("nekowhale:大肥鱼和GPT娘/2TT01_喂药");
+    expect(upload).toHaveBeenCalledTimes(1);
+
+    // 发送失败（飞书返回非零 code）不得进入最近记录，否则失败图也被降权
+    messageResult = { code: 99991, msg: "boom" };
+    await expect(tool.execute("t", { id: "nekowhale:大肥鱼/10N02_摸鱼" }, undefined)).rejects.toThrow("飞书图片发送失败");
+    expect(recentSent()).not.toContain("nekowhale:大肥鱼/10N02_摸鱼");
+  });
+
   it("扩展包 dsh-pet：通用字段解析、pack 与 group 规则、code 直取", async () => {
     const hits = await searchStickers(root, "西瓜", { pack: "dsh-pet", shuffle: false });
     expect(hits.map((item) => item.id)).toEqual(["dsh-pet:anim/chi-xigua"]);
@@ -166,7 +246,7 @@ describe("sticker search", () => {
     expect(String(parsed[0].hint)).toContain("没有命中");
   });
 
-  it("访客搜索结果只含 id / line / use，不含本地路径", async () => {
+  it("访客搜索结果只含 id / line / use / desc，不含本地路径", async () => {
     const tool = createGuestStickerSearchTool(root);
     const result = await tool.execute("t", { query: "庆祝", pack: "clawd" }, undefined);
     const block = result.content[0] as { type: string; text: string };
@@ -175,6 +255,32 @@ describe("sticker search", () => {
     expect(parsed.length).toBe(1);
     expect(parsed[0].id).toBe("clawd:passed");
     expect(parsed[0].line).toBe("测试通过");
-    expect(Object.keys(parsed[0]).sort()).toEqual(["id", "line"]);
+    expect(parsed[0].desc).toBe("开心庆祝");
+    expect(Object.keys(parsed[0]).sort()).toEqual(["desc", "id", "line"]);
+  });
+
+  it("dsh-pet 的画面摘要透传给模型，选图不用猜", async () => {
+    const tool = createGuestStickerSearchTool(root);
+    const result = await tool.execute("t", { query: "西瓜", pack: "dsh-pet" }, undefined);
+    const parsed = JSON.parse((result.content[0] as { text: string }).text) as Array<Record<string, unknown>>;
+    expect(String(parsed[0].desc)).toContain("抱着半只西瓜");
+  });
+
+  it("limit 越界被钳到 [1, 20]，全库也不会塞爆上下文", async () => {
+    const big = await mkdtemp(join(tmpdir(), "stickers-limit-"));
+    try {
+      await mkdir(join(big, "clawd"), { recursive: true });
+      // clawd 包的条目格式是 id + light（light 直接相对包目录）
+      const stickers = Array.from({ length: 25 }, (_, i) => ({ id: `c${i}`, light: `c${i}.gif`, name: `表情${i}` }));
+      await writeFile(join(big, "clawd/metadata.json"), JSON.stringify({ stickers }));
+      for (const sticker of stickers) await writeFile(join(big, "clawd", sticker.light), GIF);
+      const tool = createGuestStickerSearchTool(big);
+      const many = await tool.execute("t", { query: "表情", limit: 9999 }, undefined);
+      expect((JSON.parse((many.content[0] as { text: string }).text) as unknown[]).length).toBe(20);
+      const one = await tool.execute("t", { query: "表情0", limit: 0.5 }, undefined);
+      expect((JSON.parse((one.content[0] as { text: string }).text) as unknown[]).length).toBe(1);
+    } finally {
+      await rm(big, { recursive: true, force: true });
+    }
   });
 });

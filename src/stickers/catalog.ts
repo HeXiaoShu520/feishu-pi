@@ -14,6 +14,7 @@ import { access, readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { logger } from "../utils/logger.ts";
 import { applyRules, EMPTY_RULES, type StickerRules } from "./rules.ts";
+import { recentSent, sentPenalty } from "./recent.ts";
 
 export interface Sticker {
   id: string;
@@ -42,6 +43,8 @@ export interface SearchOptions {
   shuffle?: boolean;
   random?: () => number;
   rules?: StickerRules;
+  /** 最近发送过的 id，命中则分数打折，避免短时间重复刷同一张 */
+  downweight?: readonly string[];
 }
 
 type FieldKey = "name" | "tagsJoined" | "emotion" | "text" | "meme" | "use" | "en" | "desc" | "dir";
@@ -186,7 +189,8 @@ export async function loadCatalog(root: string): Promise<Sticker[]> {
       stem: String(item.id),
       code: String(item.id),
       group: groupOf(String(item.id)),
-      name: mood || text(item.subject) || String(item.id),
+      // name 不用 mood：否则情绪词全等占用 name 后，pickSticker 的情绪随机会被 exact 分支劫持
+      name: text(item.subject) || mood || String(item.id),
       emotion: mood,
       tags: strings(item.tags),
       use: "",
@@ -316,8 +320,13 @@ export async function searchStickers(root: string, query: string, opts: SearchOp
 
   const cache = new Map<string, Record<FieldKey, string>>();
   const hits = queries.length === 0
-    ? pool.map((item) => ({ item, score: 0 }))
+    // 空 query = 随机挑一张：给随机基础分，否则抖动乘 0 永远是 id 序前 8 张固定面孔
+    ? pool.map((item) => ({ item, score: (opts.shuffle ?? true) ? random() : 0 }))
     : pool.map((item) => ({ item, score: score(item, queries, cache) })).filter((hit) => hit.score > 0);
+  // 最近发送过的降权（空查询也一样生效）
+  if (opts.downweight?.length) {
+    for (const hit of hits) hit.score *= sentPenalty(hit.item.id, opts.downweight);
+  }
   // 近分抖动：避免同一个查询永远返回同一张
   if (opts.shuffle ?? true) for (const hit of hits) hit.score *= 1 + random() * 0.15;
   hits.sort((a, b) => b.score - a.score || a.item.id.localeCompare(b.item.id, "zh-CN"));
@@ -345,11 +354,17 @@ export async function pickSticker(
   if (!target) return undefined;
   const exact = pool.find((item) => item.id === target)
     ?? pool.find((item) => item.stem === target || item.code === target)
-    ?? pool.find((item) => item.name === target);
+    // name 与 emotion 同源的招牌条目不占 exact：模型发「思考」要的是随便一张思考，
+    // 不是永远同一张；它们仍在情绪候选里可被随机到
+    ?? pool.find((item) => item.name === target && item.name !== item.emotion);
   if (exact) return exact;
   const same = pool.filter((item) => item.emotion === target);
   if (same.length === 0) return undefined;
-  return same[Math.floor((opts.random ?? Math.random)() * same.length)];
+  // 情绪随机也避开最近发过的（与搜索降权同一份记录）；全发过才回退全池。
+  // exact 分支不受影响：用户点名重发必须精确命中。
+  const fresh = same.filter((item) => !recentSent().includes(item.id));
+  const candidates = fresh.length > 0 ? fresh : same;
+  return candidates[Math.floor((opts.random ?? Math.random)() * candidates.length)];
 }
 
 /** 工具返回用的一行摘要：名字｜情绪｜标签｜方向（空段省略） */

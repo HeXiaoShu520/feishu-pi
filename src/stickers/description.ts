@@ -28,6 +28,8 @@ export function stickerSearchDescription(guide: StickerGuide): string {
     "query 用情绪或场景词，例如 摸鱼、被夸、下班、阴阳怪气；",
     `emotion 可精确限定情绪：${STICKER_EMOTIONS.join("/")}。情绪标注主要在 nekowhale，dsh-pet 只有部分动作有，其余来源没有；emotion 与 pack 同用时确认该包真的有这个情绪。`,
     "每行格式为「名字｜情绪｜标签｜方向」，方向形如「大肥鱼→GPT娘」，说明双人表情谁对谁做。",
+    "desc 是画面摘要；拿不准动作内容时看它再选，别只看名字猜。",
+    "你最近发过的会自动排后，不用刻意回避重复；想换着发就按顺序挑。",
     "名字里的「猫猫」「喵喵」是大肥鱼的猫系动作，不是另一个角色。",
     "pack 可选来源：nekowhale/whale-girl/clawd/bluefish/emotelab 是聊天表情；dsh-pet 是 10 秒桌宠动作（吃西瓜、下五子棋、睡觉等），拿来做动作演示时优先它。",
     "本工具只检索不发送；挑中后把 id 交给 sticker_send。",

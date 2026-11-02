@@ -2,6 +2,7 @@ import type { FeishuPiTool } from "../runtime/types.ts";
 import { textResult } from "../tools/result.ts";
 import { ALL_PACKS, searchStickers, stickerLine } from "./catalog.ts";
 import { stickerSearchDescription, STICKER_EMPTY_HINT } from "./description.ts";
+import { recentSent } from "./recent.ts";
 import type { StickerGuide, StickerRules } from "./rules.ts";
 
 export interface GuestStickerSearchOptions {
@@ -30,11 +31,17 @@ export function createGuestStickerSearchTool(root: string, options: GuestSticker
       const query = typeof input.query === "string" ? input.query.slice(0, 200) : "";
       const pack = typeof input.pack === "string" ? input.pack : "all";
       const emotion = typeof input.emotion === "string" ? input.emotion : undefined;
-      const limit = typeof input.limit === "number" && Number.isFinite(input.limit) ? input.limit : 8;
+      const raw = typeof input.limit === "number" && Number.isFinite(input.limit) ? input.limit : 8;
+      const limit = Math.min(Math.max(Math.trunc(raw), 1), 20);
       const rules = options.rules ? await options.rules() : undefined;
-      const results = await searchStickers(root, query, { pack, emotion, limit, rules });
+      const results = await searchStickers(root, query, { pack, emotion, limit, rules, downweight: recentSent() });
       return textResult(results.length
-        ? results.map((item) => ({ id: item.id, line: stickerLine(item), use: item.use || undefined }))
+        ? results.map((item) => ({
+            id: item.id,
+            line: stickerLine(item),
+            use: item.use || undefined,
+            desc: item.desc && item.desc !== item.name ? item.desc.slice(0, 50) : undefined,
+          }))
         : [{ hint: STICKER_EMPTY_HINT }]);
     },
   };

@@ -5,6 +5,7 @@ import type { FeishuPiTool } from "../runtime/types.ts";
 import { textResult } from "../tools/result.ts";
 import { pickSticker, stickerLine } from "./catalog.ts";
 import { stickerSendDescription } from "./description.ts";
+import { recordSent } from "./recent.ts";
 import type { StickerGuide, StickerRules } from "./rules.ts";
 
 export interface StickerSendOptions {
@@ -51,6 +52,7 @@ export function createStickerSendTool(
       signal?.throwIfAborted();
       const sent = await client.im.v1.message.create({ params: { receive_id_type: "chat_id" }, data: { receive_id: chatId, msg_type: "image", content: JSON.stringify({ image_key: uploaded.image_key }) } });
       if (sent.code !== 0 || !sent.data?.message_id) throw new Error(`飞书图片发送失败：${sent.msg ?? sent.code ?? "未返回消息 ID"}`);
+      recordSent(sticker.id);
       return textResult({ sent: true, name: sticker.name, id: sticker.id, line: stickerLine(sticker), messageId: sent.data.message_id });
     },
   };

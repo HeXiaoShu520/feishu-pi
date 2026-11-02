@@ -3,6 +3,7 @@ import { dirname, resolve } from "node:path";
 import { defineTool } from "../../src/tools/sdk.ts";
 import { ALL_PACKS, searchStickers, stickerLine } from "../../src/stickers/search.ts";
 import { createRulesLoader } from "../../src/stickers/rules.ts";
+import { recentSent } from "../../src/stickers/recent.ts";
 import { stickerSearchDescription, STICKER_EMPTY_HINT } from "../../src/stickers/description.ts";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -23,10 +24,16 @@ export default defineTool<{ query?: string; pack?: string; emotion?: string; lim
     },
     additionalProperties: false,
   },
-  execute: async ({ query = "", pack = "all", emotion, limit = 8 }) => {
-    const results = await searchStickers(root, query, { pack, emotion, limit, rules: await rules() });
+  execute: async ({ query = "", pack = "all", emotion, limit: raw = 8 }) => {
+    const limit = Math.min(Math.max(Math.trunc(raw), 1), 20);
+    const results = await searchStickers(root, query, { pack, emotion, limit, rules: await rules(), downweight: recentSent() });
     return results.length
-      ? results.map((item) => ({ id: item.id, line: stickerLine(item), use: item.use || undefined }))
+      ? results.map((item) => ({
+          id: item.id,
+          line: stickerLine(item),
+          use: item.use || undefined,
+          desc: item.desc && item.desc !== item.name ? item.desc.slice(0, 50) : undefined,
+        }))
       : [{ hint: STICKER_EMPTY_HINT }];
   },
 });
