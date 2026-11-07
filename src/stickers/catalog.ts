@@ -45,7 +45,21 @@ export interface SearchOptions {
   rules?: StickerRules;
   /** 最近发送过的 id，命中则分数打折，避免短时间重复刷同一张 */
   downweight?: readonly string[];
+  /** 情景候选只在模型明确选择时启用，不自动发图。 */
+  scene?: StickerScene;
 }
+
+export const STICKER_SCENES = ["thinking", "working", "waiting", "success", "failure", "resting", "greeting"] as const;
+export type StickerScene = (typeof STICKER_SCENES)[number];
+const SCENE_IDS: Record<StickerScene, readonly string[]> = {
+  thinking: ["gongzuozhuangtai-sikao-maopao", "shendu-sikao-suisuinian"],
+  working: ["gongzuozhuangtai-manglu-dianan", "xie-daima", "qingkuai-jilu"],
+  waiting: ["gongzuozhuangtai-yuandi-duobu-zhangwang", "dongzhangxiwang"],
+  success: ["gongzuozhuangtai-queyue-qingzhu", "dianji-huiying-kaixin-yuedong"],
+  failure: ["gongzuozhuangtai-chuitou-tanqi-maohan"],
+  resting: ["shuijiao-xunhuan", "yuandi-xiaoqi-chenmian", "haqian-liantian"],
+  greeting: ["dianji-huiying-yuanqi-huishou"],
+};
 
 type FieldKey = "name" | "tagsJoined" | "emotion" | "text" | "meme" | "use" | "en" | "desc" | "dir";
 
@@ -319,7 +333,10 @@ export async function searchStickers(root: string, query: string, opts: SearchOp
   const random = opts.random ?? Math.random;
 
   const cache = new Map<string, Record<FieldKey, string>>();
-  const hits = queries.length === 0
+  const hits = opts.scene
+    ? pool.filter(item => item.pack === "dsh-pet" && SCENE_IDS[opts.scene!].some(id => item.id === `dsh-pet:anim/${id}`))
+      .map(item => ({ item, score: 1 + (queries.length ? score(item, queries, cache) : 0) }))
+    : queries.length === 0
     // 空 query = 随机挑一张：给随机基础分，否则抖动乘 0 永远是 id 序前 8 张固定面孔
     ? pool.map((item) => ({ item, score: (opts.shuffle ?? true) ? random() : 0 }))
     : pool.map((item) => ({ item, score: score(item, queries, cache) })).filter((hit) => hit.score > 0);
@@ -346,7 +363,7 @@ export async function searchStickers(root: string, query: string, opts: SearchOp
 export async function pickSticker(
   root: string,
   ref: string,
-  opts: { pack?: string; rules?: StickerRules; random?: () => number } = {},
+  opts: { pack?: string; rules?: StickerRules; random?: () => number; downweight?: readonly string[] } = {},
 ): Promise<Sticker | undefined> {
   const items = applyRules(await loadCatalog(resolve(root)), opts.rules ?? EMPTY_RULES);
   const pool = opts.pack && opts.pack !== "all" ? items.filter((item) => item.pack === opts.pack) : items;
@@ -362,7 +379,7 @@ export async function pickSticker(
   if (same.length === 0) return undefined;
   // 情绪随机也避开最近发过的（与搜索降权同一份记录）；全发过才回退全池。
   // exact 分支不受影响：用户点名重发必须精确命中。
-  const fresh = same.filter((item) => !recentSent().includes(item.id));
+  const fresh = same.filter((item) => !(opts.downweight ?? recentSent()).includes(item.id));
   const candidates = fresh.length > 0 ? fresh : same;
   return candidates[Math.floor((opts.random ?? Math.random)() * candidates.length)];
 }
