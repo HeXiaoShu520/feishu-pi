@@ -47,12 +47,12 @@ export class RecentConversations {
     });
   }
 
-  async search(platform: string, personId: string, topic: string): Promise<string> {
+  async search(platform: string, personId: string, topic: string, window?: { start: number; end: number }): Promise<string> {
     return this.enqueue(this.file(platform, personId), async () => {
       const history = await this.read(platform, personId);
       const query = topic.trim();
       if (!query) return "";
-      const indexed = history.turns.map((turn, index) => ({
+      const indexed = history.turns.filter(turn => !window || (Date.parse(turn.at) >= window.start && Date.parse(turn.at) < window.end)).map((turn, index) => ({
         id: String(index), text: `${turn.user}\n${turn.assistant}`, importance: 0.5, at: Date.parse(turn.at) || 0, turn,
       }));
       const matches = query.length === 1

@@ -20,12 +20,12 @@ describe("resolveReplyInThread：回复是否以话题形式发出", () => {
 /** 捕获 reply 调用参数的假 Lark Client：cardkit create 返回固定 card_id */
 function makeCapturingClient(replies: Array<{ path?: { message_id?: string }; data?: Record<string, unknown> }>) {
   return {
-    request: async () => ({ data: { card_id: "card_test_1" } }),
+    request: async () => ({ code: 0, data: { card_id: "card_test_1" } }),
     im: {
       message: {
         reply: async (args: { path?: { message_id?: string }; data?: Record<string, unknown> }) => {
           replies.push(args);
-          return {};
+          return { code: 0, data: { message_id: "om_reply" } };
         },
       },
     },

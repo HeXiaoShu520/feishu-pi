@@ -49,6 +49,10 @@ export interface FeishuPiAppConfig {
   maxMessageResourceBytes: number;
   /** 单个会话最多保留的在途/排队消息数 */
   maxPendingMessages: number;
+  /** 单轮对话内工具调用次数上限（超限后阻止继续调用，引导模型直接作答） */
+  roundMaxToolCalls: number;
+  /** 新消息打断在途任务前的收尾等待窗口（毫秒）；窗口内自然完成则不打断，超时才硬中断 */
+  interruptGraceMs: number;
 }
 
 /** 由模型名推断供应商：带 claude → anthropic，带 deepseek → deepseek，其余 → openai。 */
@@ -112,8 +116,8 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     feishuAppId: required("FEISHU_APP_ID"),
     feishuAppSecret: required("FEISHU_APP_SECRET"),
     feishuOwner: env.FEISHU_PI_OWNER || env.FEISHU_PI_ADMIN || "",
-    browserChannel: env.MINICLAW_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chrome"),
-    allowPersonalUserCli: parseBoolEnv(env.MINICLAW_USER_CLI, false),
+    browserChannel: env.FEISHU_PI_BROWSER_CHANNEL || env.MINICLAW_BROWSER_CHANNEL || (process.platform === "win32" ? "msedge" : "chrome"),
+    allowPersonalUserCli: parseBoolEnv(env.FEISHU_PI_USER_CLI ?? env.MINICLAW_USER_CLI, false),
     biliAutoAvailable: parseBoolEnv(env.FEISHU_BILI_AUTO_AVAILABLE, false),
     biliShareAvailable: parseBoolEnv(env.FEISHU_BILI_SHARE_AVAILABLE, false),
     cwd: process.cwd(),
@@ -144,11 +148,15 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     approvalTimeoutMs: 5 * 60_000,
     // 回复末尾的模型统计小字：默认显示；FEISHU_SHOW_MODEL_STATS=0/false/off 关闭（工具过程状态不受影响）
     showModelStats: parseBoolEnv(env.FEISHU_SHOW_MODEL_STATS, true),
-    onlineNotice: parseNoticeEnv(env.FEISHU_PI_ONLINE_NOTICE, "🟢 mini-claw 已上线，飞书通道、权限门禁和定时任务已就绪。"),
-    offlineNotice: parseNoticeEnv(env.FEISHU_PI_OFFLINE_NOTICE, "🔴 mini-claw 正在下线（{signal}）。"),
+    onlineNotice: parseNoticeEnv(env.FEISHU_PI_ONLINE_NOTICE, "🟢 feishu-pi 已上线，飞书通道、权限门禁和定时任务已就绪。"),
+    offlineNotice: parseNoticeEnv(env.FEISHU_PI_OFFLINE_NOTICE, "🔴 feishu-pi 正在下线（{signal}）。"),
     // 资源和会话背压：单位分别为 MiB、MiB、条；默认值适合个人助理，可按部署调整。
     maxResourceBytes: parsePositiveIntEnv(env.FEISHU_PI_MAX_RESOURCE_MB, 20, 1024) * 1024 * 1024,
     maxMessageResourceBytes: parsePositiveIntEnv(env.FEISHU_PI_MAX_MESSAGE_RESOURCE_MB, 40, 2048) * 1024 * 1024,
     maxPendingMessages: parsePositiveIntEnv(env.FEISHU_PI_MAX_PENDING_MESSAGES, 3, 100),
+    // 单轮工具调用预算：一轮对话内工具调用超过上限即阻止（FEISHU_ROUND_MAX_TOOL_CALLS）
+    roundMaxToolCalls: parsePositiveIntEnv(env.FEISHU_ROUND_MAX_TOOL_CALLS, 40, 500),
+    // 新消息打断前的收尾窗口：默认 5s，最长 30s；设 1 近似关闭等待（立即硬中断）
+    interruptGraceMs: parsePositiveIntEnv(env.FEISHU_PI_INTERRUPT_GRACE_MS, 5_000, 30_000),
   };
 }

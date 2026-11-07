@@ -7,14 +7,30 @@ import type { ToolPolicy, PermissionPolicy } from "../permission/policy.ts";
 import type { ThinkingLevelConfig } from "../config.ts";
 import type { ScheduleService } from "../schedule/service.ts";
 import type { SessionStore } from "./session-store.ts";
-import type { FeishuContext } from "../context/types.ts";
+
+/** 飞书请求的统一上下文，所有技能都通过它获取调用者信息。
+ *
+ * 用户资料（姓名/英文名/部门）是**基础能力**：消息入口处已自动查询并注入，
+ * 技能直接读这些字段即可，不需要（也无法）自行调用通讯录接口查询。 */
+export interface FeishuContext {
+  userOpenId: string;
+  userName?: string;          // 展示名：中文名 > 英文名 > Open ID
+  en_name?: string;           // 英文名（查不到为空）
+  department_name?: string[]; // 部门名列表（查不到为空数组）
+  chatId: string;
+  threadId?: string;
+  /** 会话模式：p2p 私聊 / group 普通群 / topic 话题群（传输层查询并缓存；查询失败按 group 兖底） */
+  chatMode?: "p2p" | "group" | "topic";
+  conversationId: string;
+  isOwner?: boolean; // 是否为本工程的本人身份
+}
 
 /** Pi 会话事件（订阅转发给飞书卡片渲染） */
 export type FeishuPiEvent =
   | { type: "assistant_text"; text: string }
   | { type: "tool_started"; toolName: string; args?: unknown }
   | { type: "tool_updated"; toolName: string }
-  | { type: "tool_finished"; toolName: string; isError: boolean };
+  | { type: "tool_finished"; toolName: string; isError: boolean; result?: unknown };
 
 /** 发给 Pi 会话的一条提示词（调用者身份经 ConversationMessage.context 单独传递） */
 export interface FeishuPiPrompt {
@@ -29,6 +45,8 @@ export interface SessionStats {
   tokens?: { total?: number | null };
   cost?: number;
   sessionId?: string;
+  /** Pi 原生上下文占用（getSessionStats 透传）：压缩后 tokens/percent 可能为 null（未知） */
+  contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
 }
 
 /** 面向桌面前端的历史消息投影；不暴露 Pi 内部 session entry。 */
@@ -57,9 +75,14 @@ export interface FeishuPiConfig {
    *  risky = 自定义工具标记了 risk: "high"，需要走授权卡。
    *  requesterOpenId = 发起者 openId（用户身份 CLI 命令弹"用户卡"由本人确认）。 */
   toolGuard?: (policy: ToolPolicy, params: { toolName: string; args: unknown; chatId?: string; risky?: boolean; requesterOpenId?: string }, signal?: AbortSignal) => Promise<{ block: true; reason: string } | undefined>;
+  /** 单轮工具调用预算（可选，按 chatId 隔离计数）：reset 由每轮新消息触发；
+   *  check 在权限放行后计数，超限返回拒绝理由（block 说明会回给模型，引导其收尾） */
+  toolCallLimiter?: { reset(chatId: string): void; check(toolName: string, chatId?: string): string | undefined };
   sessionTools?: (caller: { openId: string; chatId: string; cwd: string }) => FeishuPiTool[];
   /** 安全访客工具，由宿主绑定聊天对象；运行时仍严格限制工具名称。 */
   guestTools?: (caller: { openId: string; chatId: string }) => FeishuPiTool[];
+  stickerHistory?: (chatId: string) => Promise<string>;
+  onChatActivity?: (chatId: string) => void;
   /** 定时任务服务（可选）；提供时注册定时任务工具，执行权限由策略控制 */
   scheduleService?: ScheduleService;
   /**

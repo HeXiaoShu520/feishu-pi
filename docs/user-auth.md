@@ -10,9 +10,9 @@
 
 回复、卡片和后台任务通知通过飞书 SDK 使用本机器人应用的 App ID/Secret。它们不依赖本机 lark-cli 登录账号。
 
-`MINICLAW_USER_CLI=0` 保留原来对用户令牌的限制：AI 只能使用显式 `--as bot` 的飞书 CLI；被 @ 人的资料查询仍由预处理程序按固定方式执行。
+`FEISHU_PI_USER_CLI=0` 保留原来对用户令牌的限制：AI 只能使用显式 `--as bot` 的飞书 CLI；被 @ 人的资料查询仍由预处理程序按固定方式执行。
 
-明确启用 `MINICLAW_USER_CLI=1` 后：
+明确启用 `FEISHU_PI_USER_CLI=1` 后：
 
 - 私聊发送 `/login lark` 或 `/login meegle` 主动授权本人账号。
 - 省略身份或 `--as user` 使用本工程保存的本人令牌；`--as bot` 使用机器人应用凭证。

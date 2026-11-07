@@ -75,7 +75,7 @@ export async function startCliProxy(options: CliProxyOptions): Promise<CliProxyH
       const args = input.args as string[];
       const historyRead = kind === "lark" && isFeishuHistoryRead(args);
       if (options.restrictUserCredentials && (kind === "meegle" || !isBot(args))) {
-        throw new Error("个人用户态 CLI 未启用（MINICLAW_USER_CLI=0），AI 命令不可使用用户令牌。飞书机器人权限操作请显式指定 --as bot");
+        throw new Error("个人用户态 CLI 未启用（FEISHU_PI_USER_CLI=0），AI 命令不可使用用户令牌。飞书机器人权限操作请显式指定 --as bot");
       }
       const env: NodeJS.ProcessEnv = processEnvironment();
       for (const name of [

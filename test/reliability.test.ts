@@ -13,6 +13,9 @@ async function makeSessions(): Promise<SessionStore> {
   return new SessionStore(join(base, "sessions.json"), join(base, "work_space"));
 }
 
+/** 测试用调用者上下文：ConversationMessage.context 已必填（编译期保证身份不缺失） */
+const ctx = (conversationId: string, userOpenId = "ou_test") => ({ conversationId, chatId: conversationId, userOpenId });
+
 class FakeSession implements FeishuPiSession {
   readonly sessionFile = "data/sessions/session.jsonl";
   async prompt(_input: FeishuPiPrompt): Promise<void> {}
@@ -40,8 +43,8 @@ describe("reliability stores", () => {
     const runtime = new FakeRuntime();
     const manager = new ConversationManager(runtime as never, await makeSessions());
     await Promise.all([
-      manager.prompt({ conversationId: "chat:a", prompt: { text: "one" } }, () => undefined),
-      manager.prompt({ conversationId: "chat:a", prompt: { text: "two" } }, () => undefined),
+      manager.prompt({ conversationId: "chat:a", context: ctx("chat:a"), prompt: { text: "one" } }, () => undefined),
+      manager.prompt({ conversationId: "chat:a", context: ctx("chat:a"), prompt: { text: "two" } }, () => undefined),
     ]);
     expect(runtime.createCount).toBe(1);
   });
@@ -89,7 +92,7 @@ describe("reliability stores", () => {
   it("evicts idle conversations; session is recreated on next message", async () => {
     const runtime = new FakeRuntime();
     const manager = new ConversationManager(runtime as never, await makeSessions());
-    await manager.prompt({ conversationId: "chat:a", prompt: { text: "hi" } }, () => undefined);
+    await manager.prompt({ conversationId: "chat:a", context: ctx("chat:a"), prompt: { text: "hi" } }, () => undefined);
     expect(manager.size).toBe(1);
 
     // 刚活跃的会话不驱逐；空闲阈值归零后驱逐
@@ -98,7 +101,7 @@ describe("reliability stores", () => {
     expect(manager.size).toBe(0);
 
     // 驱逐后再来消息：从磁盘映射重建会话（createCount 增加）
-    await manager.prompt({ conversationId: "chat:a", prompt: { text: "back" } }, () => undefined);
+    await manager.prompt({ conversationId: "chat:a", context: ctx("chat:a"), prompt: { text: "back" } }, () => undefined);
     expect(runtime.createCount).toBe(2);
   });
 });
@@ -129,7 +132,7 @@ describe("会话并发与身份回归", () => {
   it("初始化失败后下一条消息可以重试", async () => {
     const createSession = vi.fn().mockRejectedValueOnce(new Error("temporary")).mockResolvedValue(new FakeSession());
     const manager = new ConversationManager({ createSession } as never, await makeSessions());
-    const message = { conversationId: "chat:retry", prompt: { text: "hi" } };
+    const message = { conversationId: "chat:retry", context: ctx("chat:retry"), prompt: { text: "hi" } };
     await expect(manager.prompt(message, () => {})).rejects.toThrow("temporary");
     await manager.prompt(message, () => {});
     expect(createSession).toHaveBeenCalledTimes(2);
@@ -157,7 +160,7 @@ describe("会话并发与身份回归", () => {
     const manager = new ConversationManager({ createSession: async () => session } as never, await makeSessions());
     const seen: string[] = [];
     let done = false;
-    const task = manager.prompt({ conversationId: "chat:events", prompt: { text: "hi" } }, async (event) => {
+    const task = manager.prompt({ conversationId: "chat:events", context: ctx("chat:events"), prompt: { text: "hi" } }, async (event) => {
       await gate.promise;
       if (event.type === "assistant_text") seen.push(event.text);
     }).then(() => { done = true; });
@@ -173,9 +176,9 @@ describe("会话并发与身份回归", () => {
     const started: string[] = [];
     const session = new FakeSession();
     session.prompt = async (input) => { const i = started.length; started.push(input.text); await gates[i].promise; };
-    const manager = new ConversationManager({ createSession: async () => session } as never, await makeSessions());
+    const manager = new ConversationManager({ createSession: async () => session } as never, await makeSessions(), { interruptGraceMs: 20 });
     const interrupted = vi.fn();
-    const send = (text: string, onInterrupted?: () => void) => manager.prompt({ conversationId: "chat:busy", prompt: { text } }, () => {}, onInterrupted);
+    const send = (text: string, onInterrupted?: () => void) => manager.prompt({ conversationId: "chat:busy", context: ctx("chat:busy"), prompt: { text } }, () => {}, onInterrupted);
     const first = send("first");
     await vi.waitFor(() => expect(started).toHaveLength(1));
     const second = send("second", interrupted);
@@ -195,16 +198,79 @@ describe("会话并发与身份回归", () => {
     const gate = deferred();
     const started: string[] = [];
     const session = new FakeSession();
+    session.abort = vi.fn();
     session.prompt = async (input) => {
       started.push(input.text);
       await gate.promise;
     };
-    const manager = new ConversationManager({ createSession: async () => session } as never, await makeSessions(), { maxPendingMessages: 2 });
-    const first = manager.prompt({ conversationId: "chat:limit", prompt: { text: "first" } }, () => {});
+    const manager = new ConversationManager({ createSession: async () => session } as never, await makeSessions(), { maxPendingMessages: 2, interruptGraceMs: 20 });
+    const first = manager.prompt({ conversationId: "chat:limit", context: ctx("chat:limit"), prompt: { text: "first" } }, () => {});
     await vi.waitFor(() => expect(started).toEqual(["first"]));
-    const second = manager.prompt({ conversationId: "chat:limit", prompt: { text: "second" } }, () => {});
-    await expect(manager.prompt({ conversationId: "chat:limit", prompt: { text: "third" } }, () => {})).rejects.toThrow("排队");
+    const second = manager.prompt({ conversationId: "chat:limit", context: ctx("chat:limit"), prompt: { text: "second" } }, () => {});
+    // 收尾窗口超时硬打断完成后，pending 才计入 second——此时 third 才会撞上限
+    await vi.waitFor(() => expect(session.abort).toHaveBeenCalled());
+    await expect(manager.prompt({ conversationId: "chat:limit", context: ctx("chat:limit"), prompt: { text: "third" } }, () => {})).rejects.toThrow("排队");
     gate.resolve();
     await Promise.all([first, second]);
+  });
+
+  it("新消息到达时在途任务窗口内自然收尾，不再硬打断", async () => {
+    const gate = deferred();
+    const started: string[] = [];
+    const session = new FakeSession();
+    session.abort = vi.fn();
+    session.prompt = async (input) => { started.push(input.text); await gate.promise; };
+    const manager = new ConversationManager({ createSession: async () => session } as never, await makeSessions(), { interruptGraceMs: 200 });
+    const interrupted = vi.fn();
+    const first = manager.prompt({ conversationId: "chat:grace", context: ctx("chat:grace"), prompt: { text: "first" } }, () => {});
+    await vi.waitFor(() => expect(started).toEqual(["first"]));
+    const second = manager.prompt({ conversationId: "chat:grace", context: ctx("chat:grace"), prompt: { text: "second" } }, () => {}, () => interrupted());
+    // 窗口内放行 first：自然收尾，不调用打断与 abort，旧回复卡得以完整定格
+    gate.resolve();
+    await first;
+    expect(session.abort).not.toHaveBeenCalled();
+    expect(interrupted).not.toHaveBeenCalled();
+    await second;
+    expect(started).toEqual(["first", "second"]);
+  });
+
+  it("收尾窗口超时后硬打断，打断回调带 new-message 原因", async () => {
+    const gate = deferred();
+    const started: string[] = [];
+    const session = new FakeSession();
+    session.abort = vi.fn();
+    session.prompt = async (input) => { started.push(input.text); await gate.promise; };
+    const manager = new ConversationManager({ createSession: async () => session } as never, await makeSessions(), { interruptGraceMs: 20 });
+    const reasons: string[] = [];
+    const first = manager.prompt({ conversationId: "chat:timeout", context: ctx("chat:timeout"), prompt: { text: "first" } }, () => {}, (reason) => reasons.push(reason));
+    await vi.waitFor(() => expect(started).toEqual(["first"]));
+    const second = manager.prompt({ conversationId: "chat:timeout", context: ctx("chat:timeout"), prompt: { text: "second" } }, () => {});
+    await vi.waitFor(() => expect(session.abort).toHaveBeenCalled());
+    expect(reasons).toEqual(["new-message"]);
+    gate.resolve();
+    await first;
+    await second;
+  });
+
+  it("/stop 触发 stop 原因、/new 触发 reset 原因的打断回调", async () => {
+    const gates = [deferred(), deferred()];
+    const started: string[] = [];
+    const session = new FakeSession();
+    session.prompt = async (input) => { const i = started.length; started.push(input.text); await gates[i].promise; };
+    const manager = new ConversationManager({ createSession: async () => session } as never, await makeSessions(), { interruptGraceMs: 20 });
+    const reasons: string[] = [];
+    const context = { conversationId: "chat:reasons", chatId: "oc", userOpenId: "ou_1" };
+    const first = manager.prompt({ conversationId: context.conversationId, context, prompt: { text: "first" } }, () => {}, (reason) => reasons.push(reason));
+    await vi.waitFor(() => expect(started).toEqual(["first"]));
+    await manager.abort(context.conversationId);
+    expect(reasons).toEqual(["stop"]);
+    gates[0].resolve();
+    await first;
+    const second = manager.prompt({ conversationId: context.conversationId, context, prompt: { text: "second" } }, () => {}, (reason) => reasons.push(reason));
+    await vi.waitFor(() => expect(started).toEqual(["first", "second"]));
+    await manager.reset(context.conversationId, context.userOpenId);
+    expect(reasons).toEqual(["stop", "reset"]);
+    gates[1].resolve();
+    await second;
   });
 });

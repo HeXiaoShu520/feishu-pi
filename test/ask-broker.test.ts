@@ -87,6 +87,36 @@ describe("AskBroker 提问与结算", () => {
     const outcome = await broker.ask("ou_u", "oc_c", "q", ["A", "B"]);
     expect(outcome.status).toBe("cancelled");
   });
+
+  it("answerText：唯一未决提问时接管文字回答（去首尾空白），卡片更新为已回答", async () => {
+    const { broker, updates } = makeBroker();
+    const pending = broker.ask("ou_u", "oc_c", "选一个", ["A", "B"]);
+    // 等发卡回调落地（pending.messageId 就绪），否则 answerText 结算时无卡可更新
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(broker.answerText("ou_u", "oc_c", "  就 B 吧  ")).toBe(true);
+    expect(await pending).toEqual({ status: "answered", choice: "就 B 吧" });
+    expect(updates.some((u) => cardTexts(u.card).some((t) => t.includes("已回答：就 B 吧")))).toBe(true);
+  });
+
+  it("answerText：他人/其他会话的文本不接管；空文本不接管", async () => {
+    const { broker } = makeBroker({ askTimeoutMs: 20 });
+    const pending = broker.ask("ou_u", "oc_c", "q", ["A", "B"]);
+    expect(broker.answerText("ou_other", "oc_c", "A")).toBe(false);
+    expect(broker.answerText("ou_u", "oc_other", "A")).toBe(false);
+    expect(broker.answerText("ou_u", "oc_c", "   ")).toBe(false);
+    // 未被消费，提问继续等待直至超时结算
+    expect((await pending).status).toBe("timeout");
+  });
+
+  it("answerText：同 (openId, chatId) 多个未决提问（歧义）→ 不接管", async () => {
+    const { broker } = makeBroker({ askTimeoutMs: 20 });
+    const p1 = broker.ask("ou_u", "oc_c", "q1", ["A", "B"]);
+    const p2 = broker.ask("ou_u", "oc_c", "q2", ["C", "D"]);
+    expect(broker.answerText("ou_u", "oc_c", "C")).toBe(false);
+    const [o1, o2] = await Promise.all([p1, p2]);
+    expect(o1.status).toBe("timeout");
+    expect(o2.status).toBe("timeout");
+  });
 });
 
 describe("选项卡构建", () => {

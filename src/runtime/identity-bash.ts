@@ -220,7 +220,8 @@ export async function openIdentityShell(options: IdentityBashOptions): Promise<I
     commandPrefix,
     env: {
       ...processEnvironment(),
-      LARKSUITE_CLI_USER_ACCESS_TOKEN: "mini-claw-no-local-account", MEEGLE_USER_ACCESS_TOKEN: "mini-claw-no-local-account",
+      LARKSUITE_CLI_USER_ACCESS_TOKEN: "feishu-pi-no-local-account",
+      MEEGLE_USER_ACCESS_TOKEN: "feishu-pi-no-local-account",
       LARKSUITE_CLI_CONFIG_DIR: proxy.configDir,
       FEISHU_PI_CLI_PROXY_PORT: String(proxy.port), FEISHU_PI_CLI_PROXY_KEY: proxy.key,
     },

@@ -10,6 +10,7 @@ export interface BiliAutomationDependencies {
   decide(stage: "keywords" | "video" | "reply" | "share", data: unknown, signal: AbortSignal): Promise<unknown>;
   interests(): Promise<string[]>;
   share?(chatId: string, text: string): Promise<void>;
+  isChatActive?(chatId: string): boolean;
   now?: () => number;
 }
 interface State {
@@ -17,6 +18,7 @@ interface State {
   day: string; comments: number; replies: number; pauseDay?: string; pauseReason?: string;
   handled: string[]; attempted: string[]; lastError?: string;
   lastShareDay?: string;
+  pendingShare?: { bvid: string; text: string; at: number };
 }
 const DAY = (now: number) => new Date(now + 8 * 3_600_000).toISOString().slice(0, 10);
 const VIDEO = /^BV[0-9A-Za-z]{10}$/;
@@ -72,7 +74,7 @@ export class BiliAutomation {
     if (enabled && s.pauseReason && /(?:未登录|凭证.*过期|-101|-111|登录或权限检查失败)/i.test(s.pauseReason) && !/(?:-352|-509|12015|风控|验证码|太频繁)/i.test(s.pauseReason)) {
       delete s.pauseDay; delete s.pauseReason;
     }
-    if (!enabled) this.controller?.abort();
+    if (!enabled) { this.controller?.abort(); delete s.pendingShare; }
     s.lastError = undefined;
     await this.save(s);
   }
@@ -120,6 +122,7 @@ export class BiliAutomation {
     try {
       if (s.day !== DAY(now)) { s.day = DAY(now); s.comments = 0; s.replies = 0; }
       if (s.pauseDay === s.day) return;
+      await this.deliverShare(s, signal);
       if (now - s.lastReplies >= 20 * 60_000) {
         s.lastReplies = now; await this.save(s);
         await this.checkReplies(s, signal);
@@ -177,10 +180,19 @@ export class BiliAutomation {
     const decision = await this.deps.decide("share", data, signal);
     const text = decision && typeof decision === "object" && typeof (decision as Json).share === "string" ? String((decision as Json).share).trim().replace(/[\r\n]+/g, " ").slice(0, 160) : "";
     if (!text || SILENCE.test(text) || containsSensitiveText(text) || /https?:\/\/|[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|\b1\d{10}\b/i.test(text) || !s.enabled || signal.aborted) return;
-    // Reserve before sending; uncertain delivery must not cause duplicate messages.
-    s.lastShareDay = s.day; s.attempted = [...s.attempted, `share:${bvid}`].slice(-1000); await this.save(s);
+    // A single slot coalesces candidates and expires instead of sending stale recommendations.
+    s.pendingShare = { bvid, text, at: this.deps.now?.() ?? Date.now() }; await this.save(s);
+    await this.deliverShare(s, signal);
+  }
+  private async deliverShare(s: State, signal: AbortSignal): Promise<void> {
+    const item = s.pendingShare, now = this.deps.now?.() ?? Date.now();
+    if (!item) return;
+    if (!this.deps.share || !s.enabled || now - item.at >= 2 * 3600_000 || s.lastShareDay === DAY(now)) { delete s.pendingShare; await this.save(s); return; }
+    const hour = new Date(now + 8 * 3600_000).getUTCHours();
+    if (signal.aborted || hour < 8 || hour >= 23 || this.deps.isChatActive?.(s.chatId)) return;
+    delete s.pendingShare; s.lastShareDay = DAY(now); s.attempted = [...s.attempted, `share:${item.bvid}`].slice(-1000); await this.save(s);
     if (!s.enabled || signal.aborted) return;
-    await this.deps.share(s.chatId, `${text}\nhttps://www.bilibili.com/video/${bvid}`);
+    await this.deps.share(s.chatId, `${item.text}\nhttps://www.bilibili.com/video/${item.bvid}`);
   }
   private async checkReplies(s: State, signal: AbortSignal): Promise<void> {
     const data = await this.readTool(s, "bili_check_replies", { limit: 10 }, signal);

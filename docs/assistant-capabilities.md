@@ -5,8 +5,8 @@
 | 配置 | 默认或用途 |
 |---|---|
 | `FEISHU_PI_OWNER` | 唯一使用者的飞书 Open ID，启动前配置 |
-| `MINICLAW_BROWSER_CHANNEL` | Windows 默认 msedge；其他平台默认 chrome |
-| `MINICLAW_USER_CLI` | 默认 0；显式允许本人主动授权的用户态 CLI 时设 1 |
+| `FEISHU_PI_BROWSER_CHANNEL` | Windows 默认 msedge；其他平台默认 chrome |
+| `FEISHU_PI_USER_CLI` | 默认 0；显式允许本人主动授权的用户态 CLI 时设 1 |
 | `FEISHU_GUARD_BASE_URL / MODELS / API_KEY` | ask 审核接口；未配置时本人确认 |
 | `.agent/permissions.json` | deny / ask / allow，mtime 重载 |
 | `.agent/mcp.json` | MCP 服务；使用时读取，变更后重新连接 |
@@ -42,7 +42,7 @@
 
 ## 记忆
 
-本人飞书私聊使用 Memoria 自动提炼，并以 Aurabot 的 BM25 和遗忘曲线召回，数据位于 `data/companion-memory/`；每轮提炼调用当前模型，群聊不注入私人记忆。旧版 `memory` 工具仍停用，原有数据保留在 `data/memory/`，不会自动导入。
+本人飞书私聊使用 Memoria 自动提炼，并以 Aurabot 的 BM25 和遗忘曲线召回，数据位于 `data/companion-memory/`；每轮提炼调用当前模型，群聊不注入私人记忆。旧版 `memory` 工具代码已移除，原有数据保留在 `data/memory/`，不会自动导入。
 
 ## 后台任务
 

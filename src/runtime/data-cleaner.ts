@@ -20,7 +20,7 @@ export interface CleanupOptions {
   sessionsRoot: string;
   /** 保留天数，默认 7 天 */
   retentionDays?: number;
-  /** 不删除对话目录，让后续长期记忆系统可以处理原始历史。 */
+  /** 不删除对话目录，让后续长期记忆系统可以处理原始历史。默认 true：删除必须显式选择（fail-safe） */
   preserveSessions?: boolean;
   /** 消息去重表路径（可选；按 updatedAt 用同一保留期清理） */
   messages?: MessageStore;
@@ -43,7 +43,7 @@ export class DataCleaner {
 
   constructor(options: CleanupOptions) {
     this.sessionsRoot = options.sessionsRoot;
-    this.preserveSessions = options.preserveSessions === true;
+    this.preserveSessions = options.preserveSessions !== false;
     this.messages = options.messages;
     this.retentionMs = (options.retentionDays ?? 7) * 24 * 60 * 60 * 1000;
   }

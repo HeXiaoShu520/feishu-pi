@@ -1,4 +1,4 @@
-import { ConversationManager } from "../runtime/conversation-manager.ts";
+import { ConversationManager, type InterruptReason } from "../runtime/conversation-manager.ts";
 import type { FeishuPiSession } from "../runtime/types.ts";
 import type { FeishuInboundMessage, FeishuEventHandler, FeishuTransport } from "./types.ts";
 import { CardKitReply, resolveReplyInThread } from "./cardkit-reply.ts";
@@ -9,16 +9,20 @@ import { Spinner, randomFrames } from "./spinner.ts";
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "../utils/logger.ts";
 import { createDefaultRegistry, DetailCommand, MemoryCommand, NewCommand, StopCommand, markdownCard, type CommandRegistry, type CommandHandler } from "./commands.ts";
-import type { FeishuContext } from "../context/types.ts";
+import type { FeishuContext } from "../runtime/types.ts";
 import type { ManagedMemory, MemoryManagementAction } from "../assistant/memory-management.ts";
 import { randomUUID } from "node:crypto";
 import { formatStatsLine, formatToolCall, toolIcon, ReplyParts } from "./reply-parts.ts";
 import { STATS_PLACEHOLDER } from "./cardkit-stream.ts";
 import type { PeopleRoster } from "./people-roster.ts";
 import { annotatePeople, personLabel } from "./inbound-content.ts";
+import { StickerDelivery } from "../stickers/delivery.ts";
 
 /** 工具段延迟上屏阈值：工具运行满该时长才显示工具段与小字动画，快速指令不刷屏。 */
 const TOOL_SEGMENT_DELAY_MS = 1000;
+
+/** 收尾超时被新消息打断：旧卡定格的中止说明（半截内容不展示，留痕告知用户可重发） */
+const INTERRUPT_NOTICE = "⏹ 上一条消息的任务已中止：新消息到达，未能在收尾窗口内完成，可重新发送继续。";
 
 /** 将飞书消息转换为 Pi 会话，并把增量文本交给飞书传输层。 */
 export class FeishuAgentBridge {
@@ -38,6 +42,11 @@ export class FeishuAgentBridge {
   private readonly peopleRoster?: PeopleRoster;
   private readonly botName: string;
   private readonly botOpenId?: string;
+  private readonly recordSticker?: (chatId: string, id: string, line: string) => Promise<void>;
+  /** 待答提问的文字回答通道：命中即消费该条文本，不进模型 */
+  private readonly answerAskText?: (openId: string, chatId: string, text: string) => boolean;
+  /** 每轮开始回调：重置单轮工具调用计数 */
+  private readonly onRoundStart?: (chatId: string) => void;
 
   /** 查询某会话是否开启详细模式（供授权卡撤回等外部逻辑判断）。 */
   isDetailMode(chatId: string): boolean {
@@ -61,6 +70,11 @@ export class FeishuAgentBridge {
       peopleRoster?: PeopleRoster;
       botName?: string;
       botOpenId?: string;
+      recordSticker?: (chatId: string, id: string, line: string) => Promise<void>;
+      /** 文字回答兜底：等待选项卡作答期间用户直接发文本也算回答；返回 true 表示已消费 */
+      answerAskText?: (openId: string, chatId: string, text: string) => boolean;
+      /** 每轮开始回调（用于重置单轮工具调用计数） */
+      onRoundStart?: (chatId: string) => void;
       manageMemory?: (context: FeishuContext, action: MemoryManagementAction, id?: string) => Promise<ManagedMemory[]>;
     },
   ) {
@@ -73,6 +87,9 @@ export class FeishuAgentBridge {
     this.peopleRoster = options?.peopleRoster;
     this.botName = options?.botName || "机器人";
     this.botOpenId = options?.botOpenId;
+    this.recordSticker = options?.recordSticker;
+    this.answerAskText = options?.answerAskText;
+    this.onRoundStart = options?.onRoundStart;
     this.memoryCommand = options?.manageMemory ? new MemoryCommand(options.manageMemory) : undefined;
     this.reactionController = options?.client ? new ReactionController(options.client) : undefined;
     this.commandRegistry = createDefaultRegistry(options?.modelInfo);
@@ -100,10 +117,19 @@ export class FeishuAgentBridge {
     const userName = message.context.userName;
     const requestStartedAt = Date.now();
 
+    // 新一轮开始：重置单轮工具调用预算（指令/文字回答路径也不受上一轮残留影响）
+    this.onRoundStart?.(message.chatId);
+
     // 检测是否为指令
     const commandHandler = this.memoryCommand?.match(message.text) ? this.memoryCommand : message.context.isOwner === true ? this.commandRegistry.find(message.text) : undefined;
     if (commandHandler) {
       await this.handleCommand(message, commandHandler);
+      return;
+    }
+
+    // 待答提问优先接收文字回答（AskBroker 兜底）：命中即消费，不进模型
+    if (this.answerAskText?.(message.context.userOpenId, message.chatId, message.text)) {
+      logger.info(`[Bridge] 提问已由文字回答结算: ${conversationId}`);
       return;
     }
 
@@ -144,18 +170,18 @@ export class FeishuAgentBridge {
       },
     });
 
-    // 动画定时器句柄提级声明：无论 prompt 成功或抛错，finally 都要清掉，避免句柄泄漏
-    let animationTimer: NodeJS.Timeout | undefined;
+    // 定时器句柄提级声明：无论 prompt 成功或抛错，finally 都要清掉，避免句柄泄漏
     let toolTimer: NodeJS.Timeout | undefined;
     // 工具段延迟上屏句柄：快速工具（<1s 完成）不展示，避免快速指令来回刷屏
     let pendingToolTimer: NodeJS.Timeout | undefined;
 
     try {
-      // 创建随机 spinner 实例
-      const spinner = new Spinner();
       let hasRealContent = false;
       let textEvents = 0;
       let lastTextLength = -1;
+      // 本轮表情发送凭证收集器（sticker_send）：从 tool_finished 的真实工具结果读
+      // standalone 发送与嵌入片段，终态据此判断「光发图撤卡」与「送达后才记发送历史」
+      const stickerDelivery = new StickerDelivery();
       let session: FeishuPiSession | undefined;
 
       // parts 模型（见 reply-parts.ts）：精简模式滚动回收，终态只留最后工具段之后的结论
@@ -164,24 +190,12 @@ export class FeishuAgentBridge {
         () => this.detailMode.get(message.chatId) !== true,
       );
 
-      // 立即显示首帧（0ms 延迟）——动画帧走 replaceVisual：只改展示、不污染内容累积器
-      await reply.replaceVisual(spinner.next());
-      // 本轮是否被新消息 /stop 打断：结算时据此撤回复卡（而不是渲染半截内容+统计）
+      // 「先不响应，有结果再回」：思考期不出卡、不写字，reaction 是唯一的收到信号；
+      // 卡片延迟到首个真实内容（正文 / 满 1s 的工具段）写入时才创建。
+      // 本轮是否被打断：结算时据此撤回复卡或定格中止说明（而不是渲染半截内容+统计）
       let interruptedByNewMessage = false;
-
-      // 启动动画定时器（真实内容到来前用 replaceVisual 循环刷新动画帧）
-      let animationUpdating = false;
-      // 在途帧写入句柄：停止动画时先等它落定，保证后续真实内容覆盖在最后
-      let pendingAnimWrite: Promise<unknown> = Promise.resolve();
-      animationTimer = setInterval(() => {
-        if (!hasRealContent && !animationUpdating) {
-          animationUpdating = true;
-          pendingAnimWrite = reply.replaceVisual(spinner.next()).catch(() => {});
-          pendingAnimWrite.finally(() => {
-            animationUpdating = false;
-          });
-        }
-      }, 200); // 200ms 更新一帧
+      // 打断原因：new-message（收尾超时）→ 已出卡则定格说明；stop/reset → 撤卡
+      let interruptedReason: InterruptReason | undefined;
 
       // 工具调用动画：小字 = 工具类型图标（固定）+ 工具名 + 尾部 spinner 帧。
       // 每条回复随机锁定一种 spinner 样式（约 200ms/帧循环），工具切换只换前缀不换样式。
@@ -199,16 +213,12 @@ export class FeishuAgentBridge {
         }
       }, 200);
 
-      // 首个真实内容（正文或工具调用）到达时的公共收尾：停掉思考动画。
-      // 不主动清空卡片——清空会造成"动画停→卡片空白→正文才来"的空窗；
-      // spinner 停在最后一帧，由首个真实内容（正文 replace / 工具段）整体覆盖
+      // 首个真实内容（正文或满 1s 仍在跑的工具段）到达时置位；卡片自此才开始创建
       let startedRealContent = false;
-      const startRealContent = async () => {
+      const startRealContent = () => {
         if (startedRealContent) return;
         startedRealContent = true;
         hasRealContent = true;
-        clearInterval(animationTimer);
-        await pendingAnimWrite;
       };
 
       // 每一轮明确标出真正的发言人；引用的原文保留原作者，实际 @ 与已知姓名附 open_id。
@@ -231,18 +241,19 @@ export class FeishuAgentBridge {
           context: message.context, // 调用者身份（权限组判定、会话目录归属的依据）
         },
         async (event) => {
+          stickerDelivery.observe(event);
           await this.onEvent?.(event, message);
           if (event.type === "assistant_text") {
             textEvents += 1;
             lastTextLength = event.text.length;
-            if (!hasRealContent) await startRealContent();
+            startRealContent();
             await replyParts.appendText(event.text);
           }
           // 工具事件：追加工具摘要段（精简模式只留当前一个），小字位置同步显示动画。
           // 工具段延迟 1s 上屏：跑得比 1s 快的工具（快速指令）什么都不显示，不刷屏；
           // 满 1s 仍在运行才追加代码块并启动小字动画。
           if (event.type === "tool_started") {
-            if (!hasRealContent) await startRealContent();
+            // 工具启动不再触发建卡：延迟满 1s 仍未完成才随工具段一起出卡（快速指令完全静默）
             const toolName = event.toolName;
             const segment = `\n\n${formatToolCall(toolName, event.args)}`;
             clearTimeout(pendingToolTimer);
@@ -250,7 +261,10 @@ export class FeishuAgentBridge {
               pendingToolTimer = undefined;
               activeToolName = toolName;
               toolSpinner.withPrefix(`${toolIcon(toolName)} ${toolName}`);
-              void replyParts.appendTool(segment).catch(() => {});
+              void (async () => {
+                startRealContent();
+                await replyParts.appendTool(segment);
+              })().catch(() => {});
             }, TOOL_SEGMENT_DELAY_MS);
           }
           if (event.type === "tool_finished") {
@@ -268,22 +282,27 @@ export class FeishuAgentBridge {
             }
           }
         },
-        () => {
+        (reason) => {
           interruptedByNewMessage = true;
+          interruptedReason = reason;
         },
       );
 
       // 确保停止动画（在途帧先落定：避免迟到的动画帧盖过 close 写入的最终统计小字）
-      clearInterval(animationTimer);
       clearInterval(toolTimer);
-      await pendingAnimWrite;
       await pendingToolFrameWrite;
 
-      // 本轮被新消息 /stop 打断：直接撤回这张回复卡（半截内容没有展示价值，留着只会误导）
+      // 本轮被打断：新消息打断（收尾超时）且已出卡 → 定格中止说明留痕；
+      // /stop、/new 或从未出卡（惰性建卡，close 会凭空建卡）→ 撤回（静默）
       if (interruptedByNewMessage) {
-        await reply.recall().catch((error) => logger.warn("[Bridge] 撤回被打断的回复卡失败:", error));
+        if (interruptedReason === "new-message" && reply.isCreated) {
+          await reply.close(INTERRUPT_NOTICE).catch((error) => logger.warn("[Bridge] 写入中止说明失败:", error));
+          logger.info(`[Bridge] 本轮被新消息打断，回复卡已定格中止说明: ${conversationId}`);
+        } else {
+          await reply.recall().catch((error) => logger.warn("[Bridge] 撤回被打断的回复卡失败:", error));
+          logger.info(`[Bridge] 本轮被打断（${interruptedReason ?? "unknown"}），回复卡已撤回: ${conversationId}`);
+        }
         await this.messages?.complete(message.messageId);
-        logger.info(`[Bridge] 本轮被打断，回复卡已撤回: ${conversationId}`);
         return;
       }
 
@@ -303,10 +322,21 @@ export class FeishuAgentBridge {
 
       // 终态：详细=全量；精简=最后一个工具段之后的结论段
       const finalText = replyParts.composeFinal();
-      await reply.close(finalText, statsLine);
+      const sentStandaloneSticker = stickerDelivery.standaloneSent;
+      // 光发图：本轮以 standalone 表情作为整轮回复且无正文 → 撤回复卡，会话里只留那张独立图片
+      if (sentStandaloneSticker && !finalText.trim()) {
+        await reply.recall().catch((error) => logger.warn("[Bridge] 撤回纯表情回复卡失败:", error));
+      } else {
+        await reply.close(finalText, statsLine);
+        if (reply.isDelivered && this.recordSticker) {
+          await stickerDelivery.confirm(finalText, (id, line) => this.recordSticker!(message.chatId, id, line))
+            .catch(error => logger.warn("[Sticker] 卡片已发送，但记录保存失败:", error));
+        }
+      }
 
-      // 记录最终响应（含耗时；空文本单独特警，便于发现模型无输出/被拦截的情况）
-      const replyPreview: string = formatLogText(finalText) || "";
+      // 记录最终响应（含耗时；空文本单独特警，便于发现模型无输出/被拦截的情况；
+      // standalone 表情的空正文是预期路径，不计入特警）
+      const replyPreview: string = formatLogText(finalText) || (sentStandaloneSticker ? "[独立表情图，无正文]" : "");
       const elapsedSec = ((Date.now() - requestStartedAt) / 1000).toFixed(1);
       if (!replyPreview) {
         logger.warn(
@@ -325,7 +355,6 @@ export class FeishuAgentBridge {
       throw error;
     } finally {
       // 动画定时器兜底清理（prompt 抛错时走这里；已清理过的句柄重复 clear 是无害的）
-      clearInterval(animationTimer);
       clearInterval(toolTimer);
       clearTimeout(pendingToolTimer);
       // 移除 reaction

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatToolCall, ReplyParts, type ReplyPartsSink } from "../src/feishu/reply-parts.ts";
+import { formatStatsLine, formatToolCall, ReplyParts, type ReplyPartsSink } from "../src/feishu/reply-parts.ts";
 
 /** 记录型 sink：render 收全量，append 收增量 */
 function makeSink() {
@@ -134,5 +134,41 @@ describe("ReplyParts 详细模式（全量保留·旧断言版）", () => {
     await parts.appendTool("动作1");
     await parts.appendText("文本2");
     expect(parts.composeFinal()).toBe("文本1动作1文本2");
+  });
+});
+
+describe("formatStatsLine 统计小字", () => {
+  it("无统计 → undefined", () => {
+    expect(formatStatsLine({ modelName: "m", elapsedMs: 1000 })).toBeUndefined();
+  });
+
+  it("contextUsage 有值 → 小字含「上下文 N%」（四舍五入）", () => {
+    const line = formatStatsLine({
+      modelName: "deepseek-flash",
+      stats: {
+        tokens: { total: 150_000 },
+        cost: 0.1,
+        sessionId: "s1",
+        contextUsage: { tokens: 60_000, contextWindow: 128_000, percent: 46.9 },
+      },
+      elapsedMs: 12_000,
+    });
+    expect(line).toContain("上下文 47%");
+    expect(line).toContain("0.15M");
+  });
+
+  it("percent 为 null（压缩后未知）→ 上下文段省略，其余照常", () => {
+    const line = formatStatsLine({
+      modelName: "m",
+      stats: { tokens: { total: 1000 }, contextUsage: { tokens: null, contextWindow: 128_000, percent: null } },
+      elapsedMs: 1000,
+    });
+    expect(line).not.toContain("上下文");
+    expect(line).toContain("累计1.0K");
+  });
+
+  it("无 contextUsage 字段（旧数据）→ 正常渲染不含上下文", () => {
+    const line = formatStatsLine({ modelName: "m", stats: { tokens: { total: 1000 } }, elapsedMs: 1000 });
+    expect(line).not.toContain("上下文");
   });
 });

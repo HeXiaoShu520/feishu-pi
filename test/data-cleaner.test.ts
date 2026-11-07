@@ -35,7 +35,7 @@ describe("DataCleaner 以会话目录为清理单位", () => {
     const expired = await makeSession(root, "20260901-100000-aaaa");
     await ageTree(expired); // 目录树整体停在 10 天前
 
-    const stats = await new DataCleaner({ sessionsRoot: root, retentionDays: 7 }).cleanup();
+    const stats = await new DataCleaner({ sessionsRoot: root, retentionDays: 7, preserveSessions: false }).cleanup();
 
     expect(stats.sessionsChecked).toBe(1);
     expect(stats.sessionsDeleted).toBe(1);
@@ -49,7 +49,7 @@ describe("DataCleaner 以会话目录为清理单位", () => {
     await age(join(active, "files", "报表.xlsx")); // 老附件
     // 目录本身与其余文件是刚写的 → 最后活跃时间在保留期内
 
-    const stats = await new DataCleaner({ sessionsRoot: root, retentionDays: 7 }).cleanup();
+    const stats = await new DataCleaner({ sessionsRoot: root, retentionDays: 7, preserveSessions: false }).cleanup();
 
     expect(stats.sessionsDeleted).toBe(0);
     // 目录原样保留：既没有半截会话，也没有被拆散的附件
@@ -63,7 +63,7 @@ describe("DataCleaner 以会话目录为清理单位", () => {
     await age(join(root, "legacy.jsonl"));
     await writeFile(join(root, "fresh.jsonl"), "x");
 
-    const stats = await new DataCleaner({ sessionsRoot: root, retentionDays: 7 }).cleanup();
+    const stats = await new DataCleaner({ sessionsRoot: root, retentionDays: 7, preserveSessions: false }).cleanup();
 
     expect(stats.sessionsDeleted).toBe(1);
     expect(await readdir(root)).toEqual(["fresh.jsonl"]);
@@ -88,7 +88,7 @@ describe("DataCleaner 以会话目录为清理单位", () => {
 
   it("会话目录不存在时静默返回（首次运行）", async () => {
     const root = await mkdtemp(join(tmpdir(), "clean-"));
-    const stats = await new DataCleaner({ sessionsRoot: join(root, "nope"), retentionDays: 7 }).cleanup();
+    const stats = await new DataCleaner({ sessionsRoot: join(root, "nope"), retentionDays: 7, preserveSessions: false }).cleanup();
     expect(stats.sessionsDeleted).toBe(0);
   });
   it("启用历史保留时不删除过期会话", async () => {
@@ -98,6 +98,15 @@ describe("DataCleaner 以会话目录为清理单位", () => {
     const stats = await new DataCleaner({ sessionsRoot: root, retentionDays: 7, preserveSessions: true }).cleanup();
     expect(stats.sessionsDeleted).toBe(0);
     expect(await readdir(root)).toContain("history");
+  });
+
+  it("fail-safe 默认：不传 preserveSessions 时保留过期会话（删除必须显式选择）", async () => {
+    const root = await mkdtemp(join(tmpdir(), "clean-default-"));
+    const dir = await makeSession(root, "old-session");
+    await ageTree(dir);
+    const stats = await new DataCleaner({ sessionsRoot: root, retentionDays: 7 }).cleanup();
+    expect(stats.sessionsDeleted).toBe(0);
+    expect(await readdir(root)).toContain("old-session");
   });
 
 });

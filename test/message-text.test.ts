@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { findBlockBoundary } from "../src/feishu/cardkit-reply.ts";
-import { stripBotMentions } from "../src/feishu/lark-transport.ts";
+import { stripBotMentions } from "../src/feishu/transport-utils.ts";
 
 describe("stripBotMentions（@机器人 标记清洗）", () => {
   const BOT = "ou_bot123";

@@ -3,6 +3,7 @@ export interface ManagedMemory {
   category: string;
   text: string;
   active: boolean;
+  evidence?: Array<{ quote: string; at: number; kind: "support" | "correction" }>;
 }
 
 export type MemoryManagementAction = "list" | "disable" | "restore";

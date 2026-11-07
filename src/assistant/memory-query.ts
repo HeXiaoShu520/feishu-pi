@@ -22,3 +22,17 @@ export function recordedDate(at: number): string {
   const date = new Date(at);
   return at > 0 && Number.isFinite(date.getTime()) ? date.toISOString().slice(0, 10) : "日期未知";
 }
+
+/** Interpret a small, explicit set of calendar windows in China time. */
+export function historyTimeWindow(query: string, now = Date.now()): { start: number; end: number } | undefined {
+  const shifted = new Date(now + 8 * 3600_000);
+  const y = shifted.getUTCFullYear(), m = shifted.getUTCMonth(), d = shifted.getUTCDate();
+  const utc = (year: number, month: number, day: number) => Date.UTC(year, month, day) - 8 * 3600_000;
+  if (/上个月/.test(query)) return { start: utc(y, m - 1, 1), end: utc(y, m, 1) };
+  if (/这个月|本月/.test(query)) return { start: utc(y, m, 1), end: utc(y, m + 1, 1) };
+  if (/昨天/.test(query)) return { start: utc(y, m, d - 1), end: utc(y, m, d) };
+  if (/今天/.test(query)) return { start: utc(y, m, d), end: utc(y, m, d + 1) };
+  const date = /(20\d{2})年(\d{1,2})月/.exec(query);
+  if (date && Number(date[2]) >= 1 && Number(date[2]) <= 12) return { start: utc(Number(date[1]), Number(date[2]) - 1, 1), end: utc(Number(date[1]), Number(date[2]), 1) };
+  return undefined;
+}

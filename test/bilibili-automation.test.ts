@@ -107,6 +107,27 @@ describe("B 站自动浏览和回复", () => {
     } finally { await rm(dir, { recursive: true, force: true }); }
   });
 
+  it("聊天活跃时暂缓分享，过期候选不发送", async () => {
+    const dir = await mkdtemp(join(tmpdir(), "bili-auto-"));
+    try {
+      const { deps, call } = setup(dir); let now = NOW; let active = true;
+      const share = vi.fn().mockResolvedValue(undefined);
+      deps.now = () => now; deps.share = share; deps.isChatActive = () => active;
+      deps.decide = async stage => stage === "keywords" ? ["鲸鱼"] : stage === "share" ? { share: "鲸鱼视频很有意思" } : { comment: "" };
+      const service = new BiliAutomation(join(dir, "share.json"), deps);
+      await service.configure(true, "oc_owner"); await service.tick();
+      expect(share).not.toHaveBeenCalled();
+      active = false; now += 6 * 60_000; await service.tick();
+      expect(share).toHaveBeenCalledTimes(1);
+      call.mockImplementation(async name => name === "bili_check_replies" ? { replies: [] } : name === "bili_explore" ? { videos: [{ bvid: "BV1234567890", read: { info: { title: "另一个视频" } } }] } : { success: true });
+      now += 24 * 3600_000; active = true; await service.runNow();
+      expect(share).toHaveBeenCalledTimes(1);
+      expect((await service.status()).pendingShare?.bvid).toBe("BV1234567890");
+      now += 2 * 3600_000; active = false; await service.tick();
+      expect(share).toHaveBeenCalledTimes(1);
+    } finally { await rm(dir, { recursive: true, force: true }); }
+  });
+
   it("未加载服务时指令给出配置说明，不会启动自动化", async () => {
     const command = new BiliAutoCommand();
     const result = await command.execute({ text: "/bili-auto on", chatId: "oc_owner", context: { isOwner: true, chatMode: "p2p" } } as never);

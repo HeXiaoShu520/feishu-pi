@@ -72,7 +72,7 @@ export class CardKitStream {
       });
 
       const cardId = (res as { data?: { card_id?: string } } | undefined)?.data?.card_id;
-      if (!cardId) {
+      if (res?.code !== 0 || !cardId) {
         throw new Error(`Failed to get card_id from response: ${JSON.stringify(res)}`);
       }
 
@@ -107,12 +107,6 @@ export class CardKitStream {
 
     this.accumulator = text;
     this.dirty = false;
-    await this.enqueueWrite(() => this.pushUpdate(text));
-  }
-
-  /** 替换展示内容但不改动内容累积器（动画帧专用）：spinner 文本不污染正文，首个真实内容整体覆盖 */
-  async replaceVisual(text: string): Promise<void> {
-    if (this.disposed || !this.cardId) return;
     await this.enqueueWrite(() => this.pushUpdate(text));
   }
 
@@ -204,7 +198,7 @@ export class CardKitStream {
   /** 卡片级全量更新：整卡 JSON 一次写入（含正文与统计小字），即时渲染。
    *  实测形状：{ card: { type: "card_json", data: <卡片JSON字符串> }, sequence, uuid } */
   private async putFinalCard(fullText: string, statsText?: string): Promise<void> {
-    await this.client.request({
+    const result = await this.client.request({
       method: "PUT",
       url: `/open-apis/cardkit/v1/cards/${this.cardId}`,
       data: {
@@ -213,6 +207,7 @@ export class CardKitStream {
         uuid: this.uuid(),
       },
     });
+    if (result?.code !== 0) throw new Error("飞书卡片终态更新未返回成功回执");
   }
 
   /** 关闭或开启流式模式 */

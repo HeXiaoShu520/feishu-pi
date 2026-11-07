@@ -18,4 +18,13 @@ describe("飞书私聊记忆管理", () => {
     await command.execute({ text: "/memory disable", context: { chatMode: "p2p" } } as never);
     expect(manage).not.toHaveBeenCalled();
   });
+  it("详情只读取当前私聊用户的记忆并显示转义后的原话", async () => {
+    const manage = vi.fn().mockResolvedValue([{ id: "abcdef-123456", category: "称呼偏好", text: "叫小鱼", active: true, evidence: [{ kind: "support", quote: "请叫我<小鱼>", at: Date.parse("2026-11-07T00:00:00Z") }] }]);
+    const command = new MemoryCommand(manage);
+    const context = { userOpenId: "ou_a", chatMode: "p2p" };
+    const result = await command.execute({ text: "/memory show abcdef", context } as never);
+    expect(manage).toHaveBeenCalledWith(context, "list", undefined);
+    expect(JSON.stringify(result.card)).toContain("原话依据");
+    expect(JSON.stringify(result.card)).toContain("小鱼");
+  });
 });

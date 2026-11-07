@@ -75,6 +75,12 @@ export class CardKitReply implements FeishuReply {
   private stream?: CardKitStream;
   private closed = false;
   private closing = false;
+  private delivered = false;
+
+  /** 飞书已接受最终卡片正文；不代表用户已阅读或客户端已渲染图片。 */
+  get isDelivered(): boolean { return this.delivered; }
+  /** 卡片是否已创建（惰性建卡：未创建过时 close 会凭空建卡，打断结算据此决定撤回还是定格说明） */
+  get isCreated(): boolean { return this.stream !== undefined; }
   private fallbackSent = false;
   private initialization?: Promise<void>;
   /** 当前卡片内容在全文中的起始偏移（分卡时推进） */
@@ -136,23 +142,6 @@ export class CardKitReply implements FeishuReply {
     }
   }
 
-  /** 替换展示内容但不改动内容累积器（思考动画帧专用）：避免 spinner 文本混入后续正文增量 */
-  async replaceVisual(text: string): Promise<void> {
-    if (this.closed) return;
-
-    try {
-      if (!this.stream) {
-        await this.initializeCardKit(text);
-        return;
-      }
-
-      await this.stream.replaceVisual(text);
-    } catch (err) {
-      this.onError?.(err);
-      throw err;
-    }
-  }
-
   async updateStats(text: string): Promise<void> {
     if (this.closed || !this.stream) return;
     await this.stream.updateStats(text);
@@ -174,6 +163,7 @@ export class CardKitReply implements FeishuReply {
       // 最后一张卡只关闭自己承载的那段内容（前面几张已在分卡时收尾）
       const stream = this.stream!;
       await stream.finalize(text.slice(this.offset), statsText);
+      this.delivered = true;
       this.closed = true;
     } catch (err) {
       this.onError?.(err);
@@ -239,7 +229,8 @@ export class CardKitReply implements FeishuReply {
           reply_in_thread: this.replyInThread,
         },
       });
-      if (res?.data?.message_id) this.sentMessageIds.push(res.data.message_id);
+      if (res?.code !== 0 || !res.data?.message_id) throw new Error("飞书卡片回复失败：未获得成功消息回执");
+      this.sentMessageIds.push(res.data.message_id);
     } else {
       const res = await this.client.im.message.create({
         params: { receive_id_type: "chat_id" },
@@ -249,12 +240,14 @@ export class CardKitReply implements FeishuReply {
           content: JSON.stringify({ type: "card", data: { card_id: cardId } }),
         },
       });
-      if (res?.data?.message_id) this.sentMessageIds.push(res.data.message_id);
+      if (res?.code !== 0 || !res.data?.message_id) throw new Error("飞书卡片发送失败：未获得成功消息回执");
+      this.sentMessageIds.push(res.data.message_id);
     }
   }
 
   /** 撤回本轮全部卡片消息（中断或终态更新失败时调用）。 */
   async recall(): Promise<void> {
+    this.delivered = false;
     this.closed = true;
     this.stream?.dispose();
     await this.deleteSentCards();

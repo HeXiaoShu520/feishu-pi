@@ -1,5 +1,5 @@
 {
-  "name": "mini-claw",
+  "name": "feishu-pi",
   "version": "0.2.0",
   "private": true,
   "type": "module",
@@ -13,17 +13,17 @@
     "persona": "tsx src/scripts/persona.ts"
   },
   "dependencies": {
-    "@earendil-works/pi-agent-core": "1.4.0",
-    "@earendil-works/pi-ai": "1.4.0",
-    "@earendil-works/pi-coding-agent": "1.4.0",
+    "@earendil-works/pi-agent-core": "1.5.0",
+    "@earendil-works/pi-ai": "1.5.0",
+    "@earendil-works/pi-coding-agent": "1.5.0",
     "@lark-project/meegle": "1.0.27",
-    "@larksuite/cli": "1.0.98",
+    "@larksuite/cli": "1.0.99",
     "@larksuiteoapi/node-sdk": "1.76.0",
     "@modelcontextprotocol/client": "2.4.0",
     "@playwright/cli": "0.1.23",
     "croner": "^11.0.0",
     "dotenv": "^18.0.9",
-    "openai": "7.47.0"
+    "openai": "7.53.0"
   },
   "devDependencies": {
     "@types/node": "26.6.6",
@@ -31,7 +31,16 @@
     "qrcode-terminal": "^0.12.0",
     "tsx": "4.23.15",
     "typescript": "7.0.2",
-    "vitest": "5.0.5"
+    "vitest": "5.1.0"
   },
-  "description": "Personal Pi agent with Feishu, browser automation, memory, background tasks and MCP"
+  "description": "Personal Pi agent with Feishu, browser automation, memory, background tasks and MCP",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "allowScripts": {
+    "@google/genai@2.21.0": true,
+    "@larksuite/cli@1.0.99": true,
+    "esbuild@0.28.2": true,
+    "protobufjs@7.6.6": true
+  }
 }

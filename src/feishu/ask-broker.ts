@@ -72,7 +72,7 @@ export function buildChoiceCard(params: {
     body: {
       elements: [
         { tag: "markdown", content: compactMarkdown(question) },
-        { tag: "markdown", content: "点击选项即回复此问题（仅本人选择有效，超时自动跳过）" },
+        { tag: "markdown", content: "点选选项或直接发送文字回答（仅本人有效，超时自动跳过）" },
         ...rows,
       ],
     },
@@ -104,6 +104,7 @@ interface PendingAsk {
   qid: string;
   token: string;
   openId: string;
+  chatId: string;
   options: string[];
   messageId: string;
   resolve: (outcome: AskOutcome) => void;
@@ -141,7 +142,7 @@ export class AskBroker {
           )).catch(() => undefined);
         }
       };
-      const pending: PendingAsk = { qid, token, openId, options, messageId: "", resolve: finish };
+      const pending: PendingAsk = { qid, token, openId, chatId, options, messageId: "", resolve: finish };
       const onAbort = () => finish({ status: "cancelled" });
       const timer = setTimeout(() => finish({ status: "timeout" }), this.askTimeoutMs);
       this.pending.set(qid, pending);
@@ -159,6 +160,23 @@ export class AskBroker {
           finish({ status: "cancelled" });
         });
     });
+  }
+
+  /**
+   * 文字回答兜底：等待选择期间用户直接发文本也算回答（选项约束不适用于自由文本）。
+   * 仅在 (openId, chatId) 只有一个未决提问时接管，避免歧义；返回是否已消费该文本。
+   */
+  answerText(openId: string, chatId: string, text: string): boolean {
+    const trimmed = text.trim();
+    if (!trimmed) return false;
+    const matches = [...this.pending.values()].filter((p) => p.openId === openId && p.chatId === chatId);
+    if (matches.length !== 1) return false;
+    const pending = matches[0];
+    if (pending.messageId) {
+      void this.options.updateCard(pending.messageId, buildAskResultCard(`✅ 已回答：${trimmed}`)).catch(() => undefined);
+    }
+    pending.resolve({ status: "answered", choice: trimmed });
+    return true;
   }
 
   /**

@@ -4,9 +4,7 @@
 
 | 路径 | 内容 |
 |---|---|
-| `data/memory/MEMORY.md` | 一份个人长期记忆 |
-| `data/memory/archive/` | rewrite 前的记忆版本 |
-| `data/memory/index.json` | 可重建的记忆与本人历史检索索引 |
+| `data/memory/` | 旧版记忆遗留数据（实现代码已移除，文件保留不动） |
 | `data/tasks/tasks.json` | 后台任务记录 |
 | `data/tasks/<id>/output.log` | 合并 stdout/stderr 的任务日志，最多 10 MiB |
 | `data/browser/profile/` | 独立浏览器登录状态，不是日常 Edge 默认 profile |

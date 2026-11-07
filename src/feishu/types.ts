@@ -1,9 +1,7 @@
 /**
  * 飞书接入层的接口定义：入站消息、回复句柄、传输层。
  */
-import type { FeishuPiEvent, FeishuPiPrompt } from "../runtime/types.ts";
-
-import type { FeishuContext } from "../context/types.ts";
+import type { FeishuPiEvent, FeishuPiPrompt, FeishuContext } from "../runtime/types.ts";
 
 /** 一条从飞书收到的入站消息（已过滤 @机器人 标记、已附带用户上下文）。 */
 export interface FeishuInboundMessage {

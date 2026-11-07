@@ -1,6 +1,7 @@
 import { PersonaVersions } from "./resources/persona-versions.ts";
 import { createStickerSendTool } from "./stickers/send.ts";
 import { createGuestStickerSearchTool } from "./stickers/guest-search.ts";
+import { StickerHistory } from "./stickers/recent.ts";
 import { createRulesLoader } from "./stickers/rules.ts";
 import { BiliAutomation } from "./bilibili/automation.ts";
 import { BiliAutoCommand } from "./feishu/bili-auto-command.ts";
@@ -33,12 +34,12 @@ import { Client, LoggerLevel } from "@larksuiteoapi/node-sdk";
 import { logger } from "./utils/logger.ts";
 import { scrubSecretsInDir } from "./utils/session-scrub.ts";
 import { PermissionBroker } from "./guard/broker.ts";
-import { ToolGuard } from "./guard/tool-guard.ts";
+import { ToolGuard, createToolCallLimiter } from "./guard/tool-guard.ts";
 import { PolicyJudge } from "./guard/judge.ts";
 import { buildNoticeCard } from "./guard/card.ts";
 import { AskBroker, createAskUserTool } from "./feishu/ask-broker.ts";
 import { AssistantServices } from "./assistant/services.ts";
-import type { FeishuContext } from "./context/types.ts";
+import type { FeishuContext } from "./runtime/types.ts";
 import { SlashCommandRegistrar } from "./feishu/slash-command.ts";
 import type { CleanupStats } from "./runtime/data-cleaner.ts";
 import { acquireInstanceLock } from "./utils/instance-lock.ts";
@@ -59,8 +60,6 @@ async function logCleanupStats(cleanup: Promise<CleanupStats>): Promise<void> {
   logger.info(`[DataCleaner] 会话目录: ${stats.sessionsDeleted}/${stats.sessionsChecked} 已删除`);
   logger.info(`[DataCleaner] 消息: ${stats.messagesCleaned}/${stats.messagesChecked} 已清理`);
 }
-
-/** 启动轻量飞书 Agent 服务。 */
 
 /**
  * 服务组装根：按依赖顺序装配各模块（清理 → 飞书传输 → 授权 → 权限闸门 →
@@ -91,12 +90,11 @@ export async function main(): Promise<void> {
 
   const messages = new MessageStore(config.messagesFile);
 
-  // 保留历史会话，清理去重记录和卡住的消息。
+  // 保留历史会话（类默认，删除必须显式传 preserveSessions: false），清理去重记录和卡住的消息。
   const cleaner = new DataCleaner({
     sessionsRoot: config.sessionsRoot,
     messages,
     retentionDays: 7,
-    preserveSessions: true,
   });
 
   logger.info("[DataCleaner] 清理卡住的消息...");
@@ -326,6 +324,8 @@ export async function main(): Promise<void> {
     apiKey: config.guardApiKey,
     timeoutMs: config.guardTimeoutMs,
   }), () => policy.describe(), config.cwd);
+  // 单轮工具调用预算：每轮开始清零，超限后阻止继续调用（理由回给模型引导收尾）
+  const roundLimiter = createToolCallLimiter(config.roundMaxToolCalls);
 
   // 授权卡回调 → PermissionBroker 服务端校验（token / 卡片来源 / 本人身份）
   transport.onApproval(async ({ value, action }) => {
@@ -464,6 +464,7 @@ ${trimmed}` }] },
       await transport.sendCardToChat(task.chatId, card);
     },
   });
+  const recentChatActivity = new Map<string, number>();
   const biliAutomation = config.biliAutoAvailable ? new BiliAutomation(join(dataDir, "bilibili", "automation.json"), {
     authorize: async (name, args, chatId, signal) => {
       const result = await toolGuard.check(await policy.current(), { toolName: mcpToolName("bilibili", name), args, chatId, requesterOpenId: ownerOpenId }, signal);
@@ -481,11 +482,13 @@ ${trimmed}` }] },
     decide: (stage, data, signal) => runtime.biliDecision(stage, data, signal),
     interests: () => runtime.biliInterests(),
     share: config.biliShareAvailable ? (chatId, text) => transport.sendTextToChat(chatId, text) : undefined,
+    isChatActive: chatId => Date.now() - (recentChatActivity.get(chatId) ?? 0) < 5 * 60_000,
   }) : undefined;
   await assistant.start();
 
   // 表情包黑白名单：用户配置优先、模型不可改；检索时按 mtime 热重载，档位只影响工具描述
   const stickerRoot = join(config.dataDir, "stickers");
+  const stickerHistory = new StickerHistory(join(config.dataDir, "sticker-history"));
   const stickerRules = createRulesLoader(join(config.cwd, ".agent", "stickers.json"));
   const stickerGuide = (await stickerRules()).guide;
 
@@ -503,14 +506,17 @@ ${trimmed}` }] },
     sessions,
     permissionPolicy: policy,
     toolGuard: (toolPolicy, params, signal) => toolGuard.check(toolPolicy, params, signal),
+    toolCallLimiter: roundLimiter,
     scheduleService,
-    // 会话级带身份 bash：在每次 CLI 真正启动时绑定发起人；用户令牌仅在显式启用 MINICLAW_USER_CLI 后交给受控 CLI。
+    // 会话级带身份 bash：在每次 CLI 真正启动时绑定发起人；用户令牌仅在显式启用 FEISHU_PI_USER_CLI 后交给受控 CLI。
     // 普通 shell 命令不接收凭证，未登录时拒绝该次 CLI 并推送授权链接。
     // 用户态命令执行前按需刷新当前发起人的 token，不预热其他用户。
     identityBash: (userId, context) => createIdentityBashTool(identityOptions(userId, context)),
     ownerOpenId: ownerOpenId,
-    sessionTools: (caller) => [...assistant.sessionTools(caller), createStickerSendTool(client, stickerRoot, caller.chatId, { rules: stickerRules, guide: stickerGuide })],
-    guestTools: (caller) => [createGuestStickerSearchTool(stickerRoot, { rules: stickerRules, guide: stickerGuide }), createStickerSendTool(client, stickerRoot, caller.chatId, { rules: stickerRules, guide: stickerGuide })],
+    sessionTools: (caller) => [...assistant.sessionTools(caller), createGuestStickerSearchTool(stickerRoot, { rules: stickerRules, guide: stickerGuide, history: stickerHistory, chatId: caller.chatId }), createStickerSendTool(client, stickerRoot, caller.chatId, { rules: stickerRules, guide: stickerGuide, history: stickerHistory })],
+    guestTools: (caller) => [createGuestStickerSearchTool(stickerRoot, { rules: stickerRules, guide: stickerGuide, history: stickerHistory, chatId: caller.chatId }), createStickerSendTool(client, stickerRoot, caller.chatId, { rules: stickerRules, guide: stickerGuide, history: stickerHistory })],
+    stickerHistory: async chatId => (await stickerHistory.list(chatId)).slice(0, 5).map(item => `[${new Date(item.at).toISOString()}] ${item.line}`).join("\n"),
+    onChatActivity: chatId => { recentChatActivity.set(chatId, Date.now()); },
   }, [
     createAskUserTool(askBroker),
     ...assistant.tools(),
@@ -522,7 +528,7 @@ ${trimmed}` }] },
   // 启动时打印可用的 Skills 和 Tools（本人视角）
   await runtime.printAvailableResources();
 
-  const conversations = new ConversationManager(runtime, sessions, { maxPendingMessages: config.maxPendingMessages });
+  const conversations = new ConversationManager(runtime, sessions, { maxPendingMessages: config.maxPendingMessages, interruptGraceMs: config.interruptGraceMs });
 
   const bridge = new FeishuAgentBridge(
     conversations,
@@ -530,6 +536,10 @@ ${trimmed}` }] },
     {
       messages,
       client,
+      recordSticker: (chatId, id, line) => stickerHistory.record(chatId, id, line),
+      // 待答选项卡优先接收文字回答；每轮开始重置单轮工具调用预算
+      answerAskText: (openId, chatId, text) => askBroker.answerText(openId, chatId, text),
+      onRoundStart: (chatId) => roundLimiter.reset(chatId),
       // /status 查看用户与 CLI 凭证状态；/logout 清除飞书用户授权
       extraCommands: [
         new BiliAutoCommand(biliAutomation),

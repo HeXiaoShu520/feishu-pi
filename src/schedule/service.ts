@@ -282,7 +282,8 @@ export class ScheduleService {
       await this.markResult(task, "error", detail);
       logger.warn(`[Schedule] 任务 ${task.id} 执行失败: ${detail}`);
     } finally {
-      // 一次性任务只执行一次；保留档案便于查询结果，但不在重启后重复触发。
+      // 一次性任务只执行一次；保留档案便于查询结果。进程停机跨过触发时刻时，
+      // 重启后会补触发一次（setTimeout(0)），随后在此禁用，不会重复。
       if ((task.kind ?? "cron") === "at") {
         this.unscheduleJob(task.id);
         const current = await this.store.get(task.id);

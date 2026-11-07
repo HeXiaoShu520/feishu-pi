@@ -206,7 +206,7 @@ export class McpService {
       ? AbortSignal.any([signal, this.shutdown.signal])
       : this.shutdown.signal;
     const client = new Client(
-      { name: "mini-claw", version: "0.2.0" },
+      { name: "feishu-pi", version: "0.2.0" },
       { capabilities: {} },
     );
     let transport: Transport;

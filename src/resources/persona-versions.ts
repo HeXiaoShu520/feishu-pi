@@ -11,8 +11,11 @@ export class PersonaVersions {
   private get current() { return join(this.agentDir, "SYSTEM.md"); }
   async save(): Promise<string> {
     const content = await readFile(this.current, "utf8");
-    await mkdir(this.directory, { recursive: true });
     const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
+    // 最新版本内容一致时直接复用：main.ts 每次启动即 save，不去重会堆积同内容快照
+    const latest = (await this.list())[0];
+    if (latest?.endsWith(`_${hash}`)) return latest;
+    await mkdir(this.directory, { recursive: true });
     const id = `${new Date().toISOString().replace(/[:.]/g, "-")}_${hash}`;
     await writeFile(join(this.directory, `${id}.md`), content, { encoding: "utf8", flag: "wx" });
     return id;

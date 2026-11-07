@@ -37,7 +37,7 @@ export class BrowserService {
     await this.queue.catch(() => undefined);
     if (this.active) await this.execute({ action: "close" }).catch(() => undefined);
     if (this.dashboard) {
-      await runProcess(process.execPath, [join(this.cwd, "node_modules", "@playwright", "cli", "playwright-cli.js"), "-s=mini-claw-personal", "show", "--kill"], {
+      await runProcess(process.execPath, [join(this.cwd, "node_modules", "@playwright", "cli", "playwright-cli.js"), "-s=feishu-pi-personal", "show", "--kill"], {
         cwd: this.root, timeoutMs: 10_000, env: processEnvironment({ NO_UPDATE_NOTIFIER: "1" }),
       }).catch(() => undefined);
     }
@@ -59,7 +59,7 @@ export class BrowserService {
     if (request.action === "open") this.active = true;
     const result = await runProcess(process.execPath, [
       join(this.cwd, "node_modules", "@playwright", "cli", "playwright-cli.js"),
-      "-s=mini-claw-personal", "--raw", ...args,
+      "-s=feishu-pi-personal", "--raw", ...args,
     ], { cwd: this.root, signal, timeoutMs: 90_000, maxChars: 24_000, env: processEnvironment({ NO_UPDATE_NOTIFIER: "1" }) });
     if (result.exitCode !== 0) throw new Error(`浏览器操作失败（${result.exitCode}）: ${result.stderr || result.stdout}`);
     if (request.action === "close") this.active = false;

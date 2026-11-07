@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtemp, readFile, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { downloadFileAttachments } from "../src/feishu/lark-transport.ts";
+import { downloadFileAttachments } from "../src/feishu/transport-utils.ts";
 
 describe("附件存进统一会话文件夹的 files/ 子目录", () => {
   it("文件落在 {会话目录}/files/ 下，文件名带时间戳前缀；非文件类资源忽略", async () => {

@@ -3,6 +3,7 @@ import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { execFile, execFileSync } from "node:child_process";
 import { join, extname } from "node:path";
 import { loadToolModule } from "./module-loader.ts";
+import { processEnvironment } from "../process/environment.ts";
 import { resourceEnabled, type ResourceSelection } from "../resources/config.ts";
 import { logger } from "../utils/logger.ts";
 
@@ -126,6 +127,8 @@ async function loadCustomTools(cwd: string): Promise<ToolDefinition[]> {
                   windowsHide: true,
                   cwd,
                   signal: _signal,
+                  // 与其它子进程出口一致：只继承 OS 环境，不把应用凭证带进脚本
+                  env: processEnvironment(),
                 },
                 (error, stdout, stderr) => {
                   if (error) {

@@ -12,6 +12,7 @@
 import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
+import { processEnvironment } from "../process/environment.ts";
 
 export const MEEGLE_HOST = "project.feishu.cn";
 let cachedTokenEndpoint: string | undefined;
@@ -49,9 +50,8 @@ function defaultRun(cwd: string): Run {
   return (args, timeoutMs) =>
     new Promise((resolve, reject) => {
       const entry = resolveMeegleEntry(cwd)!;
-      const env = { ...process.env };
-      delete env.MEEGLE_USER_ACCESS_TOKEN;
-      const child = spawn(process.execPath, [entry, ...args], { windowsHide: true, env });
+      // 白名单环境：设备码流程匿名起步，不需要任何应用凭证（与 cli-proxy 的 meegle 分支一致）
+      const child = spawn(process.execPath, [entry, ...args], { windowsHide: true, env: processEnvironment() });
       let stdout = "";
       const timer = setTimeout(() => {
         child.kill();

@@ -2,7 +2,7 @@ import { expect, it, vi } from "vitest";
 import { mkdtemp, readFile, writeFile, mkdir, rmdir } from "node:fs/promises";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
-import { buildConversationId, scopeGuestConversation } from "../src/feishu/lark-transport.ts";
+import { buildConversationId, scopeGuestConversation } from "../src/feishu/transport-utils.ts";
 import { ScheduleService } from "../src/schedule/service.ts";
 import { CredentialVault } from "../src/utils/credential-vault.ts";
 import { MessageStore } from "../src/feishu/message-store.ts";
@@ -103,7 +103,7 @@ it("退出 Meegle 不会误清飞书凭证，未知 provider 不做操作", asyn
 it("最终整卡更新包含全部内容并释放定时器，不等待固定延迟", async () => {
   vi.useFakeTimers();
   try {
-    const request = vi.fn(async () => ({ data: { card_id: "card" } }));
+    const request = vi.fn(async () => ({ code: 0, data: { card_id: "card" } }));
     const stream = new CardKitStream({ client: { request } as never });
     await stream.create();
     stream.patch("partial");
@@ -121,7 +121,7 @@ it("最终整卡更新包含全部内容并释放定时器，不等待固定延�
 it("最终卡片写入失败也释放定时器并报告错误", async () => {
   vi.useFakeTimers();
   try {
-    const request = vi.fn().mockResolvedValueOnce({ data: { card_id: "card" } }).mockRejectedValue(new Error("offline"));
+    const request = vi.fn().mockResolvedValueOnce({ code: 0, data: { card_id: "card" } }).mockRejectedValue(new Error("offline"));
     const stream = new CardKitStream({ client: { request } as never });
     await stream.create();
     await expect(stream.finalize("complete")).rejects.toThrow("offline");

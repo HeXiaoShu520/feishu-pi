@@ -8,8 +8,8 @@
 import type { Client } from "@larksuiteoapi/node-sdk";
 import type { FeishuInboundMessage } from "./types.ts";
 import { logger } from "../utils/logger.ts";
-import type { FeishuContext } from "../context/types.ts";
-import type { ManagedMemory, MemoryManagementAction } from "../assistant/memory-management.ts";
+import type { FeishuContext } from "../runtime/types.ts";
+import { findMemory, type ManagedMemory, type MemoryManagementAction } from "../assistant/memory-management.ts";
 
 /** 指令处理器接口：match 判定是否命中，execute 返回要发送的卡片 */
 export interface CommandHandler {
@@ -53,13 +53,18 @@ export class MemoryCommand implements CommandHandler {
     if (message.context.chatMode !== "p2p") return { card: errorCard("请在私聊中管理自己的记忆。") };
     const parts = message.text.trim().split(/\s+/);
     const action = (parts[1] ?? "list").toLowerCase();
-    if (action !== "list" && action !== "disable" && action !== "restore") return { card: markdownCard("用法：`/memory list`、`/memory disable 记忆ID`、`/memory restore 记忆ID`。停用仅影响提炼记忆，不删除原始聊天和其他记录。") };
+    if (action !== "list" && action !== "show" && action !== "disable" && action !== "restore") return { card: markdownCard("用法：`/memory list`、`/memory show 记忆ID`、`/memory disable 记忆ID`、`/memory restore 记忆ID`。停用仅影响提炼记忆，不删除原始聊天和其他记录。") };
     if (action !== "list" && (parts.length !== 3 || !parts[2])) return { card: errorCard("请附上 `/memory list` 中显示的记忆 ID。") };
-    const items = await this.manage(message.context, action, parts[2]);
+    const items = await this.manage(message.context, action === "show" ? "list" : action, action === "show" ? undefined : parts[2]);
     const escape = (text: string) => text.replace(/[\\`*_\[\]<>]/g, "\\$&").replace(/[\r\n]+/g, " ");
     if (!items.length) return { card: markdownCard("当前还没有提炼出的记忆。") };
+    if (action === "show") {
+      const item = findMemory(items, parts[2]);
+      const sources = item.evidence?.map(source => `- ${source.kind === "support" ? "支持" : "纠正"} · ${new Date(source.at).toISOString().slice(0, 10)}：${escape(source.quote)}`).join("\n") || "这条记忆没有可展示的原话依据。";
+      return { card: markdownCard(`**记忆详情**\n\n${item.active ? "启用" : "停用"} · ${escape(item.category)} · \`${item.id}\`\n${escape(item.text)}\n\n**原话依据**\n${sources}\n\n记录可能有误，可以直接纠正，或用 /memory disable 停用。`) };
+    }
     const lines = items.map(item => `- ${item.active ? "启用" : "停用"} · ${escape(item.category)} · \`${item.id}\`\n  ${escape(item.text)}`);
-    return { card: markdownCard(`${action === "list" ? "**提炼记忆（最多 40 条）**" : "**记忆状态已更新**"}\n\n${lines.join("\n")}\n\n停用仅影响提炼记忆；原始聊天、近期对话和其他记录不会删除。`) };
+    return { card: markdownCard(`${action === "list" ? "**提炼记忆**" : "**记忆状态已更新**"}\n\n${lines.join("\n")}\n\n使用 /memory show 记忆ID 查看依据。停用仅影响提炼记忆；原始聊天、近期对话和其他记录不会删除。`) };
   }
 }
 
@@ -242,6 +247,7 @@ export class HelpCommand implements CommandHandler {
 \`/logout\` - 退出用户身份登录
 \`/help\` - 显示此帮助信息
 \`/memory list\` - 查看自己的提炼记忆（仅私聊）
+\`/memory show 记忆ID\` - 查看关系画像的原话依据
 \`/bili-auto on|off|status|run\` - 管理 B 站自动互动（仅管理员私聊）
 \`/new\` - 开始新会话（换新的会话 id 与会话目录）
 \`/stop\` - 停止当前 AI 响应

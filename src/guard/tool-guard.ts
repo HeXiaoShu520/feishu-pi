@@ -50,6 +50,33 @@ export interface ToolGuardCheckParams {
   requesterOpenId?: string;
 }
 
+/** 单轮工具调用预算：超限后 block，拒绝理由回给模型引导其收尾输出最终答复。 */
+export interface ToolCallLimiter {
+  /** 每轮新消息开始时重置该会话的计数（由 bridge 调用）。 */
+  reset(chatId: string): void;
+  /** 记一次调用；超限返回拒绝理由（block），未超限返回 undefined。 */
+  check(toolName: string, chatId?: string): string | undefined;
+}
+
+/**
+ * 按 chatId 隔离计数的工具调用预算（默认上限由 FEISHU_ROUND_MAX_TOOL_CALLS 配置）。
+ * 计数表只增不清：每个会话一条目，个人助理场景数量有限；reset 由每轮新消息触发。
+ */
+export function createToolCallLimiter(maxCalls: number): ToolCallLimiter {
+  const counts = new Map<string, number>();
+  return {
+    reset: (chatId) => { counts.delete(chatId); },
+    check: (toolName, chatId) => {
+      const key = chatId || "__global__";
+      const count = (counts.get(key) ?? 0) + 1;
+      counts.set(key, count);
+      if (count <= maxCalls) return undefined;
+      logger.warn(`[ToolGuard] 本轮工具调用已达上限：${toolName} 是第 ${count} 次（上限 ${maxCalls}，会话 ${key}）`);
+      return `本轮工具调用已达上限（${maxCalls} 次）。请停止调用工具，基于已有信息直接给出最终答复`;
+    },
+  };
+}
+
 /**
  * Personal gate: deny > high-risk confirmation > ask model > allow > default deny.
  * Adapters that execute other capabilities must authorize those capabilities too.

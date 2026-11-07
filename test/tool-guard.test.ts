@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { ToolGuard } from "../src/guard/tool-guard.ts";
+import { ToolGuard, createToolCallLimiter } from "../src/guard/tool-guard.ts";
 import { PermissionBroker, type ApprovalRequest } from "../src/guard/broker.ts";
 import type { PolicyJudge } from "../src/guard/judge.ts";
 import type { ToolPolicy } from "../src/permission/policy.ts";
@@ -92,5 +92,41 @@ describe("ToolGuard 统一门禁", () => {
     expect(result?.block).toBe(true);
     expect(judge.calls).toEqual([]);
     expect(broker.calls).toEqual([]);
+  });
+});
+
+describe("createToolCallLimiter 单轮预算", () => {
+  it("上限内放行（undefined），超限 block 且理由含上限值", () => {
+    const limiter = createToolCallLimiter(3);
+    expect(limiter.check("read", "oc")).toBeUndefined();
+    expect(limiter.check("read", "oc")).toBeUndefined();
+    expect(limiter.check("bash", "oc")).toBeUndefined();
+    const blocked = limiter.check("bash", "oc");
+    expect(blocked).toBeDefined();
+    expect(blocked).toContain("3");
+    // 超限后继续拦
+    expect(limiter.check("read", "oc")).toBeDefined();
+  });
+
+  it("reset 清零：超限后 reset 恢复放行", () => {
+    const limiter = createToolCallLimiter(1);
+    expect(limiter.check("read", "oc")).toBeUndefined();
+    expect(limiter.check("read", "oc")).toBeDefined();
+    limiter.reset("oc");
+    expect(limiter.check("read", "oc")).toBeUndefined();
+  });
+
+  it("按 chatId 隔离：一个会话超限不影响其他会话", () => {
+    const limiter = createToolCallLimiter(1);
+    expect(limiter.check("read", "oc_a")).toBeUndefined();
+    expect(limiter.check("read", "oc_a")).toBeDefined();
+    expect(limiter.check("read", "oc_b")).toBeUndefined();
+  });
+
+  it("无 chatId → 全局键计数，与带 chatId 的互不干扰", () => {
+    const limiter = createToolCallLimiter(1);
+    expect(limiter.check("read")).toBeUndefined();
+    expect(limiter.check("read")).toBeDefined();
+    expect(limiter.check("read", "oc_x")).toBeUndefined();
   });
 });

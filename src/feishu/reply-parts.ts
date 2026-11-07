@@ -18,6 +18,8 @@ interface StatsLike {
   tokens?: { total?: number | null };
   cost?: number;
   sessionId?: string;
+  /** Pi 原生上下文占用：压缩后 percent 可能为 null（未知时不展示） */
+  contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
 }
 
 /** parts 的推送通道：全量重绘（render）与增量追加（append） */
@@ -195,11 +197,15 @@ export function formatStatsLine(input: {
   const total = stats.tokens?.total || 0;
   // 费用并入 token 段：$费用缺省时只留「累计」
   const cost = typeof stats.cost === "number" ? `（$${stats.cost.toFixed(4)}）` : "";
+  // 上下文窗口占比：长会话用户需要知道离上下文耗尽还有多远；压缩后未知则省略
+  const percent = stats.contextUsage?.percent;
+  const context = typeof percent === "number" ? `上下文 ${Math.round(percent)}%` : "";
   const elapsed = `${(input.elapsedMs / 1000).toFixed(1)}s`;
 
   return [
     input.modelName || "模型未知",
     `累计${formatTokens(total)}${cost}`,
+    context,
     elapsed,
     sessionAlias(stats.sessionId),
   ]
