@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, realpath, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Client } from "@larksuiteoapi/node-sdk";
@@ -53,6 +53,14 @@ describe("每张图片的独立描述", () => {
     await writeFile(join(outside, "secret.txt"), note("secret.gif"));
     await symlink(outside, join(root, "linked"), process.platform === "win32" ? "junction" : "dir");
     expect(await readStickerNote(root, join(root, "linked/secret.gif"))).toBeUndefined();
+  });
+
+  it("图库目录别名和规范化图片路径仍指向同一个库时可以读取", async () => {
+    const { root, one } = await fixture();
+    const aliasParent = await mkdtemp(join(tmpdir(), "sticker-library-alias-")); roots.push(aliasParent);
+    const alias = join(aliasParent, "library");
+    await symlink(root, alias, process.platform === "win32" ? "junction" : "dir");
+    expect((await readStickerNote(alias, await realpath(one)))?.meaning).toBe("这是自嘲自己卡住了，不是在骂对方");
   });
 
   it("发送必须检查同一图，凭证不能跨会话、换图、过期或在图片/描述修改后复用", async () => {
