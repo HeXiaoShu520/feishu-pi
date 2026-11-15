@@ -1,14 +1,15 @@
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { randomUUID } from "node:crypto";
-import { containsSensitiveText } from "../assistant/memory-safety.ts";
+import { containsSensitiveText } from "../assistant/sensitive.ts";
 
 type Json = Record<string, unknown>;
 export interface BiliAutomationDependencies {
   authorize(tool: string, args: Json, chatId: string, signal: AbortSignal): Promise<void>;
   call(tool: string, args: Json, chatId: string, signal: AbortSignal): Promise<Json>;
   decide(stage: "keywords" | "video" | "reply" | "share", data: unknown, signal: AbortSignal): Promise<unknown>;
-  interests(): Promise<string[]>;
+  /** Only explicitly provided public interests; never implicitly load private memories. */
+  interests?(): Promise<string[]>;
   share?(chatId: string, text: string): Promise<void>;
   isChatActive?(chatId: string): boolean;
   now?: () => number;
@@ -143,7 +144,7 @@ export class BiliAutomation {
     } finally { await this.save(s).finally(() => { this.busy = false; this.controller = undefined; }); }
   }
   private async browse(s: State, signal: AbortSignal): Promise<void> {
-    const interests = (await this.deps.interests()).slice(0, 12);
+    const interests = (await this.deps.interests?.() ?? []).slice(0, 12);
     const raw = await this.deps.decide("keywords", { interests }, signal);
     const keywords = Array.isArray(raw) ? raw.filter((v): v is string => typeof v === "string" && !!v.trim() && v.length <= 40 && !containsSensitiveText(v) && !/[\w.+-]+@[\w.-]+\.[A-Za-z]{2,}|\b1\d{10}\b/.test(v)).slice(0, 3) : [];
     if (!keywords.length) return;

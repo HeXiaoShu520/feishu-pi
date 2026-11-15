@@ -1,0 +1,525 @@
+{
+  "source": "https://github.com/DejavuMoe/deepseek_wale_girl",
+  "stickers": [
+    {
+      "id": "001",
+      "filename": "001_hehe.gif",
+      "description": "DeepSeek 鲸鱼娘：嘿嘿"
+    },
+    {
+      "id": "002",
+      "filename": "002_haha.gif",
+      "description": "DeepSeek 鲸鱼娘：笑死"
+    },
+    {
+      "id": "003",
+      "filename": "003_shy.gif",
+      "description": "DeepSeek 鲸鱼娘：好害羞"
+    },
+    {
+      "id": "004",
+      "filename": "004_cry.gif",
+      "description": "DeepSeek 鲸鱼娘：呜呜"
+    },
+    {
+      "id": "005",
+      "filename": "005_bawl.gif",
+      "description": "DeepSeek 鲸鱼娘：大哭"
+    },
+    {
+      "id": "006",
+      "filename": "006_angry.gif",
+      "description": "DeepSeek 鲸鱼娘：生气了"
+    },
+    {
+      "id": "007",
+      "filename": "007_rage.gif",
+      "description": "DeepSeek 鲸鱼娘：超气的"
+    },
+    {
+      "id": "008",
+      "filename": "008_speechless.gif",
+      "description": "DeepSeek 鲸鱼娘：无语"
+    },
+    {
+      "id": "009",
+      "filename": "009_shock.gif",
+      "description": "DeepSeek 鲸鱼娘：啊？"
+    },
+    {
+      "id": "010",
+      "filename": "010_scared.gif",
+      "description": "DeepSeek 鲸鱼娘：害怕"
+    },
+    {
+      "id": "011",
+      "filename": "011_sleepy.gif",
+      "description": "DeepSeek 鲸鱼娘：困困"
+    },
+    {
+      "id": "012",
+      "filename": "012_smug.gif",
+      "description": "DeepSeek 鲸鱼娘：得意"
+    },
+    {
+      "id": "013",
+      "filename": "013_act-cute.gif",
+      "description": "DeepSeek 鲸鱼娘：求求啦"
+    },
+    {
+      "id": "014",
+      "filename": "014_heart-hands.gif",
+      "description": "DeepSeek 鲸鱼娘：比心"
+    },
+    {
+      "id": "015",
+      "filename": "015_like.gif",
+      "description": "DeepSeek 鲸鱼娘：点赞"
+    },
+    {
+      "id": "016",
+      "filename": "016_nope.gif",
+      "description": "DeepSeek 鲸鱼娘：不可以"
+    },
+    {
+      "id": "017",
+      "filename": "017_yes.gif",
+      "description": "DeepSeek 鲸鱼娘：好哒"
+    },
+    {
+      "id": "018",
+      "filename": "018_wave.gif",
+      "description": "DeepSeek 鲸鱼娘：拜拜"
+    },
+    {
+      "id": "019",
+      "filename": "019_kneel.gif",
+      "description": "DeepSeek 鲸鱼娘：跪了"
+    },
+    {
+      "id": "020",
+      "filename": "020_hug.gif",
+      "description": "DeepSeek 鲸鱼娘：抱抱"
+    },
+    {
+      "id": "021",
+      "filename": "021_kiss.gif",
+      "description": "DeepSeek 鲸鱼娘：飞吻"
+    },
+    {
+      "id": "022",
+      "filename": "022_eat.gif",
+      "description": "DeepSeek 鲸鱼娘：干饭"
+    },
+    {
+      "id": "023",
+      "filename": "023_milk-tea.gif",
+      "description": "DeepSeek 鲸鱼娘：奶茶续命"
+    },
+    {
+      "id": "024",
+      "filename": "024_fighting.gif",
+      "description": "DeepSeek 鲸鱼娘：加油！"
+    },
+    {
+      "id": "025",
+      "filename": "025_thanks.gif",
+      "description": "DeepSeek 鲸鱼娘：谢谢"
+    },
+    {
+      "id": "026",
+      "filename": "026_sorry.gif",
+      "description": "DeepSeek 鲸鱼娘：对不起"
+    },
+    {
+      "id": "027",
+      "filename": "027_good-night.gif",
+      "description": "DeepSeek 鲸鱼娘：晚安"
+    },
+    {
+      "id": "028",
+      "filename": "028_good-morning.gif",
+      "description": "DeepSeek 鲸鱼娘：早安"
+    },
+    {
+      "id": "029",
+      "filename": "029_overtime.gif",
+      "description": "DeepSeek 鲸鱼娘：加班中"
+    },
+    {
+      "id": "030",
+      "filename": "030_fish.gif",
+      "description": "DeepSeek 鲸鱼娘：摸鱼"
+    },
+    {
+      "id": "031",
+      "filename": "031_gg.gif",
+      "description": "DeepSeek 鲸鱼娘：寄了"
+    },
+    {
+      "id": "032",
+      "filename": "032_rot.gif",
+      "description": "DeepSeek 鲸鱼娘：摆烂"
+    },
+    {
+      "id": "033",
+      "filename": "033_juan.gif",
+      "description": "DeepSeek 鲸鱼娘：卷到了"
+    },
+    {
+      "id": "034",
+      "filename": "034_lie-flat.gif",
+      "description": "DeepSeek 鲸鱼娘：躺平"
+    },
+    {
+      "id": "035",
+      "filename": "035_xiang.gif",
+      "description": "DeepSeek 鲸鱼娘：真香"
+    },
+    {
+      "id": "036",
+      "filename": "036_tears.gif",
+      "description": "DeepSeek 鲸鱼娘：泪目"
+    },
+    {
+      "id": "037",
+      "filename": "037_broken.gif",
+      "description": "DeepSeek 鲸鱼娘：破防了"
+    },
+    {
+      "id": "038",
+      "filename": "038_nice.gif",
+      "description": "DeepSeek 鲸鱼娘：好耶！"
+    },
+    {
+      "id": "039",
+      "filename": "039_yeah-yeah.gif",
+      "description": "DeepSeek 鲸鱼娘：啊对对对"
+    },
+    {
+      "id": "040",
+      "filename": "040_zundun.gif",
+      "description": "DeepSeek 鲸鱼娘：尊嘟假嘟"
+    },
+    {
+      "id": "041",
+      "filename": "041_cool.gif",
+      "description": "DeepSeek 鲸鱼娘：泰裤辣"
+    },
+    {
+      "id": "042",
+      "filename": "042_thanks-q.gif",
+      "description": "DeepSeek 鲸鱼娘：栓Q"
+    },
+    {
+      "id": "043",
+      "filename": "043_yyds.gif",
+      "description": "DeepSeek 鲸鱼娘：YYDS"
+    },
+    {
+      "id": "044",
+      "filename": "044_juejuezi.gif",
+      "description": "DeepSeek 鲸鱼娘：绝绝子"
+    },
+    {
+      "id": "045",
+      "filename": "045_bbq.gif",
+      "description": "DeepSeek 鲸鱼娘：芭比Q了"
+    },
+    {
+      "id": "046",
+      "filename": "046_cracked.gif",
+      "description": "DeepSeek 鲸鱼娘：我裂开"
+    },
+    {
+      "id": "047",
+      "filename": "047_ahead.gif",
+      "description": "DeepSeek 鲸鱼娘：遥遥领先"
+    },
+    {
+      "id": "048",
+      "filename": "048_cpu.gif",
+      "description": "DeepSeek 鲸鱼娘：CPU烧了"
+    },
+    {
+      "id": "049",
+      "filename": "049_hallucinate.gif",
+      "description": "DeepSeek 鲸鱼娘：一本正经胡说"
+    },
+    {
+      "id": "050",
+      "filename": "050_context.gif",
+      "description": "DeepSeek 鲸鱼娘：上下文爆了"
+    },
+    {
+      "id": "051",
+      "filename": "051_token.gif",
+      "description": "DeepSeek 鲸鱼娘：Token不够"
+    },
+    {
+      "id": "052",
+      "filename": "052_queue.gif",
+      "description": "DeepSeek 鲸鱼娘：排队中"
+    },
+    {
+      "id": "053",
+      "filename": "053_thinking.gif",
+      "description": "DeepSeek 鲸鱼娘：思考中"
+    },
+    {
+      "id": "054",
+      "filename": "054_deepseek.gif",
+      "description": "DeepSeek 鲸鱼娘：深度求索"
+    },
+    {
+      "id": "055",
+      "filename": "055_whale-spout.gif",
+      "description": "DeepSeek 鲸鱼娘：喷水啦"
+    },
+    {
+      "id": "056",
+      "filename": "056_saved.gif",
+      "description": "DeepSeek 鲸鱼娘：被捞了"
+    },
+    {
+      "id": "057",
+      "filename": "057_lurk.gif",
+      "description": "DeepSeek 鲸鱼娘：潜水"
+    },
+    {
+      "id": "058",
+      "filename": "058_eat-fish.gif",
+      "description": "DeepSeek 鲸鱼娘：吃鱼"
+    },
+    {
+      "id": "059",
+      "filename": "059_wag.gif",
+      "description": "DeepSeek 鲸鱼娘：摇尾巴"
+    },
+    {
+      "id": "060",
+      "filename": "060_seabed.gif",
+      "description": "DeepSeek 鲸鱼娘：海底摸鱼"
+    },
+    {
+      "id": "061",
+      "filename": "061_req-change.gif",
+      "description": "DeepSeek 鲸鱼娘：需求又改"
+    },
+    {
+      "id": "062",
+      "filename": "062_ship.gif",
+      "description": "DeepSeek 鲸鱼娘：上线啦"
+    },
+    {
+      "id": "063",
+      "filename": "063_rollback.gif",
+      "description": "DeepSeek 鲸鱼娘：回滚了"
+    },
+    {
+      "id": "064",
+      "filename": "064_blame.gif",
+      "description": "DeepSeek 鲸鱼娘：背锅"
+    },
+    {
+      "id": "065",
+      "filename": "065_paddle.gif",
+      "description": "DeepSeek 鲸鱼娘：划水"
+    },
+    {
+      "id": "066",
+      "filename": "066_coffee.gif",
+      "description": "DeepSeek 鲸鱼娘：咖啡续命"
+    },
+    {
+      "id": "067",
+      "filename": "067_boss.gif",
+      "description": "DeepSeek 鲸鱼娘：老板英明"
+    },
+    {
+      "id": "068",
+      "filename": "068_pay.gif",
+      "description": "DeepSeek 鲸鱼娘：打钱"
+    },
+    {
+      "id": "069",
+      "filename": "069_free.gif",
+      "description": "DeepSeek 鲸鱼娘：白嫖"
+    },
+    {
+      "id": "070",
+      "filename": "070_bug.gif",
+      "description": "DeepSeek 鲸鱼娘：改Bug"
+    },
+    {
+      "id": "071",
+      "filename": "071_triple.gif",
+      "description": "DeepSeek 鲸鱼娘：一键三连"
+    },
+    {
+      "id": "072",
+      "filename": "072_follow.gif",
+      "description": "DeepSeek 鲸鱼娘：关注了"
+    },
+    {
+      "id": "073",
+      "filename": "073_liked-it.gif",
+      "description": "DeepSeek 鲸鱼娘：点了"
+    },
+    {
+      "id": "074",
+      "filename": "074_share.gif",
+      "description": "DeepSeek 鲸鱼娘：转发"
+    },
+    {
+      "id": "075",
+      "filename": "075_fav.gif",
+      "description": "DeepSeek 鲸鱼娘：收藏"
+    },
+    {
+      "id": "076",
+      "filename": "076_watching.gif",
+      "description": "DeepSeek 鲸鱼娘：在看"
+    },
+    {
+      "id": "077",
+      "filename": "077_coin.gif",
+      "description": "DeepSeek 鲸鱼娘：投币"
+    },
+    {
+      "id": "078",
+      "filename": "078_ship-it.gif",
+      "description": "DeepSeek 鲸鱼娘：磕到了"
+    },
+    {
+      "id": "079",
+      "filename": "079_locked.gif",
+      "description": "DeepSeek 鲸鱼娘：锁死"
+    },
+    {
+      "id": "080",
+      "filename": "080_be.gif",
+      "description": "DeepSeek 鲸鱼娘：BE了"
+    },
+    {
+      "id": "081",
+      "filename": "081_he.gif",
+      "description": "DeepSeek 鲸鱼娘：HE万岁"
+    },
+    {
+      "id": "082",
+      "filename": "082_sweet.gif",
+      "description": "DeepSeek 鲸鱼娘：好甜"
+    },
+    {
+      "id": "083",
+      "filename": "083_yingying.gif",
+      "description": "DeepSeek 鲸鱼娘：嘤嘤嘤"
+    },
+    {
+      "id": "084",
+      "filename": "084_what.gif",
+      "description": "DeepSeek 鲸鱼娘：哈？"
+    },
+    {
+      "id": "085",
+      "filename": "085_master.gif",
+      "description": "DeepSeek 鲸鱼娘：好的主人"
+    },
+    {
+      "id": "086",
+      "filename": "086_dress.gif",
+      "description": "DeepSeek 鲸鱼娘：女仆装"
+    },
+    {
+      "id": "087",
+      "filename": "087_sandwich.gif",
+      "description": "DeepSeek 鲸鱼娘：干饭人"
+    },
+    {
+      "id": "088",
+      "filename": "088_float.gif",
+      "description": "DeepSeek 鲸鱼娘：浮起来了"
+    },
+    {
+      "id": "089",
+      "filename": "089_offwork.gif",
+      "description": "DeepSeek 鲸鱼娘：下班！"
+    },
+    {
+      "id": "090",
+      "filename": "090_weekend.gif",
+      "description": "DeepSeek 鲸鱼娘：周末快乐"
+    },
+    {
+      "id": "091",
+      "filename": "091_whale-fall.gif",
+      "description": "DeepSeek 鲸鱼娘：鲸落"
+    },
+    {
+      "id": "092",
+      "filename": "092_shore.gif",
+      "description": "DeepSeek 鲸鱼娘：上岸"
+    },
+    {
+      "id": "093",
+      "filename": "093_dive-go.gif",
+      "description": "DeepSeek 鲸鱼娘：下海"
+    },
+    {
+      "id": "094",
+      "filename": "094_go-go.gif",
+      "description": "DeepSeek 鲸鱼娘：冲鸭"
+    },
+    {
+      "id": "095",
+      "filename": "095_wuhu.gif",
+      "description": "DeepSeek 鲸鱼娘：芜湖起飞"
+    },
+    {
+      "id": "096",
+      "filename": "096_peace.gif",
+      "description": "DeepSeek 鲸鱼娘：比个耶"
+    },
+    {
+      "id": "097",
+      "filename": "097_upup.gif",
+      "description": "DeepSeek 鲸鱼娘：举高高"
+    },
+    {
+      "id": "098",
+      "filename": "098_spin.gif",
+      "description": "DeepSeek 鲸鱼娘：转圈圈"
+    },
+    {
+      "id": "099",
+      "filename": "099_ok-fine.gif",
+      "description": "DeepSeek 鲸鱼娘：随便吧"
+    },
+    {
+      "id": "100",
+      "filename": "100_hello.gif",
+      "description": "DeepSeek 鲸鱼娘：来啦"
+    },
+    {
+      "id": "101",
+      "filename": "101_rice.gif",
+      "description": "DeepSeek 鲸鱼娘：我去吃饭，测完告诉我就行"
+    },
+    {
+      "id": "102",
+      "filename": "102_token.gif",
+      "description": "DeepSeek 鲸鱼娘：Token吃光啦"
+    },
+    {
+      "id": "103",
+      "filename": "103_cheap.gif",
+      "description": "DeepSeek 鲸鱼娘：真当我是便宜货啊"
+    },
+    {
+      "id": "104",
+      "filename": "104_deepsleep.gif",
+      "description": "DeepSeek 鲸鱼娘：深度求索？深度睡眠！"
+    }
+  ]
+}

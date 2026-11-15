@@ -37,8 +37,26 @@ export interface FeishuPiAppConfig {
   guardTimeoutMs: number;
   /** 授权卡片等待本人点击的超时时间（超时视为拒绝） */
   approvalTimeoutMs: number;
-  /** 回复卡末尾是否显示模型统计小字（模型 · token · ctx · 费用 · 耗时 · 会话别名）；工具过程状态不受影响 */
+  /** 回复卡末尾是否显示模型统计小字（模型 · token · ctx · 费用 · 耗时 · 会话别名），默认关闭；工具过程状态不受影响 */
   showModelStats: boolean;
+  /** 回复文字里是否允许 emoji 表情符号，默认允许；关闭时提示层禁用 + 发送前兜底剥离 */
+  replyEmoji: boolean;
+  /** 群聊主动接话：默认开启但低概率潜水；关闭后群聊只响应 @ */
+  groupChime: boolean;
+  /** 有原话依据、按聊天/说话人隔离的记忆；默认开启，后台提炼 */
+  agentMemory: boolean;
+  /** 群聊主动发言：默认关闭，且必须显式指定群 */
+  proactive: boolean;
+  /** 允许主动发言的群 chatId（FEISHU_PI_ACTIVE_CHATS，逗号分隔） */
+  proactiveChats: string[];
+  /** 群安静多久后考虑发言（分钟） */
+  proactiveIdleMinutes: number;
+  /** 两次主动发言/尝试之间的冷却（分钟） */
+  proactiveCooldownMinutes: number;
+  /** 每群每天最多主动发言次数 */
+  proactiveDailyLimit: number;
+  /** 主动发言检查间隔（分钟） */
+  proactiveCheckMinutes: number;
   /** 服务完全就绪后发给本人的私聊文本（FEISHU_PI_ONLINE_NOTICE） */
   onlineNotice: string;
   /** 服务收到退出信号时发给本人的私聊文本；可用 {signal} 插入信号名（FEISHU_PI_OFFLINE_NOTICE） */
@@ -146,8 +164,21 @@ export function loadConfig(env: NodeJS.ProcessEnv = process.env): FeishuPiAppCon
     guardApiKey: env.FEISHU_GUARD_API_KEY ?? env.FEISHU_PI_MODEL_API_KEY,
     guardTimeoutMs: 6_000,
     approvalTimeoutMs: 5 * 60_000,
-    // 回复末尾的模型统计小字：默认显示；FEISHU_SHOW_MODEL_STATS=0/false/off 关闭（工具过程状态不受影响）
-    showModelStats: parseBoolEnv(env.FEISHU_SHOW_MODEL_STATS, true),
+    // 回复末尾的模型统计小字：默认关闭（像个人说话，不向对话方报技术账）；FEISHU_SHOW_MODEL_STATS=1/true/on 打开（工具过程状态不受影响）
+    showModelStats: parseBoolEnv(env.FEISHU_SHOW_MODEL_STATS, false),
+    // 回复文字里的 emoji：默认允许（真人聊天本来就会用）；FEISHU_PI_REPLY_EMOJI=0/off 关闭并在发送前剥离
+    replyEmoji: parseBoolEnv(env.FEISHU_PI_REPLY_EMOJI, true),
+    // 群聊主动接话：默认开启，但只在点名/提问/发图时低概率接一句；FEISHU_PI_GROUP_CHIME=0 关闭后只响应 @
+    groupChime: parseBoolEnv(env.FEISHU_PI_GROUP_CHIME, true),
+    // FEISHU_PI_AGENT_MEMORY=0 disables both recall and extraction.
+    agentMemory: parseBoolEnv(env.FEISHU_PI_AGENT_MEMORY, true),
+    // 群聊主动发言：默认关闭；FEISHU_PI_ACTIVE_CHATS 指定群后才可能开口
+    proactive: parseBoolEnv(env.FEISHU_PI_PROACTIVE, false),
+    proactiveChats: (env.FEISHU_PI_ACTIVE_CHATS ?? "").split(",").map((id) => id.trim()).filter(Boolean),
+    proactiveIdleMinutes: parsePositiveIntEnv(env.FEISHU_PI_PROACTIVE_IDLE_MINUTES, 45, 1440),
+    proactiveCooldownMinutes: parsePositiveIntEnv(env.FEISHU_PI_PROACTIVE_COOLDOWN_MINUTES, 180, 1440),
+    proactiveDailyLimit: parsePositiveIntEnv(env.FEISHU_PI_PROACTIVE_DAILY_LIMIT, 2, 20),
+    proactiveCheckMinutes: parsePositiveIntEnv(env.FEISHU_PI_PROACTIVE_CHECK_MINUTES, 5, 60),
     onlineNotice: parseNoticeEnv(env.FEISHU_PI_ONLINE_NOTICE, "🟢 feishu-pi 已上线，飞书通道、权限门禁和定时任务已就绪。"),
     offlineNotice: parseNoticeEnv(env.FEISHU_PI_OFFLINE_NOTICE, "🔴 feishu-pi 正在下线（{signal}）。"),
     // 资源和会话背压：单位分别为 MiB、MiB、条；默认值适合个人助理，可按部署调整。

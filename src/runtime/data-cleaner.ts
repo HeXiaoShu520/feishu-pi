@@ -5,7 +5,7 @@
  * 按文件删只会留下"历史没了、附件还在"的半截会话。过期判定用目录树内最新的 mtime，
  * 也就是这个会话最后一次活动的时间；只要还在用，目录就不会被判过期。
  *
- * 会话目录之外的长期数据不在这里清理：记忆、用户资料、凭证、会话索引等属于"特殊"数据，
+ * 会话目录之外的长期数据不在这里清理：用户资料、凭证、会话索引等属于"特殊"数据，
  * 有各自的过期策略（如消息去重表按 updatedAt 随同一保留期清理）。
  */
 
@@ -20,7 +20,7 @@ export interface CleanupOptions {
   sessionsRoot: string;
   /** 保留天数，默认 7 天 */
   retentionDays?: number;
-  /** 不删除对话目录，让后续长期记忆系统可以处理原始历史。默认 true：删除必须显式选择（fail-safe） */
+  /** 不删除对话目录，保留原始历史供人工查看。默认 true：删除必须显式选择（fail-safe） */
   preserveSessions?: boolean;
   /** 消息去重表路径（可选；按 updatedAt 用同一保留期清理） */
   messages?: MessageStore;

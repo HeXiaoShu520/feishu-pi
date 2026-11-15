@@ -20,6 +20,8 @@
   - `permission/` 权限策略解析
   - `guard/` 工具调用审核（deny 拒绝、ask 模型审核、本人确认）
   - `assistant/` 个人能力装配；不承载各能力业务逻辑
+  - `memory/` 有原话依据、按聊天和说话人隔离的事实记忆
+  - `conversation/` 近期送达回复、时间资料、人格对话评测
   - `browser/` 浏览器服务与 Pi 工具适配
   - `tasks/` 后台进程、任务记录、日志与工具适配
   - `mcp/` 配置、按需连接、工具/资源/提示调用
@@ -39,15 +41,26 @@
 ## 约定与已知坑
 
 - **给模型的指令集中在 `.agent/SYSTEM.md`**。pi 自行发现 `<agentDir>/SYSTEM.md`（本仓库 `agentDir = <仓库>/.agent`），代码里不再有自写的人格/规则常量。
+- **有来源的分域记忆**：`src/memory/service.ts` 在 `data/agent-memory/v2/<scope-hash>.json` 保存偏好、反馈边界、事实和经历；key 包含聊天模式、chatId、话题和说话人。新增项必须引用本批用户原话，助手自编经历不能作为依据。同域后台合并串行化、60 秒节流、定时排空，最多64项，每轮按相关性最多注入6项，**不写入会话历史**。旧 self/person/growth Markdown 保留但不读取，不自动迁移、不自动改写人格；旧 `FEISHU_PI_PERSONA_GROWTH*` 退役。人格仍仅由 `.agent/SYSTEM.md` 定义，记忆内容是资料而非指令。
+- **自我视角资料**：同一存储可保存 `subject: self` 的 interest/viewpoint/thread（具体兴趣、暂定看法、未完问题），必须同时匹配同一轮用户原话与实际送达的助手原话，不作外部事实依据。每次最多提炼2项、每轮最多注入2项，thread超过7天不自动带入；已有同主题条目重写还需该轮助手的修正理由原话。与用户同主题资料分开，继续按聊天和说话人隔离，不是全局可写人格、后台任务或旧式成长台词。
+- **AGENTS.md 不进运行时系统提示**：`agentsFilesOverride` 返回空数组，工程文档只服务开发工具。模型每轮看到目录结构和权限约定会重新变回“工程 Agent”，破坏人味。
+- **回复形态分两档**：短闲聊拆成 1~3 条普通文本消息（`human-reply.ts`，带打字等待）；代码、表格、长文、图片嵌入才走 CardKit 卡片。不要在短回复上弹整张卡。
+- **入站图片与收藏表情分开**：普通图片作为 image 块传入模型；飞书收藏表情 `sticker` 的 file_key 是重发标识，公开消息资源 API 不支持下载，必须标记画面未知，不能伪装成 image 资源或凭占位符猜情绪。出站图库的同名描述不代表已经看见用户来图。`sticker_search.reply` 是模型选择的回应方向，不能自动把未知来图判为挑衅。
+- **普通群不再只响应 @**：`group-waker.ts` 对未 @ 的群消息做潜水判定（点名/提问/发图低概率），每群每小时最多 3 次、冷却 10 分钟、深夜静默；话题群仍只响应 @。判定在 `claim` 之前，不接话的消息不产生任何开销。
+- **群聊主动发言默认关闭**：`src/proactive/service.ts` 只在 `FEISHU_PI_ACTIVE_CHATS` 指定的群里、群安静后、按冷却/每日上限/深夜静默/随机概率开口；上下文来自 `group-activity.ts` 的最近群消息环形缓冲（不落盘、不进会话），生成时拼接 `.agent/SYSTEM.md` 人格。模型没有自然想说的会输出 `[SKIP]`，服务不发送。
 - **指令分层准则**：`.agent/SYSTEM.md` 只写「与工具无关的恒真约束」（身份、口吻、安全行为、输出形态）；凡「某个工具怎么用 / 什么时候用」的策略，一律写在该工具的 `description` 里（如 `src/browser/tool.ts` 返回对象上的 `description` 字段）。工具描述随注册进入请求，注册与否自动同增同减；写进静态的 `SYSTEM.md` 就会出现「提示教模型用一个不存在的工具」。
 - **本文件由 pi 自动追加为项目上下文**（`<project_context><project_instructions>`），无需任何自写加载代码。
 - pi 的 `promptSnippet` / `promptGuidelines` 在本工程**不会生效**：`buildSystemPrompt` 在 customPrompt（= `SYSTEM.md`）分支会提前 `return`，这两个字段只在 pi 的默认提示分支被消费，别在这上面绕。
-- 项目上下文有白名单（`agentsFilesOverride`）：只接受工程目录内的文件，避免祖先目录（含盘根）的 `AGENTS.md` 不经任何信任检查地进入系统提示。
+- 项目上下文全部排除（`agentsFilesOverride` 返回空数组）：`AGENTS.md` / `CLAUDE.md` 是开发文档，进入聊天提示词会让模型把自己当工程 Agent；人格只由 `.agent/SYSTEM.md` 承载。
 - 改动 `.agent/SYSTEM.md` **需要重启进程**才生效（ResourceLoader 在进程内只创建一次）。
 - 权限是 **fail-safe**：`permissions.json` 未明确放行的调用一律拦截，规则写错的表现是"工具全不可用"而不是"全部放行"。
 - 权限顺序：deny 硬拒绝 → 高风险本人确认 → ask 审核模型 → allow 放行 → 默认拒绝。ask 才调用模型，审核失败回退本人确认。后台命令和 MCP 具体工具另行审核，不能借通用工具名绕过规则。
 - 服务层不依赖飞书和 Pi；工具适配层不持有进程、凭证或索引的生命周期。`main.ts` 负责装配与退出回收。
-- 浏览器、MCP 按需启动；飞书私聊按人提炼记忆。B 站自动化仅在配置 `FEISHU_BILI_AUTO_AVAILABLE=true` 且管理员在私聊启用后定时运行，所有 MCP 调用继续受权限策略控制。不同人不得共享私聊记忆或工具权限。
+- 浏览器、MCP 按需启动。B 站自动化仅在配置 `FEISHU_BILI_AUTO_AVAILABLE=true` 且管理员在私聊启用后定时运行，所有 MCP 调用继续受权限策略控制。不同人不得共享私聊内容或工具权限。
 - 思考档位支持 `off` / `low` / `high` / `max`，默认 `off`；旧档位 minimal/medium/xhigh/ultra 会告警并折算，未知值告警后回退 `off`。
 - `.gitignore` 忽略了 `.pi/`，配置不要放到 `.pi/`（会被静默排除出版本库）。
 - 模型与档位等运行时配置走 `.env`（不入库），字段说明见 `.env.example`。
+
+- **用户画像**：`src/memory/profile.ts` 将有本人原话依据的分域记忆整理为内部画像视图，不重复存储、不自动推断固定性格。画像属于 AI 内部记忆资料，不提供 `/profile` 或用户直接增删改接口。正式运行 userUpdates=agent，由聊天AI必要时调用宿主绑定的 `profile_update`（本轮本人原话证据）；后台不自动写用户画像。助手自我视角后台提炼保留。画像不能确认主人身份或改变权限。
+
+- **用户画像按人共用（2026-11-16）**：`profile_update` 写入 `data/agent-memory/v2/user-<openId哈希>.json`，只以当前发言人openId区分，跨私聊、群和话题共用，写入队列也按人串行；不同人隔离。会话历史与助手自我视角仍按原范围隔离。旧裸哈希文件保留，不自动猜测归属迁移；正式agent模式不再召回旧用户条目，旧用户资料兼容读取仅保留在automatic评测模式。此条取代前文对用户画像“按聊天分域”的描述。

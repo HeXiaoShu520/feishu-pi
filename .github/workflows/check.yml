@@ -2,7 +2,7 @@ name: TypeScript
 
 on:
   push:
-    branches: [main]
+    branches: [main, "release/**"]
   pull_request:
 
 jobs:
@@ -14,5 +14,12 @@ jobs:
         with:
           node-version: 22
           cache: npm
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install -r requirements-stickers.txt
       - run: npm ci
       - run: npm run check
+      - run: npm test
+      - run: npm run doctor -- --no-config
+      - run: python test/sticker-frames.test.py

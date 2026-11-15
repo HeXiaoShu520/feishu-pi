@@ -1,0 +1,13 @@
+图片文件：浏览器00004-IE使人头痛.jpg
+画面：蓝色Internet Explorer标志叠在一名女子旁边，画面上下有英文字幕。
+动作：静态图片
+图中文字：‘I ACCIDENTALLY CLICKED ON’；‘NOW I HAVE TO WAIT FOR IT TO LOAD SO I CAN CLOSE IT AGAIN’。
+表达含义：调侃误点Internet Explorer后要等待加载才能关掉，讽刺其加载缓慢。
+情绪：无奈、吐槽
+关键词：Internet Explorer、加载慢、吐槽
+适合接话：怀旧讨论旧浏览器或加载缓慢时。
+不适合：与浏览器无关的严肃问题。
+不确定处：英文可辨。
+描述来源：Luna视觉描述，静态图片；自动描述，可能有误
+图片SHA256：0c33caf56fc8c2ddf84b8b09e42bc24265b37f9adc68ccef283acfa0cdb2b883
+生成时间：2026-11-12T20:36:41.306140+00:00

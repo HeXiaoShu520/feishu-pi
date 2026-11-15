@@ -5,16 +5,18 @@
  * dsh-nekowhale-stickers（Apache-2.0）：
  *   https://github.com/Loping151/dsh-nekowhale-stickers/blob/main/src/core/search.ts
  * 知识数据（tags / meme / desc）来自同仓库 meta/，CC BY-NC 4.0，
- * 署名与授权要求见 data/stickers/nekowhale/{NOTICE,LICENSE-ASSETS}。
+ * 署名与授权要求见 stickers/nekowhale/{NOTICE,LICENSE-ASSETS}。
  *
  * dsh-pet 包的素材与动作描述来自 https://github.com/PC2005-cloud/dsh-pet
- * （代码 MIT，素材禁止商用；宠物形象 CC BY-NC-SA 4.0，详见 data/stickers/dsh-pet/NOTICE）。
+ * （代码 MIT，素材禁止商用；宠物形象 CC BY-NC-SA 4.0，详见 stickers/dsh-pet/NOTICE）。
  */
 import { access, readFile, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { logger } from "../utils/logger.ts";
 import { applyRules, EMPTY_RULES, type StickerRules } from "./rules.ts";
 import { recentSent, sentPenalty } from "./recent.ts";
+import { readStickerNote, type StickerNote } from "./notes.ts";
+import { REPLY_TERMS, type StickerReply } from "./reply-intent.ts";
 
 export interface Sticker {
   id: string;
@@ -31,11 +33,13 @@ export interface Sticker {
   meme: string;
   en: string;
   desc: string;
+  note?: StickerNote;
   /** 本地绝对路径，只在服务端使用，绝不返回给模型 */
   path: string;
 }
 
 export interface SearchOptions {
+  reply?: StickerReply;
   pack?: string;
   emotion?: string;
   limit?: number;
@@ -74,7 +78,7 @@ const CJK = /[\u3400-\u9fff\uf900-\ufaff]/u;
 const REQUIRED_PACKS = ["nekowhale", "clawd", "whale-girl"] as const;
 const OPTIONAL_PACKS = ["bluefish", "emotelab"] as const;
 /** 扩展包：metadata 直接写全 Sticker 字段，新增同类来源只需把包名加到这里 */
-const EXTRA_PACKS = ["dsh-pet"] as const;
+const EXTRA_PACKS = ["dsh-pet", "chinese-bqb", "emoji-package", "dafeiyu"] as const;
 /** 全部包名，工具参数的 pack enum 单一来源，避免多处手写漂移 */
 export const ALL_PACKS = [...REQUIRED_PACKS, ...OPTIONAL_PACKS, ...EXTRA_PACKS];
 
@@ -83,7 +87,7 @@ const strings = (value: unknown): string[] =>
   Array.isArray(value) ? value.filter((entry): entry is string => typeof entry === "string") : [];
 
 /** 目录解析结果按 metadata 的 mtime + size 缓存，避免每次搜索重新解析 212KB */
-let catalogCache: { key: string; items: Sticker[] } | undefined;
+let catalogCache: { key: string; items: Sticker[]; checkedAt: number } | undefined;
 
 async function readPack(base: string, pack: string): Promise<Array<Record<string, unknown>>> {
   // 表情是低风险能力：单个包 metadata 缺失或损坏只降级该包（同 rules 的哲学），不拖垮其它包；
@@ -111,15 +115,15 @@ export async function loadCatalog(root: string): Promise<Sticker[]> {
     }
   }));
   const key = `${base}|${stamps.join("|")}`;
-  if (catalogCache?.key === key) return catalogCache.items;
+  if (catalogCache?.key === key && Date.now() - catalogCache.checkedAt < 5_000) return catalogCache.items;
 
-  const [fish, clawd, whale, blue, emote, pet] = await Promise.all([
+  const [fish, clawd, whale, blue, emote, ...extras] = await Promise.all([
     readPack(base, "nekowhale"),
     readPack(base, "clawd"),
     readPack(base, "whale-girl"),
     readPack(base, "bluefish"),
     readPack(base, "emotelab"),
-    readPack(base, "dsh-pet"),
+    ...EXTRA_PACKS.map((pack) => readPack(base, pack)),
   ]);
 
   const items: Sticker[] = [];
@@ -159,14 +163,14 @@ export async function loadCatalog(root: string): Promise<Sticker[]> {
       code: item.id,
       group: item.id,
       name: text(item.name) || item.id,
-      emotion: "",
-      tags: [],
-      use: "",
-      dir: "",
-      text: "",
-      meme: "",
+      emotion: text(item.emotion),
+      tags: strings(item.tags),
+      use: text(item.use),
+      dir: text(item.dir),
+      text: text(item.text),
+      meme: text(item.meme),
       en: text(item.english),
-      desc: text(item.description),
+      desc: text(item.desc) || text(item.description),
       path: join(base, "clawd", item.light),
     });
   }
@@ -181,14 +185,14 @@ export async function loadCatalog(root: string): Promise<Sticker[]> {
       code: item.id,
       group: groupOf(item.id),
       name: text(item.description) || item.id,
-      emotion: "",
-      tags: [],
-      use: "",
-      dir: "",
-      text: "",
-      meme: "",
+      emotion: text(item.emotion),
+      tags: strings(item.tags),
+      use: text(item.use),
+      dir: text(item.dir),
+      text: text(item.text),
+      meme: text(item.meme),
       en: "",
-      desc: text(item.description),
+      desc: text(item.desc) || text(item.description),
       path: join(base, "whale-girl", "gifs", item.filename),
     });
   }
@@ -207,12 +211,12 @@ export async function loadCatalog(root: string): Promise<Sticker[]> {
       name: text(item.subject) || mood || String(item.id),
       emotion: mood,
       tags: strings(item.tags),
-      use: "",
-      dir: "",
-      text: "",
-      meme: "",
+      use: text(item.use),
+      dir: text(item.dir),
+      text: text(item.text),
+      meme: text(item.meme),
       en: "",
-      desc: text(item.subject),
+      desc: text(item.desc) || text(item.subject),
       path: join(base, "bluefish", item.file),
     });
   }
@@ -228,42 +232,55 @@ export async function loadCatalog(root: string): Promise<Sticker[]> {
       code: String(item.id),
       group: groupOf(String(item.id)),
       name,
-      emotion: "",
-      tags: [],
-      use: "",
-      dir: "",
-      text: "",
-      meme: "",
+      emotion: text(item.emotion),
+      tags: strings(item.tags),
+      use: text(item.use),
+      dir: text(item.dir),
+      text: text(item.text),
+      meme: text(item.meme),
       en: "",
-      desc: name,
+      desc: text(item.desc) || name,
       path: join(base, "emotelab", item.file),
     });
   }
 
-  // dsh-pet：桌宠动作库（109 段 10 秒循环动画）+ 27 张表情图，metadata 直接就是 Sticker 字段
-  for (const item of pet) {
-    if (typeof item.id !== "string" || typeof item.file !== "string") continue;
-    const code = text(item.code) || item.id;
-    items.push({
-      id: `dsh-pet:${item.id}`,
-      pack: "dsh-pet",
-      stem: code,
-      code,
-      group: text(item.group),
-      name: text(item.name) || item.id,
-      emotion: text(item.emotion),
-      tags: strings(item.tags),
-      use: text(item.use),
-      dir: "",
-      text: "",
-      meme: "",
-      en: text(item.en),
-      desc: text(item.desc),
-      path: join(base, "dsh-pet", item.file),
-    });
+  // 扩展包（dsh-pet / chinese-bqb / emoji-package）：metadata 直接写全 Sticker 字段；
+  // chinese-bqb 与 emoji-package 的字段由目录名+中文文件名派生（见 harvest 脚本）
+  for (const [index, raw] of extras.entries()) {
+    const pack = EXTRA_PACKS[index];
+    if (!pack) continue;
+    for (const item of raw) {
+      if (typeof item.id !== "string" || typeof item.file !== "string") continue;
+      const code = text(item.code) || item.id;
+      items.push({
+        id: `${pack}:${item.id}`,
+        pack,
+        stem: code,
+        code,
+        group: text(item.group),
+        name: text(item.name) || item.id,
+        emotion: text(item.emotion),
+        tags: strings(item.tags),
+        use: text(item.use),
+        dir: text(item.dir),
+        text: text(item.text),
+        meme: text(item.meme),
+        en: text(item.en),
+        desc: text(item.desc),
+        path: join(base, pack, item.file),
+      });
+    }
   }
 
-  catalogCache = { key, items };
+  // Keep the original metadata too: existing blacklist/content rules must not be erased by a new note.
+  let cursor = 0;
+  await Promise.all(Array.from({ length: 24 }, async () => {
+    while (cursor < items.length) {
+      const item = items[cursor++];
+      item.note = await readStickerNote(base, item.path);
+    }
+  }));
+  catalogCache = { key, items, checkedAt: Date.now() };
   return items;
 }
 
@@ -281,13 +298,13 @@ function bigrams(value: string): string[] {
 function fields(item: Sticker): Record<FieldKey, string> {
   return {
     name: item.name.toLowerCase(),
-    tagsJoined: item.tags.join(" ").toLowerCase(),
-    emotion: item.emotion.toLowerCase(),
-    text: item.text.toLowerCase(),
-    meme: item.meme.toLowerCase(),
-    use: item.use.toLowerCase(),
+    tagsJoined: [...item.tags, ...(item.note?.tags ?? [])].join(" ").toLowerCase(),
+    emotion: [item.emotion, item.note?.emotion].filter(Boolean).join(" ").toLowerCase(),
+    text: [item.text, item.note?.text].filter(Boolean).join(" ").toLowerCase(),
+    meme: [item.meme, item.note?.meaning].filter(Boolean).join(" ").toLowerCase(),
+    use: [item.use, item.note?.use].filter(Boolean).join(" ").toLowerCase(),
     en: item.en.toLowerCase(),
-    desc: item.desc.toLowerCase(),
+    desc: [item.desc, item.note?.description, item.note?.motion].filter(Boolean).join(" ").toLowerCase(),
     dir: item.dir.toLowerCase(),
   };
 }
@@ -327,19 +344,31 @@ export async function searchStickers(root: string, query: string, opts: SearchOp
   const items = applyRules(await loadCatalog(base), rules);
   const pack = opts.pack && opts.pack !== "all" ? opts.pack : undefined;
   const pool = items.filter((item) =>
-    (!pack || item.pack === pack) && (!opts.emotion || item.emotion === opts.emotion));
+    (!pack || item.pack === pack) && (!opts.emotion || (item.note?.emotion || item.emotion) === opts.emotion));
   const queries = terms(query.slice(0, 200));
   const limit = Math.max(1, Math.min(20, opts.limit ?? 8));
   const random = opts.random ?? Math.random;
 
   const cache = new Map<string, Record<FieldKey, string>>();
+  // Alternatives use max, not an AND-style coverage penalty: a reply need not
+  // simultaneously contain "反击、反弹、接招". Prefer actual caption/meaning/use.
+  const replyScore = (item: Sticker): number => {
+    if (!opts.reply) return 0;
+    let value = cache.get(item.id);
+    if (!value) { value = fields(item); cache.set(item.id, value); }
+    const response = [value.text, value.meme, value.use].join(" ");
+    return Math.max(...REPLY_TERMS[opts.reply].map(term =>
+      score(item, [term], cache) + (response.includes(term) ? 5 : 0)));
+  };
   const hits = opts.scene
     ? pool.filter(item => item.pack === "dsh-pet" && SCENE_IDS[opts.scene!].some(id => item.id === `dsh-pet:anim/${id}`))
       .map(item => ({ item, score: 1 + (queries.length ? score(item, queries, cache) : 0) }))
-    : queries.length === 0
+    : queries.length === 0 && !opts.reply
     // 空 query = 随机挑一张：给随机基础分，否则抖动乘 0 永远是 id 序前 8 张固定面孔
     ? pool.map((item) => ({ item, score: (opts.shuffle ?? true) ? random() : 0 }))
-    : pool.map((item) => ({ item, score: score(item, queries, cache) })).filter((hit) => hit.score > 0);
+    : pool.map((item) => ({ item, score: opts.reply
+        ? replyScore(item) * 1.5 + score(item, queries, cache) * 0.25
+        : score(item, queries, cache) })).filter((hit) => hit.score > 0);
   // 最近发送过的降权（空查询也一样生效）
   if (opts.downweight?.length) {
     for (const hit of hits) hit.score *= sentPenalty(hit.item.id, opts.downweight);
@@ -386,5 +415,8 @@ export async function pickSticker(
 
 /** 工具返回用的一行摘要：名字｜情绪｜标签｜方向（空段省略） */
 export function stickerLine(item: Sticker): string {
-  return [item.name, item.emotion, item.tags.slice(0, 3).join("/"), item.dir].filter(Boolean).join("｜");
+  return [item.name, item.note?.emotion || item.emotion,
+    (item.note?.tags ?? item.tags).slice(0, 3).join("/"), item.dir,
+    item.note?.meaning ? `含义：${item.note.meaning.slice(0, 80)}` : "",
+  ].filter(Boolean).join("｜");
 }

@@ -17,8 +17,11 @@ describe("resolveReplyInThread：回复是否以话题形式发出", () => {
   });
 });
 
-/** 捕获 reply 调用参数的假 Lark Client：cardkit create 返回固定 card_id */
-function makeCapturingClient(replies: Array<{ path?: { message_id?: string }; data?: Record<string, unknown> }>) {
+/** 捕获 reply/create 调用参数的假 Lark Client：cardkit create 返回固定 card_id */
+function makeCapturingClient(
+  replies: Array<{ path?: { message_id?: string }; data?: Record<string, unknown> }>,
+  creates: Array<{ data?: Record<string, unknown> }> = [],
+) {
   return {
     request: async () => ({ code: 0, data: { card_id: "card_test_1" } }),
     im: {
@@ -26,6 +29,10 @@ function makeCapturingClient(replies: Array<{ path?: { message_id?: string }; da
         reply: async (args: { path?: { message_id?: string }; data?: Record<string, unknown> }) => {
           replies.push(args);
           return { code: 0, data: { message_id: "om_reply" } };
+        },
+        create: async (args: { data?: Record<string, unknown> }) => {
+          creates.push(args);
+          return { code: 0, data: { message_id: "om_direct" } };
         },
       },
     },
@@ -47,17 +54,19 @@ describe("CardKitReply 传递 reply_in_thread", () => {
     expect(replies[0].data?.reply_in_thread).toBe(true);
   });
 
-  it("replyInThread=false（普通交流）时回复参数为 reply_in_thread:false", async () => {
+  it("replyInThread=false（普通群/私聊）直接发到群里，不带引用", async () => {
     const replies: Array<{ path?: { message_id?: string }; data?: Record<string, unknown> }> = [];
+    const creates: Array<{ data?: Record<string, unknown> }> = [];
     const reply = new CardKitReply({
-      client: makeCapturingClient(replies),
+      client: makeCapturingClient(replies, creates),
       chatId: "oc_chat",
       messageId: "om_msg",
       replyInThread: false,
     });
     await reply.update("你好");
-    expect(replies).toHaveLength(1);
-    expect(replies[0].data?.reply_in_thread).toBe(false);
+    expect(replies).toHaveLength(0);
+    expect(creates).toHaveLength(1);
+    expect(creates[0].data?.receive_id).toBe("oc_chat");
   });
 
   it("CardKit 初始化失败时只发送一次固定故障提示", async () => {

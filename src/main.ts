@@ -12,6 +12,12 @@ import { ConversationManager } from "./runtime/conversation-manager.ts";
 import { FeishuPiRuntime } from "./runtime/feishu-pi-runtime.ts";
 import { FeishuAgentBridge } from "./feishu/agent-bridge.ts";
 import { LarkTransport } from "./feishu/lark-transport.ts";
+import { GroupWaker } from "./feishu/group-waker.ts";
+import { GroupActivity } from "./feishu/group-activity.ts";
+import { MemoryService } from "./memory/service.ts";
+import { ProactiveService } from "./proactive/service.ts";
+import { PROACTIVE_SYSTEM, formatProactiveSnapshot } from "./proactive/prompt.ts";
+import { randomUUID } from "node:crypto";
 import { loadConfig } from "./config.ts";
 import { SessionStore } from "./runtime/session-store.ts";
 import { MessageStore } from "./feishu/message-store.ts";
@@ -249,6 +255,8 @@ export async function main(): Promise<void> {
 
   // runtime 先声明（transport 的 onModelSwitch 回调引用它）
   let runtime: FeishuPiRuntime;
+  // 群聊最近消息：主动发言的上下文来源，不落盘、不进会话。
+  const groupActivity = new GroupActivity();
 
   // 显式标注类型：初始化闭包与 userAuth 选项互相引用，切断 TS 的循环类型推断
   const transport: LarkTransport = new LarkTransport({
@@ -266,6 +274,10 @@ export async function main(): Promise<void> {
       baseUrl: config.audioTranscriptionBaseUrl,
       apiKey: config.audioTranscriptionApiKey,
     },
+    groupWaker: new GroupWaker({ enabled: config.groupChime }),
+    groupActivity,
+    emojiCacheDir: join(config.cwd, "data", "feishu-emojis"),
+    stickerCacheDir: process.env.FEISHU_PI_STICKER_CACHE_DIR?.trim() || undefined,
 
     ownerOpenId,
     searchMentionedUserProfile: createMentionProfileLookup({
@@ -480,14 +492,13 @@ ${trimmed}` }] },
       return value as Record<string, unknown>;
     },
     decide: (stage, data, signal) => runtime.biliDecision(stage, data, signal),
-    interests: () => runtime.biliInterests(),
     share: config.biliShareAvailable ? (chatId, text) => transport.sendTextToChat(chatId, text) : undefined,
     isChatActive: chatId => Date.now() - (recentChatActivity.get(chatId) ?? 0) < 5 * 60_000,
   }) : undefined;
   await assistant.start();
 
-  // 表情包黑白名单：用户配置优先、模型不可改；检索时按 mtime 热重载，档位只影响工具描述
-  const stickerRoot = join(config.dataDir, "stickers");
+  // 图库在工程根 stickers/（索引与许可文件入库 Git，图片按 .gitignore 策略部分入库）；黑白名单用户配置优先、模型不可改，检索时按 mtime 热重载，档位只影响工具描述
+  const stickerRoot = join(config.cwd, "stickers");
   const stickerHistory = new StickerHistory(join(config.dataDir, "sticker-history"));
   const stickerRules = createRulesLoader(join(config.cwd, ".agent", "stickers.json"));
   const stickerGuide = (await stickerRules()).guide;
@@ -502,6 +513,8 @@ ${trimmed}` }] },
     modelName: config.modelName,
     modelBaseUrl: config.modelBaseUrl,
     thinkingLevel: config.thinkingLevel,
+    // 回复文字是否允许 emoji：关闭时 runtime 给系统提示追加禁用规则，bridge 发送前再兜底剥离
+    replyEmoji: config.replyEmoji,
     // 会话目录的唯一事实来源：Pi 会话 jsonl 与图片/附件同在一个会话目录
     sessions,
     permissionPolicy: policy,
@@ -530,12 +543,56 @@ ${trimmed}` }] },
 
   const conversations = new ConversationManager(runtime, sessions, { maxPendingMessages: config.maxPendingMessages, interruptGraceMs: config.interruptGraceMs });
 
+  // Evidence-backed memories scoped to the current chat, person and topic.
+  const memory = config.agentMemory
+    ? new MemoryService(join(config.cwd, "data", "agent-memory"), (system, user) => runtime.completeText(system, user), { userUpdates: "agent" })
+    : undefined;
+  if (memory) {
+    runtime.setMemory(memory);
+    logger.info(`[Memory] 有来源的聊天记忆已启用: ${join(config.cwd, "data", "agent-memory", "v2")}`);
+  }
+
+  // 群聊主动发言：只在指定群里、群安静后、每天限量地开口。
+  const proactive = config.proactive && config.proactiveChats.length > 0
+    ? new ProactiveService({
+        enabled: true,
+        chats: config.proactiveChats,
+        idleMs: config.proactiveIdleMinutes * 60_000,
+        cooldownMs: config.proactiveCooldownMinutes * 60_000,
+        dailyLimit: config.proactiveDailyLimit,
+        checkMs: config.proactiveCheckMinutes * 60_000,
+      }, {
+        recent: (chatId) => groupActivity.snapshot(chatId),
+        // 主动发言必须和聊天共用同一套人格，否则会变成通用 AI 腔。
+        generate: async (snapshot) => {
+          const persona = await runtime.getSystemPrompt();
+          return runtime.completeText(`${persona}\n\n${PROACTIVE_SYSTEM}`, formatProactiveSnapshot(snapshot), 300);
+        },
+        send: async (chatId, text) => {
+          const result = await client.im.message.create({
+            params: { receive_id_type: "chat_id" },
+            data: { receive_id: chatId, msg_type: "text", content: JSON.stringify({ text }), uuid: randomUUID() },
+          });
+          if (result.code !== 0) throw new Error(result.msg || `主动发言发送失败：${result.code}`);
+        },
+        recordSelf: (chatId, text) => groupActivity.observeSelf(chatId, text),
+      })
+    : undefined;
+  if (config.proactive && config.proactiveChats.length === 0) {
+    logger.warn("[Proactive] FEISHU_PI_PROACTIVE 已开启，但 FEISHU_PI_ACTIVE_CHATS 为空，不会主动发言");
+  }
+  if (proactive) logger.info(`[Proactive] 主动发言已启用，群：${config.proactiveChats.join("、")}`);
+
   const bridge = new FeishuAgentBridge(
     conversations,
     transport,
     {
       messages,
       client,
+      memory,
+      onDelivered: (message, text) => {
+        if (message.context.chatMode === "group") groupActivity.observeSelf(message.chatId, text);
+      },
       recordSticker: (chatId, id, line) => stickerHistory.record(chatId, id, line),
       // 待答选项卡优先接收文字回答；每轮开始重置单轮工具调用预算
       answerAskText: (openId, chatId, text) => askBroker.answerText(openId, chatId, text),
@@ -584,9 +641,9 @@ ${trimmed}` }] },
       ],
       // 回复末尾的模型统计小字开关（工具过程状态不受影响）
       showModelStats: config.showModelStats,
-      botName,
+      // 回复文字 emoji 开关（与 runtime 同源：提示层禁用 + 发送前兜底）
+      replyEmoji: config.replyEmoji,
       botOpenId,
-      manageMemory: (context, action, id) => runtime.manageMemory(context, action, id),
       // 已知人员提示：消息里按名字提到的人补 open_id（资料缓存与本人识别共用 data/users 文件）
       peopleRoster: new PeopleRoster(usersFile),
       // /model 指令的运行时模型信息（config 对象即 runtime 热切换的同一引用，取到的是实时值）
@@ -606,6 +663,7 @@ ${trimmed}` }] },
 
   bridge.start();
   await transport.connect();
+  proactive?.start();
   // 恢复定时任务调度（任务持久化在 data/schedules.json）
   await scheduleService.start();
   if (biliAutomation) await biliAutomation.start().catch(error => logger.warn(`[BiliAuto] 自动化未启动：${error instanceof Error ? error.message : error}`));
@@ -634,11 +692,12 @@ ${trimmed}` }] },
     );
 
     clearInterval(cleanupTimer);
+    proactive?.close();
     scheduleService.stop();
     await biliAutomation?.stop();
     broker.close();
     await assistant.close();
-    await runtime.flushMemory();
+    await memory?.flush();
     await instanceLock.release();
 
     // 断开在后台进行，不 await——挂住也不影响退出

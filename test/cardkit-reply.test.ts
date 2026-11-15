@@ -32,11 +32,20 @@ describe("CardKitReply 惰性出卡（先不响应，有结果再回）", () => 
 
   it("建卡后 recall 撤回已发送的卡片消息", async () => {
     const { client, reply, remove } = fakeClient();
-    const card = new CardKitReply({ client, chatId: "oc_1", messageId: "om_user" });
+    const card = new CardKitReply({ client, chatId: "oc_1", messageId: "om_user", replyInThread: true });
     await card.update("你好");
     expect(reply).toHaveBeenCalledOnce();
     await card.recall();
     expect(remove).toHaveBeenCalledWith({ path: { message_id: "om_card" } });
+  });
+
+  it("普通群/私聊（无 replyInThread）直接发到群里，不带引用", async () => {
+    const { client, reply, send } = fakeClient();
+    const card = new CardKitReply({ client, chatId: "oc_1", messageId: "om_user" });
+    await card.update("你好");
+    expect(reply).not.toHaveBeenCalled();
+    expect(send).toHaveBeenCalledOnce();
+    expect((send.mock.calls[0]?.[0] as { data?: { receive_id?: string } }).data?.receive_id).toBe("oc_1");
   });
 });
 

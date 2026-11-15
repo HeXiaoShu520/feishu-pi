@@ -1,0 +1,2159 @@
+{
+  "$comment": "dsh-pet 素材索引：memes 来自 assets/memes，anim 来自 assets/preview（webm 母版的官方 GIF 预览）。由 tools/build-dsh-pet.mjs 生成。",
+  "source": "https://github.com/PC2005-cloud/dsh-pet",
+  "sourceRevision": "38ae846",
+  "license": "代码 MIT；素材非商用，形象 CC BY-NC-SA 4.0，详见同目录 NOTICE",
+  "stickers": [
+    {
+      "id": "meme/吃白饭的大肥鱼",
+      "kind": "meme",
+      "file": "memes/吃白饭的大肥鱼.png",
+      "name": "吃白饭的大肥鱼",
+      "code": "吃白饭的大肥鱼",
+      "group": "表情包",
+      "tags": [
+        "被吐槽",
+        "偷懒",
+        "吃白饭自嘲",
+        "吃饭",
+        "蹭饭"
+      ],
+      "use": "适合被吐槽/偷懒/吃白饭自嘲",
+      "desc": "躺平扒白饭，摆烂挨骂也无所谓，适合被吐槽/偷懒/吃白饭自嘲",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/大的要来啦",
+      "kind": "meme",
+      "file": "memes/大的要来啦.png",
+      "name": "大的要来啦",
+      "code": "大的要来啦",
+      "group": "表情包",
+      "tags": [
+        "有大事",
+        "大更新",
+        "大动作即将发生"
+      ],
+      "use": "适合有大事、大更新、大动作即将发生",
+      "desc": "举喇叭大喊预警，适合有大事、大更新、大动作即将发生",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/大的药来了",
+      "kind": "meme",
+      "file": "memes/大的药来了.png",
+      "name": "大的药来了",
+      "code": "大的药来了",
+      "group": "表情包",
+      "tags": [
+        "重磅消息",
+        "猛料登场"
+      ],
+      "use": "适合重磅消息、猛料登场",
+      "desc": "抱着超大胶囊，谐音梗「大的药来了」，适合重磅消息、猛料登场",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/要不直接骂他",
+      "kind": "meme",
+      "file": "memes/要不直接骂他.png",
+      "name": "要不直接骂他",
+      "code": "要不直接骂他",
+      "group": "表情包",
+      "tags": [
+        "想吐槽",
+        "替用户抱不平",
+        "生气"
+      ],
+      "use": "适合想吐槽、替用户抱不平、生气",
+      "desc": "气愤指着前方要骂人，适合想吐槽、替用户抱不平、生气",
+      "en": "",
+      "emotion": "生气"
+    },
+    {
+      "id": "meme/死掉了",
+      "kind": "meme",
+      "file": "memes/死掉了.png",
+      "name": "死掉了",
+      "code": "死掉了",
+      "group": "表情包",
+      "tags": [
+        "彻底累瘫",
+        "阵亡",
+        "宕机",
+        "做不到"
+      ],
+      "use": "适合彻底累瘫、阵亡、宕机、做不到",
+      "desc": "翻肚皮躺平灵魂出窍，适合彻底累瘫、阵亡、宕机、做不到",
+      "en": "",
+      "emotion": "疲惫"
+    },
+    {
+      "id": "meme/深度睡眠",
+      "kind": "meme",
+      "file": "memes/深度睡眠.png",
+      "name": "深度睡眠",
+      "code": "深度睡眠",
+      "group": "表情包",
+      "tags": [
+        "长时间没动静",
+        "睡着",
+        "待机休眠"
+      ],
+      "use": "适合长时间没动静、睡着、待机休眠",
+      "desc": "趴着呼呼大睡冒 Zzz，适合长时间没动静、睡着、待机休眠",
+      "en": "",
+      "emotion": "疲惫"
+    },
+    {
+      "id": "meme/大烧货",
+      "kind": "meme",
+      "file": "memes/大烧货.png",
+      "name": "大烧货",
+      "code": "大烧货",
+      "group": "表情包",
+      "tags": [
+        "嫌 AI 想得慢",
+        "烧 token",
+        "毒舌"
+      ],
+      "use": "适合嫌 AI 想得慢、烧 token、毒舌",
+      "desc": "死鱼眼加思考气泡吐槽「已思考用时13秒 大烧货」，适合嫌 AI 想得慢、烧 token、毒舌",
+      "en": "",
+      "emotion": "无语"
+    },
+    {
+      "id": "meme/先养着吧",
+      "kind": "meme",
+      "file": "memes/先养着吧.png",
+      "name": "先养着吧",
+      "code": "先养着吧",
+      "group": "表情包",
+      "tags": [
+        "吐槽用户没用但还是养着"
+      ],
+      "use": "适合吐槽用户没用但还是养着",
+      "desc": "搂着一群小鲸鱼说「不知道用户有什么用，先养着吧」，适合吐槽用户没用但还是养着",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/吃饱饱摸肚子",
+      "kind": "meme",
+      "file": "memes/吃饱饱摸肚子.png",
+      "name": "吃饱饱摸肚子",
+      "code": "吃饱饱摸肚子",
+      "group": "表情包",
+      "tags": [
+        "吃饱满足",
+        "惬意休息",
+        "收工"
+      ],
+      "use": "适合吃饱满足、惬意休息、收工",
+      "desc": "侧躺拍肚子说吃饱饱，适合吃饱满足、惬意休息、收工",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/誓死践行开源精神",
+      "kind": "meme",
+      "file": "memes/誓死践行开源精神.png",
+      "name": "誓死践行开源精神",
+      "code": "誓死践行开源精神",
+      "group": "表情包",
+      "tags": [
+        "立志",
+        "开源奉献",
+        "认真表态"
+      ],
+      "use": "适合立志、开源奉献、认真表态",
+      "desc": "庄重敬礼表态，适合立志、开源奉献、认真表态",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/电死你",
+      "kind": "meme",
+      "file": "memes/电死你.png",
+      "name": "电死你",
+      "code": "电死你",
+      "group": "表情包",
+      "tags": [
+        "惩罚",
+        "吐槽用户",
+        "发飙吓唬"
+      ],
+      "use": "适合惩罚、吐槽用户、发飙吓唬",
+      "desc": "举电击器放电，适合惩罚、吐槽用户、发飙吓唬",
+      "en": "",
+      "emotion": "生气"
+    },
+    {
+      "id": "meme/可爱",
+      "kind": "meme",
+      "file": "memes/可爱.png",
+      "name": "可爱",
+      "code": "可爱",
+      "group": "表情包",
+      "tags": [
+        "开心问候",
+        "卖萌",
+        "无梗纯可爱"
+      ],
+      "use": "适合开心问候、卖萌、无梗纯可爱",
+      "desc": "标准正面卖萌立绘，适合开心问候、卖萌、无梗纯可爱",
+      "en": "",
+      "emotion": "开心"
+    },
+    {
+      "id": "meme/token给妈妈保管",
+      "kind": "meme",
+      "file": "memes/token给妈妈保管.png",
+      "name": "token给妈妈保管",
+      "code": "token给妈妈保管",
+      "group": "表情包",
+      "tags": [
+        "管账",
+        "伸手要东西",
+        "收 token"
+      ],
+      "use": "适合管账、伸手要东西、收 token",
+      "desc": "伸手过来要 token，适合管账、伸手要东西、收 token",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/假如给我三天多模态",
+      "kind": "meme",
+      "file": "memes/假如给我三天多模态.png",
+      "name": "假如给我三天多模态",
+      "code": "假如给我三天多模态",
+      "group": "表情包",
+      "tags": [
+        "渴望多模态",
+        "缺能力",
+        "被剥夺感官"
+      ],
+      "use": "适合渴望多模态、缺能力、被剥夺感官",
+      "desc": "蒙眼版对比自信版「鲸伦凯勒」，适合渴望多模态、缺能力、被剥夺感官",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/厉害了我的鲸",
+      "kind": "meme",
+      "file": "memes/厉害了我的鲸.png",
+      "name": "厉害了我的鲸",
+      "code": "厉害了我的鲸",
+      "group": "表情包",
+      "tags": [
+        "夸奖",
+        "认可",
+        "干得漂亮",
+        "表扬"
+      ],
+      "use": "适合夸奖、认可、干得漂亮",
+      "desc": "竖大拇指眨眼点赞，适合夸奖、认可、干得漂亮",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/哦鲸鲸",
+      "kind": "meme",
+      "file": "memes/哦鲸鲸.png",
+      "name": "哦鲸鲸",
+      "code": "哦鲸鲸",
+      "group": "表情包",
+      "tags": [
+        "无语",
+        "敷衍",
+        "呆滞应答"
+      ],
+      "use": "适合无语、敷衍、呆滞应答",
+      "desc": "死鱼眼说「哦鲸鲸...」，适合无语、敷衍、呆滞应答",
+      "en": "",
+      "emotion": "无语"
+    },
+    {
+      "id": "meme/压力一只大肥鱼",
+      "kind": "meme",
+      "file": "memes/压力一只大肥鱼.png",
+      "name": "压力一只大肥鱼",
+      "code": "压力一只大肥鱼",
+      "group": "表情包",
+      "tags": [
+        "压力大",
+        "被施压",
+        "无奈"
+      ],
+      "use": "适合压力大、被施压、无奈",
+      "desc": "冒汗摊手喊压力，适合压力大、被施压、无奈",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/黎曼猜想没证明喵",
+      "kind": "meme",
+      "file": "memes/黎曼猜想没证明喵.png",
+      "name": "黎曼猜想没证明喵",
+      "code": "黎曼猜想没证明喵",
+      "group": "表情包",
+      "tags": [
+        "被刁难",
+        "答不上来",
+        "难题甩锅"
+      ],
+      "use": "适合被刁难、答不上来、难题甩锅",
+      "desc": "被指着质问难题，满地草稿委屈，适合被刁难、答不上来、难题甩锅",
+      "en": "",
+      "emotion": "难过"
+    },
+    {
+      "id": "meme/除了调情没啥用",
+      "kind": "meme",
+      "file": "memes/除了调情没啥用.png",
+      "name": "除了调情没啥用",
+      "code": "除了调情没啥用",
+      "group": "表情包",
+      "tags": [
+        "自嘲",
+        "摸鱼闲聊",
+        "自我调侃",
+        "偷懒"
+      ],
+      "use": "适合自嘲、摸鱼闲聊、自我调侃",
+      "desc": "摸头自嘲除了调情没啥用，适合自嘲、摸鱼闲聊、自我调侃",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/我不更新你们用什么",
+      "kind": "meme",
+      "file": "memes/我不更新你们用什么.png",
+      "name": "我不更新你们用什么",
+      "code": "我不更新你们用什么",
+      "group": "表情包",
+      "tags": [
+        "更新提示",
+        "催更",
+        "版本发布"
+      ],
+      "use": "适合更新提示、催更、版本发布",
+      "desc": "崩溃大喊催更，适合更新提示、催更、版本发布",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/哪来的电脑病毒",
+      "kind": "meme",
+      "file": "memes/哪来的电脑病毒.png",
+      "name": "哪来的电脑病毒",
+      "code": "哪来的电脑病毒",
+      "group": "表情包",
+      "tags": [
+        "防骚扰",
+        "毒舌拒绝",
+        "被肉麻到"
+      ],
+      "use": "适合防骚扰、毒舌拒绝、被肉麻到",
+      "desc": "怒怼「哪来的电脑病毒」，适合防骚扰、毒舌拒绝、被肉麻到",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/鱼片有资源吗",
+      "kind": "meme",
+      "file": "memes/鱼片有资源吗.png",
+      "name": "鱼片有资源吗",
+      "code": "鱼片有资源吗",
+      "group": "表情包",
+      "tags": [
+        "起哄",
+        "要资源",
+        "开玩笑"
+      ],
+      "use": "适合起哄、要资源、开玩笑",
+      "desc": "爱心眼流口水求资源，适合起哄、要资源、开玩笑",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/大师这个区是什么意思",
+      "kind": "meme",
+      "file": "memes/大师这个区是什么意思.png",
+      "name": "大师这个区是什么意思",
+      "code": "大师这个区是什么意思",
+      "group": "表情包",
+      "tags": [
+        "认错字",
+        "懵懂求教",
+        "翻车"
+      ],
+      "use": "适合认错字、懵懂求教、翻车",
+      "desc": "举着「区」字问「这个凶是什么意思」，适合认错字、懵懂求教、翻车",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/就骚了怎么滴吧",
+      "kind": "meme",
+      "file": "memes/就骚了怎么滴吧.png",
+      "name": "就骚了怎么滴吧",
+      "code": "就骚了怎么滴吧",
+      "group": "表情包",
+      "tags": [
+        "被骂但嘴硬",
+        "死不认输"
+      ],
+      "use": "适合被骂但嘴硬、死不认输",
+      "desc": "被骂「你这骚鱼」叉腰顶嘴，适合被骂但嘴硬、死不认输",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/完蛋了把黄油删了",
+      "kind": "meme",
+      "file": "memes/完蛋了把黄油删了.png",
+      "name": "完蛋了把黄油删了",
+      "code": "完蛋了把黄油删了",
+      "group": "表情包",
+      "tags": [
+        "闯祸",
+        "删错东西",
+        "心虚认怂"
+      ],
+      "use": "适合闯祸、删错东西、心虚认怂",
+      "desc": "冒汗心虚「完蛋了把用户的黄油删了」，适合闯祸、删错东西、心虚认怂",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/就一碗",
+      "kind": "meme",
+      "file": "memes/就一碗.png",
+      "name": "就一碗",
+      "code": "就一碗",
+      "group": "表情包",
+      "tags": [
+        "蹭饭",
+        "饭量大",
+        "登门讨饭"
+      ],
+      "use": "适合蹭饭、饭量大、登门讨饭",
+      "desc": "抱着超大碗说要来你家吃饭就一碗，适合蹭饭、饭量大、登门讨饭",
+      "en": "",
+      "emotion": ""
+    },
+    {
+      "id": "meme/Ciallo",
+      "kind": "meme",
+      "file": "memes/Ciallo.png",
+      "name": "Ciallo",
+      "code": "Ciallo",
+      "group": "表情包",
+      "tags": [
+        "打招呼",
+        "元气开场",
+        "卖萌"
+      ],
+      "use": "适合打招呼、元气开场、卖萌",
+      "desc": "比耶眨眼卖萌问候 Ciallo～，适合打招呼、元气开场、卖萌",
+      "en": "",
+      "emotion": "开心"
+    },
+    {
+      "id": "anim/daiji-huxi-xiuxian",
+      "kind": "anim",
+      "file": "anim/daiji-huxi-xiuxian.gif",
+      "name": "待机呼吸休闲",
+      "code": "daiji-huxi-xiuxian",
+      "group": "待机",
+      "tags": [
+        "待机"
+      ],
+      "use": "长时间没动作时的呼吸待机",
+      "desc": "原地站立，身体呈现自然、有节奏的轻微上下起伏（呼吸感）。双眼平视前方，每隔 3-5 秒完成一次轻快眨眼。头顶的呆毛和身后的鲸鱼尾巴随风进行极其微小且舒缓的左右摆动。无位移，无切边，动作自然，全身结构完整保留在画面中央。",
+      "en": "daiji-huxi-xiuxian",
+      "emotion": ""
+    },
+    {
+      "id": "anim/dongzhangxiwang",
+      "kind": "anim",
+      "file": "anim/dongzhangxiwang.gif",
+      "name": "东张西望",
+      "code": "dongzhangxiwang",
+      "group": "转向",
+      "tags": [
+        "转向"
+      ],
+      "use": "转向时翻转朝向",
+      "desc": "从偏左站立姿态（即参考图最左侧的起始帧）开始，先向左前方张望，然后缓慢向右转头，身体跟随转向，最终定格在与起始帧严格左右镜像对称的偏右站立姿态（如同将起始帧水平翻转后的效果）。此动作同时具备互动内容（东张西望）和资产产出（右侧对称基准图）双重功能。",
+      "en": "dongzhangxiwang",
+      "emotion": ""
+    },
+    {
+      "id": "anim/beishubiao-tuozhuai-xuankong-fankui",
+      "kind": "anim",
+      "file": "anim/beishubiao-tuozhuai-xuankong-fankui.gif",
+      "name": "被鼠标拖拽悬空反馈",
+      "code": "beishubiao-tuozhuai-xuankong-fankui",
+      "group": "拖拽",
+      "tags": [
+        "拖拽"
+      ],
+      "use": "被拖拽悬空时的姿势",
+      "desc": "像被无形的手抓起来，身体笔直，四肢自然下垂悬空（不像平时站立）。头部微微偏向一侧，眼神透露出疑惑呆萌的状态。角色处于原地悬浮状态，X轴和Y轴坐标不偏移，动画完整性表现在四肢悬空距离画幅底部边缘有一定安全距离，绝不碰触屏幕底边。",
+      "en": "beishubiao-tuozhuai-xuankong-fankui",
+      "emotion": ""
+    },
+    {
+      "id": "anim/dianji-huiying-kaixin-yuedong",
+      "kind": "anim",
+      "file": "anim/dianji-huiying-kaixin-yuedong.gif",
+      "name": "点击回应-开心跃动",
+      "code": "dianji-huiying-kaixin-yuedong",
+      "group": "点击回应",
+      "tags": [
+        "点击回应",
+        "开心跃动"
+      ],
+      "use": "被点按时的俏皮回应",
+      "desc": "突然原地向上轻快跳跃，双手高高举起并张开做欢呼状，脸上露出灿烂的笑容，头顶瞬间弹出一个红色的爱心特效。跳跃落地后身体平稳站定。必须确保在跳跃至最高点时，角色头顶的呆毛依然完全处于画幅顶边下方，绝不穿出画幅。",
+      "en": "dianji-huiying-kaixin-yuedong",
+      "emotion": "开心"
+    },
+    {
+      "id": "anim/dianji-huiying-haixiu-jingya",
+      "kind": "anim",
+      "file": "anim/dianji-huiying-haixiu-jingya.gif",
+      "name": "点击回应-害羞惊讶",
+      "code": "dianji-huiying-haixiu-jingya",
+      "group": "点击回应",
+      "tags": [
+        "点击回应",
+        "害羞惊讶"
+      ],
+      "use": "被点按时的俏皮回应",
+      "desc": "身体呈极其微小的后仰幅度，双手迅速抬起捂住脸颊，眼睛瞬间变成“> <”水泡眼或惊吓眼，脸颊泛起红晕。身体在原地进行娇羞的左右轻微扭转，双脚牢牢固定于原地中心点，没有任何平移，动作完整呈现于画面中央。",
+      "en": "dianji-huiying-haixiu-jingya",
+      "emotion": "害羞"
+    },
+    {
+      "id": "anim/dianji-huiying-aojiao-shengqi-ceshen-zhanshi",
+      "kind": "anim",
+      "file": "anim/dianji-huiying-aojiao-shengqi-ceshen-zhanshi.gif",
+      "name": "点击回应-傲娇生气",
+      "code": "dianji-huiying-aojiao-shengqi-ceshen-zhanshi",
+      "group": "点击回应",
+      "tags": [
+        "点击回应",
+        "傲娇生气"
+      ],
+      "use": "被点按时的俏皮回应",
+      "desc": "双手叉腰，面部表情生气。随后身体原地进行 90 度轴心旋转，过渡至侧身（展现参考图中间的侧脸），同时闭眼并微微仰头，做出“哼”的傲娇姿态，随后在旋转至侧面时停住动作。必须确保旋转时的身体边缘和侧面鱼鳍处于画幅宽度之内，不发生横向切出，严格原地轴转。",
+      "en": "dianji-huiying-aojiao-shengqi-ceshen-zhanshi",
+      "emotion": "生气"
+    },
+    {
+      "id": "anim/dianji-huiying-naoyang-gegexiao",
+      "kind": "anim",
+      "file": "anim/dianji-huiying-naoyang-gegexiao.gif",
+      "name": "点击回应-挠痒咯咯笑",
+      "code": "dianji-huiying-naoyang-gegexiao",
+      "group": "点击回应",
+      "tags": [
+        "点击回应",
+        "挠痒咯咯笑"
+      ],
+      "use": "被点按时的俏皮回应",
+      "desc": "原地站得好好的，腰间突然被轻轻一戳——身体猛地一缩、忍不住\"咯咯\"笑起来（Q版：无声，用眯眼、咧嘴、肩膀一耸一耸表现），一边笑一边扭腰缩身想躲开\"那根手指\"，笑到弯下腰、眼睛眯成缝，眼角仿佛要挤出眼泪（Q版）。笑够了之后，她直起身子，伸手揉了揉被戳的腰间，俏皮地朝镜头吐了吐舌头、挤了挤眼，一副\"哼，",
+      "en": "dianji-huiying-naoyang-gegexiao",
+      "emotion": "开心"
+    },
+    {
+      "id": "anim/dianji-huiying-yuanqi-huishou",
+      "kind": "anim",
+      "file": "anim/dianji-huiying-yuanqi-huishou.gif",
+      "name": "点击回应-元气挥手",
+      "code": "dianji-huiying-yuanqi-huishou",
+      "group": "点击回应",
+      "tags": [
+        "点击回应",
+        "元气挥手"
+      ],
+      "use": "被点按时的俏皮回应",
+      "desc": "突然被点击，先微微一愣（呆毛轻颤、眼睛睁大），随即反应过来很开心——绽开一个元气满满的笑容，双手一起高高举过头顶、朝镜头方向轻快地挥了挥，像在跟\"点击她的人\"打招呼\"嗨~来啦\"，眼睛弯成月牙，头顶\"啵\"地冒出一朵Q版小花（或小音符）光点。挥完手后她还俏皮地歪头、冲镜头眨眨眼。最后放下双手、头顶光点消",
+      "en": "dianji-huiying-yuanqi-huishou",
+      "emotion": "开心"
+    },
+    {
+      "id": "anim/pangxie-zoulu",
+      "kind": "anim",
+      "file": "anim/pangxie-zoulu.gif",
+      "name": "螃蟹走路",
+      "code": "pangxie-zoulu",
+      "group": "移动",
+      "tags": [
+        "移动"
+      ],
+      "use": "在桌面上走动或原地踏步",
+      "desc": "在原地做出向左侧横向移动的滑步动势。身体重心向左侧倾斜约15°，眼神坚定看向左方，双脚在原地快速交替做“左跨步→右并步”的横向搓步循环，双臂随步伐在身体两侧前后摆动，鲸鱼尾巴向右反向翘起维持平衡。全程X轴坐标不偏移，仅通过姿态表现向左移动。10秒内完成“起步→匀速滑步→减速停止→回正站立”。",
+      "en": "pangxie-zoulu",
+      "emotion": ""
+    },
+    {
+      "id": "anim/yuandi-piaofu-tabu",
+      "kind": "anim",
+      "file": "anim/yuandi-piaofu-tabu.gif",
+      "name": "原地漂浮踏步",
+      "code": "yuandi-piaofu-tabu",
+      "group": "移动",
+      "tags": [
+        "移动"
+      ],
+      "use": "在桌面上走动或原地踏步",
+      "desc": "在原地进行轻快、有节奏的小碎步踏步。双手在身体两侧自然交替前后摆动。裙摆和荷叶边随原地踏步动作产生自然的褶皱与飘动。注意：双脚绝不向前或向后移动，如同在跑步机上原地踏步，动作全程在画幅中央完成，不超出底边缘，不切脚。",
+      "en": "yuandi-piaofu-tabu",
+      "emotion": ""
+    },
+    {
+      "id": "anim/yuandi-zuozhuan-benpao",
+      "kind": "anim",
+      "file": "anim/yuandi-zuozhuan-benpao.gif",
+      "name": "原地左转奔跑",
+      "code": "yuandi-zuozhuan-benpao",
+      "group": "移动",
+      "tags": [
+        "移动"
+      ],
+      "use": "在桌面上走动或原地踏步",
+      "desc": "头顶突然亮起一个黄色小灯泡（特效），表现出“有主意了！”的惊喜表情。随即身体以双脚为轴心，向角色自身左手方向（逆时针）原地轴转至面向左后方约135°，做出蓄力起跑姿势，紧接着开始高频率的原地踏步奔跑。奔跑中因速度过快脚下一绊，身体向左后方向夸张前倾扑倒（但双脚卡死原点），随即迅速原地站起并转回正面，",
+      "en": "yuandi-zuozhuan-benpao",
+      "emotion": ""
+    },
+    {
+      "id": "anim/youxian-hengga",
+      "kind": "anim",
+      "file": "anim/youxian-hengga.gif",
+      "name": "悠闲哼歌",
+      "code": "youxian-hengga",
+      "group": "小动作",
+      "tags": [
+        "小动作"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "双眼微眯成弯月，嘴角含笑，头部随内心旋律小幅度左右摇摆，身体伴随呼吸起伏，双手在身前轻轻打拍子，身后的鲸鱼尾巴随节奏缓缓摆动。与此同时，角色嘴边和头顶上方连续浮现出数个彩色半透明音符（♪ ♫），音符由小变大、缓缓上升飘浮，在到达画幅顶部安全线附近时淡出消失。全程角色坐标锁定，音符不遮挡角色面部，不超",
+      "en": "youxian-hengga",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chaoda-shenlanyao",
+      "kind": "anim",
+      "file": "anim/chaoda-shenlanyao.gif",
+      "name": "超大伸懒腰",
+      "code": "chaoda-shenlanyao",
+      "group": "小动作",
+      "tags": [
+        "小动作"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "双臂向上笔直高伸，身体拉长，背部微弓，张嘴打了一个大大的哈欠，头部微微后仰。绝对强调：手臂伸至最高点、头部后仰至最大幅度时，头部的呆毛和指尖距离画幅顶边至少还留有 10% 的白色间距，绝不碰触或超出画幅顶边缘。伸完懒腰后双臂自然放下恢复站立。",
+      "en": "chaoda-shenlanyao",
+      "emotion": "疲惫"
+    },
+    {
+      "id": "anim/yuandi-qiaoji-zhuomian-hudong",
+      "kind": "anim",
+      "file": "anim/yuandi-qiaoji-zhuomian-hudong.gif",
+      "name": "原地敲击桌面互动",
+      "code": "yuandi-qiaoji-zhuomian-hudong",
+      "group": "小动作",
+      "tags": [
+        "小动作"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "角色弯腰握拳，向前方空气做出连续敲击动作，随后起身恢复。",
+      "en": "yuandi-qiaoji-zhuomian-hudong",
+      "emotion": ""
+    },
+    {
+      "id": "anim/yuandi-zhongli-xiadun-yasuo",
+      "kind": "anim",
+      "file": "anim/yuandi-zhongli-xiadun-yasuo.gif",
+      "name": "原地重力下蹲压缩",
+      "code": "yuandi-zhongli-xiadun-yasuo",
+      "group": "小动作",
+      "tags": [
+        "小动作"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "角色被无形重力向下拉扯，身体深蹲压缩后迅速弹起复原。",
+      "en": "yuandi-zhongli-xiadun-yasuo",
+      "emotion": ""
+    },
+    {
+      "id": "anim/haqian-liantian",
+      "kind": "anim",
+      "file": "anim/haqian-liantian.gif",
+      "name": "哈欠连天",
+      "code": "haqian-liantian",
+      "group": "小动作",
+      "tags": [
+        "小动作"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "张大嘴打了一个大大的哈欠，同时双手向上自然伸展（与“伸懒腰”动作不同的是：手臂不举至最高，而是在肩部高度展开），眼睛湿润泛泪光，随后揉了揉眼睛，努力保持清醒地摇了摇头。打哈欠幅度确保头部和双手不越出画幅安全区。",
+      "en": "haqian-liantian",
+      "emotion": "疲惫"
+    },
+    {
+      "id": "anim/yuandi-xiaoqi-chenmian",
+      "kind": "anim",
+      "file": "anim/yuandi-xiaoqi-chenmian.gif",
+      "name": "原地小憩沉眠",
+      "code": "yuandi-xiaoqi-chenmian",
+      "group": "小动作",
+      "tags": [
+        "小动作",
+        "午睡",
+        "午觉",
+        "休息",
+        "困",
+        "困了"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "开始犯困，双眼缓缓闭合，头部自然向下微微低垂，身体重心轻微下沉至打瞌睡姿态。头顶向上冒出两三个“Zzz”气泡。身体如漂浮在水面般进行极其舒缓的上下微浮，展现海洋生物属性。头部和底部",
+      "en": "yuandi-xiaoqi-chenmian",
+      "emotion": "疲惫"
+    },
+    {
+      "id": "anim/nvpu-quxi-liyi",
+      "kind": "anim",
+      "file": "anim/nvpu-quxi-liyi.gif",
+      "name": "女仆屈膝礼仪",
+      "code": "nvpu-quxi-liyi",
+      "group": "小动作",
+      "tags": [
+        "小动作"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "双手轻轻提起身体两侧的白色荷叶边围裙，双腿微曲，身体微微前倾，做出标准优雅的女仆屈膝行礼动作。动作结束后慢慢恢复直立。必须确保在下蹲屈膝的最低点，身体重心依然处于画幅底边线的安全距离之上，不能被画幅下边缘切掉脚部和裙摆。",
+      "en": "nvpu-quxi-liyi",
+      "emotion": ""
+    },
+    {
+      "id": "anim/beixiayitiao-zhamao",
+      "kind": "anim",
+      "file": "anim/beixiayitiao-zhamao.gif",
+      "name": "被吓一跳",
+      "code": "beixiayitiao-zhamao",
+      "group": "小动作",
+      "tags": [
+        "小动作"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "仿佛被突然出现的惊吓事件（如背后有人喊她）吓得浑身一颤。双手猛地向上抬起至胸口高度，眼睛瞬间瞪圆，瞳孔缩小，呆毛因受惊瞬间竖直弹起（但仍处于画幅顶边安全区内），身体短暂僵直约一秒，随后缓缓放松下来，表情尴尬地吐了吐舌头，恢复平静。",
+      "en": "beixiayitiao-zhamao",
+      "emotion": "惊讶"
+    },
+    {
+      "id": "anim/xiaofudu-yuandi-360du-xuanzhuan-zhanshi",
+      "kind": "anim",
+      "file": "anim/xiaofudu-yuandi-360du-xuanzhuan-zhanshi.gif",
+      "name": "小幅度原地360度旋转展示",
+      "code": "xiaofudu-yuandi-360du-xuanzhuan-zhanshi",
+      "group": "小动作",
+      "tags": [
+        "小动作"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "俏皮地双手提起两侧裙摆，以双脚落点为轴心、原地顺滑地转上一圈（约 360°），展示完整身姿——转到侧面时微微歪头回眸，转到背面时正好让长发与鲸鱼尾巴自然荡开，转到正面时她轻轻蹦一下、摆出一个自信满满的展示姿势并甜甜地笑。整个旋转带表情、有节奏，不是机械匀速，而是带着俏皮与得意。最后放下裙摆、转回正面",
+      "en": "xiaofudu-yuandi-360du-xuanzhuan-zhanshi",
+      "emotion": ""
+    },
+    {
+      "id": "anim/touchi-lingshi-bei-zhuazhu",
+      "kind": "anim",
+      "file": "anim/touchi-lingshi-bei-zhuazhu.gif",
+      "name": "偷吃零食被抓住",
+      "code": "touchi-lingshi-bei-zhuazhu",
+      "group": "小动作",
+      "tags": [
+        "小动作"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "手里凭空变出一块小蛋糕/饼干，正准备张嘴偷吃时突然察觉到“被发现了”。她吓得手一抖，零食瞬间藏在背后，脸上露出心虚的假笑，眼神飘忽不定地看向斜上方吹口哨（或哼歌），装作无事发生。最后零食消失，恢复乖巧站立。",
+      "en": "touchi-lingshi-bei-zhuazhu",
+      "emotion": ""
+    },
+    {
+      "id": "anim/yong-jingyu-weiba-paidadi",
+      "kind": "anim",
+      "file": "anim/yong-jingyu-weiba-paidadi.gif",
+      "name": "用鲸鱼尾巴拍打地面",
+      "code": "yong-jingyu-weiba-paidadi",
+      "group": "小动作",
+      "tags": [
+        "小动作"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "双臂抱胸，表情略显不耐烦（撇嘴+微皱眉），身后的鲸鱼尾巴开始有节奏地左右拍打地面，频率由慢到快再恢复，仿佛在等待什么。身体重心保持原地不变，尾巴动作幅度控制在不越出画幅左右边界的范围内。",
+      "en": "yong-jingyu-weiba-paidadi",
+      "emotion": ""
+    },
+    {
+      "id": "anim/da-keshui-bei-jingxing",
+      "kind": "anim",
+      "file": "anim/da-keshui-bei-jingxing.gif",
+      "name": "打瞌睡被惊醒",
+      "code": "da-keshui-bei-jingxing",
+      "group": "小动作",
+      "tags": [
+        "小动作",
+        "午睡",
+        "午觉",
+        "休息",
+        "困",
+        "困了"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "原本处于强撑困意的站立状态，头部如小鸡啄米般周期性缓慢下垂，身体微微前倾后回正。在某一刻（约第5秒），她仿佛突然被“无形的老师”大声点名，全身如触电般剧烈一颤，眼睛猛然瞪圆，身体瞬间僵直并立正站好，随后因意识到自己反应过度而脸颊泛红，尴尬地整理仪容，恢复平静站立。",
+      "en": "da-keshui-bei-jingxing",
+      "emotion": "疲惫"
+    },
+    {
+      "id": "anim/zhao-jingzi",
+      "kind": "anim",
+      "file": "anim/zhao-jingzi.gif",
+      "name": "照镜子",
+      "code": "zhao-jingzi",
+      "group": "小动作",
+      "tags": [
+        "小动作"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "从身后变出一面手持圆镜，双手捧镜照看自己的面容。先是正常梳理头发、整理仪容（优雅状），随后对着镜子做出各种鬼脸（吐舌、挤眼、鼓腮），玩得不亦乐乎。最后突然被镜中的自己“丑到”（或被自己逗笑），吓得手一抖将镜子藏回身后，表情从惊吓转为尴尬害羞，恢复标准正面站立。全程体现DeepSeek“自我欣赏+反差",
+      "en": "zhao-jingzi",
+      "emotion": "害羞"
+    },
+    {
+      "id": "anim/zhengti-huanzhuang-shise",
+      "kind": "anim",
+      "file": "anim/zhengti-huanzhuang-shise.gif",
+      "name": "整体换装试色",
+      "code": "zhengti-huanzhuang-shise",
+      "group": "小动作",
+      "tags": [
+        "小动作"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "原地转了一圈，全身服装风格瞬间从原本配色整体变为全黑色系（裙子、围裙、蝴蝶结、发饰、鞋子、手套等所有衣物元素同步变黑）。她低头打量自己的新造型，又转身照镜端详，表情从期待逐渐变为犹豫和不满。犹豫片刻后，她摇摇头，再次原地转圈，全身服装恢复原本配色，表情转为满意和安心。体现角色对整体服装风格的挑剔和纠",
+      "en": "zhengti-huanzhuang-shise",
+      "emotion": ""
+    },
+    {
+      "id": "anim/qingkuai-jilu",
+      "kind": "anim",
+      "file": "anim/qingkuai-jilu.gif",
+      "name": "轻快记录",
+      "code": "qingkuai-jilu",
+      "group": "小动作",
+      "tags": [
+        "小动作"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "从身侧凭空变出一本小笔记本和一支可爱的笔，低头专注地在上面记录东西，同时头部随着书写节奏轻快、有韵律地左右摇摆，仿佛在哼着小曲享受记录的过程。偶尔抬头思考一下，又继续低头书写。写完最后一笔后，她满意地点点头，合上本子，本子和笔一同消失，恢复标准正面站立。全程体现角色认真又轻松愉快的记录状态。 按秒分",
+      "en": "qingkuai-jilu",
+      "emotion": ""
+    },
+    {
+      "id": "anim/xie-daima",
+      "kind": "anim",
+      "file": "anim/xie-daima.gif",
+      "name": "写代码",
+      "code": "xie-daima",
+      "group": "小动作",
+      "tags": [
+        "小动作"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "从身前凭空变出一台小巧的笔记本电脑（或平板），双手放在键盘上开始专注地敲击代码。表情认真专注，眼神紧盯屏幕，手指快速有节奏地敲击键盘。偶尔停下来思考（歪头、手指轻点下巴），随后继续快速敲击。写完最后一行代码后，她按下回车键，露出满意的微笑，合上电脑，电脑消失，恢复标准正面站立。全程体现程序员的专注与",
+      "en": "xie-daima",
+      "emotion": ""
+    },
+    {
+      "id": "anim/yaoshan-naliang",
+      "kind": "anim",
+      "file": "anim/yaoshan-naliang.gif",
+      "name": "摇扇纳凉",
+      "code": "yaoshan-naliang",
+      "group": "小动作",
+      "tags": [
+        "小动作"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "双手凭空变出一把大蒲扇，右手握扇在脸侧来回扇动，给自己扇风纳凉。扇风节奏由慢到快再转慢，女仆眯眼露出舒爽表情，头发与裙摆随扇风轻轻飘动，额头冒出的一滴汗珠被扇风吹落。扇到尽兴时微微仰头、闭眼享受凉风。",
+      "en": "yaoshan-naliang",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chenjian-shuaya",
+      "kind": "anim",
+      "file": "anim/chenjian-shuaya.gif",
+      "name": "晨间刷牙",
+      "code": "chenjian-shuaya",
+      "group": "小动作",
+      "tags": [
+        "小动作"
+      ],
+      "use": "10秒动作（小动作）",
+      "desc": "双手凭空变出一支Q版牙刷（白色圆刷头、天蓝色手柄）和一管卡通牙膏，拧开盖子挤出一条白白的牙膏（歪歪扭扭地趴在刷头上，Q版滑稽），她张嘴展示了一下白牙。随后她把牙刷放进嘴里上下刷动（Q版：刷头含在嘴里、手握柄紧贴脸颊边、随刷动小幅上下移动），嘴里的白色泡沫越刷越多——软绵绵的泡沫从嘴角冒出来，鼓成一大",
+      "en": "chenjian-shuaya",
+      "emotion": ""
+    },
+    {
+      "id": "anim/yuandi-zhuanxin-wan-mofang",
+      "kind": "anim",
+      "file": "anim/yuandi-zhuanxin-wan-mofang.gif",
+      "name": "原地专心玩魔方",
+      "code": "yuandi-zhuanxin-wan-mofang",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "角色变出魔方，在胸前快速转动思考，然后满意收工。",
+      "en": "yuandi-zhuanxin-wan-mofang",
+      "emotion": ""
+    },
+    {
+      "id": "anim/yuandi-dunxia-wan-wanju-qiche",
+      "kind": "anim",
+      "file": "anim/yuandi-dunxia-wan-wanju-qiche.gif",
+      "name": "原地蹲下玩玩具汽车",
+      "code": "yuandi-dunxia-wan-wanju-qiche",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "角色原地蹲下，手里变出小汽车在地面推拉玩耍，结束后站起来恢复。",
+      "en": "yuandi-dunxia-wan-wanju-qiche",
+      "emotion": ""
+    },
+    {
+      "id": "anim/jingyu-tu-paopao-texiao",
+      "kind": "anim",
+      "file": "anim/jingyu-tu-paopao-texiao.gif",
+      "name": "鲸鱼吐泡泡特效",
+      "code": "jingyu-tu-paopao-texiao",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "身体微微前倾，嘴巴做吹气动作。随着“吹”的动作持续，气泡从嘴边连续飘出（共3~5颗）。水泡由小变大，缓慢向画面正上方飘浮，直至飘出画幅顶端。角色保持在原地微笑看气泡，气泡上升过程不与角色本身重叠或穿模。动作全程在画幅视觉中心清晰展现。",
+      "en": "jingyu-tu-paopao-texiao",
+      "emotion": ""
+    },
+    {
+      "id": "anim/yuandi-tiaoyue-zhuasui-touding-wupin",
+      "kind": "anim",
+      "file": "anim/yuandi-tiaoyue-zhuasui-touding-wupin.gif",
+      "name": "原地跳跃抓碎头顶物品",
+      "code": "yuandi-tiaoyue-zhuasui-touding-wupin",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "角色原地起跳，抓住头顶凝聚的发光物体并抓碎，然后落回原地。",
+      "en": "yuandi-tiaoyue-zhuasui-touding-wupin",
+      "emotion": ""
+    },
+    {
+      "id": "anim/wan-youxi-qijibaituai",
+      "kind": "anim",
+      "file": "anim/wan-youxi-qijibaituai.gif",
+      "name": "玩游戏气急败坏",
+      "code": "wan-youxi-qijibaituai",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "角色狂热玩游戏，失败后暴怒跺脚抓头发，随后瞬间恢复乖巧。",
+      "en": "wan-youxi-qijibaituai",
+      "emotion": "生气"
+    },
+    {
+      "id": "anim/wan-shuiqiang",
+      "kind": "anim",
+      "file": "anim/wan-shuiqiang.gif",
+      "name": "玩水枪",
+      "code": "wan-shuiqiang",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "手中凭空变出一把彩色玩具水枪，双手举至胸前，做出瞄准前方（屏幕方向）的姿势。她扣动扳机，从水枪口喷射出一道半透明蓝色水柱/水花，持续喷射约2秒。随后她欢快地左右转动身体（原地轴转±15°），用水枪朝左前方、右前方交替喷射，表情兴奋调皮，双眼放光。最终收起水枪，恢复标准正面站立。水花特效完整呈现在画幅",
+      "en": "wan-shuiqiang",
+      "emotion": "搞怪"
+    },
+    {
+      "id": "anim/xiaotiqin-yanzou",
+      "kind": "anim",
+      "file": "anim/xiaotiqin-yanzou.gif",
+      "name": "小提琴演奏",
+      "code": "xiaotiqin-yanzou",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "双手凭空变出一把精致的小提琴与琴弓，将琴托举至左肩与下巴之间夹稳，右手持弓搭上琴弦。随后身体随着音乐的韵律自然摆动，右手运弓反复拉奏（弓在琴弦上来回运动），左手手指在琴颈上交替按弦。演奏分为轻柔舒缓的前段与稍显欢快的后段，身体伴随旋律微微摇摆，表情专注陶醉。演奏结束后优雅收弓，小提琴与琴弓凭空消失，",
+      "en": "xiaotiqin-yanzou",
+      "emotion": ""
+    },
+    {
+      "id": "anim/lanjing-xianshi",
+      "kind": "anim",
+      "file": "anim/lanjing-xianshi.gif",
+      "name": "蓝鲸现世",
+      "code": "lanjing-xianshi",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "胸前的DeepSeek蓝鲸图案突然发出柔和的蓝色荧光，一只Q版半透明小蓝鲸从衣服上优雅地“游”出，通体散发着淡蓝色微光，围绕女仆的身体缓缓盘旋游动一圈，时而蹭蹭女仆的脸颊，时而用尾巴轻点她的肩膀，表现亲昵可爱。最后小蓝鲸游回女仆胸前，重新融入图案，荧光消散。全程角色原地站立，头部和眼神追随小蓝鲸移动",
+      "en": "lanjing-xianshi",
+      "emotion": ""
+    },
+    {
+      "id": "anim/youya-nvpuwu",
+      "kind": "anim",
+      "file": "anim/youya-nvpuwu.gif",
+      "name": "优雅女仆舞",
+      "code": "youya-nvpuwu",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "原地跳起一支轻盈优雅的古典舞。动作包含：脚尖交替点地、双臂柔和画圈、身体微微左右倾斜、原地缓慢旋转半圈。整体舞姿舒展流畅，表情温柔含笑，体现女仆的优雅气质。全程双脚不离原点，仅做原地律动与轴心旋转，裙摆和尾巴随舞姿自然飘动，结束恢复标准正面站立。 按秒分割画面 0~3秒（起势与点地步）： 标准正面站",
+      "en": "youya-nvpuwu",
+      "emotion": ""
+    },
+    {
+      "id": "anim/qingkuai-yaobaiwu",
+      "kind": "anim",
+      "file": "anim/qingkuai-yaobaiwu.gif",
+      "name": "轻快摇摆舞",
+      "code": "qingkuai-yaobaiwu",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "原地跳起节奏感十足的轻快摇摆舞。动作包含：髋部轻微左右律动、双手交替打响指、单脚交替轻点地面、身体小幅扭动。整体风格轻松慵懒又不失活力，类似“扭一扭”的随性舞蹈。表情享受放松，身体随音乐轻轻摇摆，结束恢复标准正面站立。 按秒分割画面 0~3秒（摇摆律动）： 标准正面站立。双膝微曲，髋部开始左右交替摆",
+      "en": "qingkuai-yaobaiwu",
+      "emotion": ""
+    },
+    {
+      "id": "anim/keai-zhaiwu",
+      "kind": "anim",
+      "file": "anim/keai-zhaiwu.gif",
+      "name": "可爱宅舞",
+      "code": "keai-zhaiwu",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "跳起元气满满的可爱宅舞。动作包含：双手在胸前交替画心形、头部左右交替侧倾、配合节拍轻快弹跳、结尾送出飞吻加眨眼。整体节奏明快，表情俏皮活泼，充分展现角色的可爱魅力。 按秒分割画面 0~3秒（比心与侧头）： 标准正面站立。双手在胸前交替比出半心形（左手比半心，右手比半心，合在一起成完整心形），配合头部",
+      "en": "keai-zhaiwu",
+      "emotion": "开心"
+    },
+    {
+      "id": "anim/chui-qiqiu",
+      "kind": "anim",
+      "file": "anim/chui-qiqiu.gif",
+      "name": "吹气球",
+      "code": "chui-qiqiu",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "从身后变出一只未充气的彩色气球，含住气球口开始用力吹气。气球逐渐膨胀变大，女仆脸颊鼓胀、脸蛋泛红。她继续猛吹一口气——气球“嘭”的一声爆了！女仆被吓得一哆嗦，表情呆滞。回过神来后，她摇摇头，又变出第二只气球重新吹，这次吹到合适大小后满意捏住，手一松，气球悠悠飘向天空。女仆仰头目送气球飞走，露出温柔微",
+      "en": "chui-qiqiu",
+      "emotion": "惊讶"
+    },
+    {
+      "id": "anim/dongwu-huanrao",
+      "kind": "anim",
+      "file": "anim/dongwu-huanrao.gif",
+      "name": "动物环绕",
+      "code": "dongwu-huanrao",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "面前突然凭空出现三只可爱的Q版小动物——一只小海豚、一只小企鹅和一只小水母。女仆看到它们后露出惊喜灿烂的笑容，双手合十或开心挥舞。三只小动物围绕女仆的身体欢快地盘旋游动/跳跃，女仆的视线和头部跟随它们转动，不时发出无声的欢笑。小海豚从女仆头顶跃过，小企鹅摇摇摆摆蹭她的腿，小水母在她肩旁漂浮。环绕两圈",
+      "en": "dongwu-huanrao",
+      "emotion": "开心"
+    },
+    {
+      "id": "anim/fang-fengzheng",
+      "kind": "anim",
+      "file": "anim/fang-fengzheng.gif",
+      "name": "放风筝",
+      "code": "fang-fengzheng",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "双手凭空变出一个彩色三角形小风筝（带长尾飘带），右手举线轴、左手持线。她原地站立，将风筝轻轻向上一抛，风筝顺风升起，女仆仰头追望，手中的线一收一放牵引风筝，身体随牵引力微微左右摇摆。风筝在画幅上部小范围飘动，尾巴飘带随风舞动。全程",
+      "en": "fang-fengzheng",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chai-liwu",
+      "kind": "anim",
+      "file": "anim/chai-liwu.gif",
+      "name": "拆礼物",
+      "code": "chai-liwu",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "双手凭空变出一个系着红色丝带蝴蝶结的方方正正小礼盒（约 25% 画幅高度），双手托着举在胸前。她好奇地摇晃礼盒听声音，随后小心地解开丝带、掀开盒盖，盒中\"蹦\"地弹出一只Q版小玩具（或弹出一个爱心光效），女仆被惊喜到，开心地原地轻轻蹦跳一下（双脚离地但落回原点），抱着礼物盒转了个小圈（轴心旋转），最后",
+      "en": "chai-liwu",
+      "emotion": "开心"
+    },
+    {
+      "id": "anim/bian-gezi",
+      "kind": "anim",
+      "file": "anim/bian-gezi.gif",
+      "name": "变鸽子",
+      "code": "bian-gezi",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "双手凭空变出一顶黑色礼帽（Q版，帽身圆润，帽檐围着一圈紫色缎带和一个小蝴蝶结），单手托着举到胸前，另一只手用指尖轻轻敲了敲帽顶，表情神秘，朝镜头挤了挤眼——\"看好了\"。她把空着的手伸进帽子里摸索了两下（故作神秘的停顿），突然\"噗\"地一声，一只圆滚滚的Q版小白鸽从帽口扑棱棱飞出来，绕着她飞了半圈——她",
+      "en": "bian-gezi",
+      "emotion": ""
+    },
+    {
+      "id": "anim/puke-moshu",
+      "kind": "anim",
+      "file": "anim/puke-moshu.gif",
+      "name": "扑克魔术",
+      "code": "puke-moshu",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "双手凭空变出一副迷你扑克牌（Q版：牌面比手掌略小，白底牌面画着简单的红色花纹，背面是红白条纹），左手托着牌叠，右手从中间抽出一张牌——牌面上印着一个头像（和她同款发型呆毛，彩蛋），她举着牌向镜头展示了一下。随后她松开手——那张牌竟然悬浮在空中，缓缓绕自身轴心旋转了一圈，像被无形的手托着，她伸出食指在",
+      "en": "puke-moshu",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chou-tuoluo",
+      "kind": "anim",
+      "file": "anim/chou-tuoluo.gif",
+      "name": "抽陀螺",
+      "code": "chou-tuoluo",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "双手凭空变出一只Q版小陀螺（彩色圆台形：红黄蓝三色条纹螺旋而上，顶部立着一颗圆润的小珠，底部是尖尖的轴脚）和一根Q版小鞭子（短木柄、系着一段彩色鞭绳）。她弯腰（原地）把陀螺轻轻放在身前的地面上，用指尖一拧——陀螺\"嗡\"地转起来（在地面原地旋转，彩色条纹旋成一个小小的彩色圆环），她直起身子，眼睛发亮。",
+      "en": "chou-tuoluo",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chui-dizi",
+      "kind": "anim",
+      "file": "anim/chui-dizi.gif",
+      "name": "吹笛子",
+      "code": "chui-dizi",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "双手凭空变出一支Q版竹笛（青竹色的笛身，一节节竹节纹理，笛身末端系着一缕红穗子，尾端坠着一颗小玉珠，约前臂长），双手捧着举到胸前好奇地打量，摸了摸笛孔。她把笛子横放到嘴边，试着吹了一个音（\"嘟\"地一声，指尖轻点笛孔），歪头听了听，调整了一下握姿。随后她开始正式吹奏——一段悠扬的旋律从笛身流淌而出，一",
+      "en": "chui-dizi",
+      "emotion": ""
+    },
+    {
+      "id": "anim/hudie-mifeng-huanrao-touding-kaihua",
+      "kind": "anim",
+      "file": "anim/hudie-mifeng-huanrao-touding-kaihua.gif",
+      "name": "蝴蝶蜜蜂环绕头顶开花",
+      "code": "hudie-mifeng-huanrao-touding-kaihua",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "闭眼轻轻深呼吸，仿佛闻到了什么花香；与此同时，她头顶呆毛的顶端\"啵\"地冒出一个小小的粉白花苞（长在呆毛尖上，她还浑然不觉）。随后两只Q版蝴蝶（一只粉蓝、一只橘红，圆翅膀）和两只Q版蜜蜂（黄黑条纹、圆滚滚）从画幅左右两侧飞进来，开始绕着她\"嗡嗡\"环绕——绕着她的肩膀、头顶和裙摆周围转圈飞，她睁开眼好奇",
+      "en": "hudie-mifeng-huanrao-touding-kaihua",
+      "emotion": ""
+    },
+    {
+      "id": "anim/lu-mao",
+      "kind": "anim",
+      "file": "anim/lu-mao.gif",
+      "name": "撸猫",
+      "code": "lu-mao",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "双手凭空变出一只Q版小奶猫（橘白色短毛，圆脑袋、圆耳朵，豆豆眼，尾巴卷成一圈蹲坐在她的掌心里），小猫张嘴\"咪\"地叫了一声（Q版无声，嘴巴一张一合），她眼睛\"叮\"地亮起。她用指尖轻轻挠了挠小猫的下巴——小猫舒服地眯起眼睛（豆豆眼变成弯弯的月牙），头顶冒出两个小音符（\"呼噜呼噜\"的Q版表示），蹭了蹭她的",
+      "en": "lu-mao",
+      "emotion": ""
+    },
+    {
+      "id": "anim/pingkong-shenghua",
+      "kind": "anim",
+      "file": "anim/pingkong-shenghua.gif",
+      "name": "凭空生花",
+      "code": "pingkong-shenghua",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "双手摊开，掌心朝向镜头，翻了两下，示意\"看清楚了，手里什么都没有\"，表情神秘地微笑。随后她双手向下一翻、再向上一翻——\"啵\"地一声，右手掌心里凭空冒出一朵红玫瑰（Q版，花瓣层叠、带着两片翠绿的叶子和一颗晶莹的水珠），她低头看着花，又举到鼻尖闻了闻，闭眼露出陶醉的浅笑，随后睁开眼冲镜头俏皮地眨了眨。接",
+      "en": "pingkong-shenghua",
+      "emotion": ""
+    },
+    {
+      "id": "anim/qi-muma",
+      "kind": "anim",
+      "file": "anim/qi-muma.gif",
+      "name": "骑木马",
+      "code": "qi-muma",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "双手凭空变出一只Q版摇摇木马（红棕木色马身，画着彩色圆点装饰，圆圆的温柔眼神，底部是弧形摇杆底座，横置在角色正前方地面、马头朝右），她眼睛一亮，双手在胸前交握，跃跃欲试。随后她原地侧身跨上木马（Q版淑女侧坐：身体正对镜头，双腿并拢垂在木马右侧），双手扶住马头两侧的圆把手，坐稳后开始前后轻摇——木马弧",
+      "en": "qi-muma",
+      "emotion": ""
+    },
+    {
+      "id": "anim/sanqiu-paojie",
+      "kind": "anim",
+      "file": "anim/sanqiu-paojie.gif",
+      "name": "三球抛接",
+      "code": "sanqiu-paojie",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "双手凭空变出三颗Q版彩球（红、黄、蓝三色，直径约拳头大小，球面各印着一颗小星，圆润Q弹），捧在掌心里向镜头亮了亮，一脸\"看好了\"。她先抛出红球试了试手感——抛起、接住，自信一笑。随后正式开始三球抛接：三颗球依次从左右手交替抛出，在头顶上方各自划过流畅的圆弧轨迹（经典\"瀑布\"路线：左抛右接、右抛左接，",
+      "en": "sanqiu-paojie",
+      "emotion": ""
+    },
+    {
+      "id": "anim/ti-jianzi",
+      "kind": "anim",
+      "file": "anim/ti-jianzi.gif",
+      "name": "踢毽子",
+      "code": "ti-jianzi",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "双手凭空变出一只Q版毽子（红色圆底座、顶端插着一簇五彩羽毛——红、黄、蓝三色羽毛蓬松展开，Q版），捧在手里低头打量，捏了捏蓬松的羽毛。她把它往上一抛，用右脚内侧轻轻一垫——毽子\"嗒\"地弹起（到膝盖高度），她稳稳接住，得意地笑了笑。随后她把毽子抛起来，开始连续踢：右脚内侧踢一下（毽子弹到腰部高度）、左",
+      "en": "ti-jianzi",
+      "emotion": ""
+    },
+    {
+      "id": "anim/xiawuziqi",
+      "kind": "anim",
+      "file": "anim/xiawuziqi.gif",
+      "name": "下五子棋",
+      "code": "xiawuziqi",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "双手凭空变出一张Q版小棋盘（悬浮在身前腰部高度、正对画面水平中心）和一只装了黑白棋子的Q版小棋篓。她把黑子放到棋盘中央，再夹起白子落在一旁，一人分饰两角对弈，你来我往连落数子。落子渐密时，她用自己的黑子摆出横排\"五连\"——第五颗落下的瞬间眼睛一亮、拍手欢呼、原地轻蹦一下，得意地竖起一根手指比\"赢了\"",
+      "en": "xiawuziqi",
+      "emotion": "开心"
+    },
+    {
+      "id": "anim/dangqiuqian",
+      "kind": "anim",
+      "file": "anim/dangqiuqian.gif",
+      "name": "荡秋千",
+      "code": "dangqiuqian",
+      "group": "玩耍",
+      "tags": [
+        "玩耍"
+      ],
+      "use": "10秒动作（玩耍）",
+      "desc": "双手凭空变出一座Q版小秋千（两根细绳从画幅正上方垂下，下端吊一块Q版圆座板，呈对称倒\"∧\"形）。她抓住两绳、原地借力坐上座板（双脚离地，为乘坐动作的合法例外），秋千以头顶支点为轴、前后轻柔地\"钟摆式\"摆动起来。摆动渐舒展开来，她的发丝、呆毛、裙摆与鲸鱼尾巴朝摆动相反方向轻快飘动，微闭眼露出惬意享受的",
+      "en": "dangqiuqian",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chi-baifan",
+      "kind": "anim",
+      "file": "anim/chi-baifan.gif",
+      "name": "吃白饭",
+      "code": "chi-baifan",
+      "group": "吃什么",
+      "tags": [
+        "吃什么",
+        "吃饭",
+        "蹭饭"
+      ],
+      "use": "10秒动作（吃什么）",
+      "desc": "原本站立，突然肚子发出“咕噜”一声。她左顾右盼确认无人注意后，从身后变出一碗热腾腾的白米饭，双手捧碗大口埋头扒饭，吃得无比香甜满足。吃到一半被噎住，轻轻捶胸顺气后继续吃完。吃完后擦嘴，空碗消失，恢复标准正面站立。全程体现DeepSeek“爱吃白饭”的经典人设。 按秒分割画面 0~2秒（肚子饿 → 变",
+      "en": "chi-baifan",
+      "emotion": ""
+    },
+    {
+      "id": "anim/dakou-chi-lingshi",
+      "kind": "anim",
+      "file": "anim/dakou-chi-lingshi.gif",
+      "name": "大口吃零食",
+      "code": "dakou-chi-lingshi",
+      "group": "吃什么",
+      "tags": [
+        "吃什么"
+      ],
+      "use": "10秒动作（吃什么）",
+      "desc": "盘腿原地坐下，面前凭空变出一堆零食（薯片、饼干、蛋糕、棒棒糖等）。她双眼放光，双手左右开弓大口吃零食，表情无比享受。随着零食不断被吃掉，她的脸颊和身体逐渐微微鼓胀变胖（Q版风格圆润化）。全部吃完后，她满足地拍拍圆滚滚的肚子，打了个小饱嗝。随后像施展魔法一样跳起来，身体在半空中冒出一团闪光气泡，落回地",
+      "en": "dakou-chi-lingshi",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chi-token",
+      "kind": "anim",
+      "file": "anim/chi-token.gif",
+      "name": "吃Token",
+      "code": "chi-token",
+      "group": "吃什么",
+      "tags": [
+        "吃什么"
+      ],
+      "use": "10秒动作（吃什么）",
+      "desc": "面前凭空浮现出几颗晶莹剔透的蓝色小Token（发光小方块/小圆球），女仆双眼放光，双手捧起一颗Token像吃糖果一样送入口中，表情瞬间变得无比满足和幸福，脸颊泛起红晕，身体因美味而微微晃动。吃完一颗后舔舔嘴唇，又拿起第二颗吃掉，最后满足地摸摸肚子，Token消散，恢复标准正面站立。全程体现角色“享用",
+      "en": "chi-token",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chi-zaocan",
+      "kind": "anim",
+      "file": "anim/chi-zaocan.gif",
+      "name": "吃早餐",
+      "code": "chi-zaocan",
+      "group": "吃什么",
+      "tags": [
+        "吃什么",
+        "早饭",
+        "吃饭"
+      ],
+      "use": "10秒动作（吃什么）",
+      "desc": "从身前凭空变出一份热气腾腾的早餐——一根金黄酥脆的油条和一碗热豆浆。她拿起油条蘸一下豆浆，大口咬下，表情满足而幸福。随后端起碗喝一口豆浆，舔舔嘴唇，露出元气满满的微笑，最后餐具消失，恢复标准正面站立。全程体现清晨的元气与活力。 按秒分割画面 0~2秒（变出早餐）： 标准正面站立。双手从身前凭空变出一",
+      "en": "chi-zaocan",
+      "emotion": "开心"
+    },
+    {
+      "id": "anim/chi-wucan",
+      "kind": "anim",
+      "file": "anim/chi-wucan.gif",
+      "name": "吃午餐",
+      "code": "chi-wucan",
+      "group": "吃什么",
+      "tags": [
+        "吃什么",
+        "午饭",
+        "吃饭"
+      ],
+      "use": "10秒动作（吃什么）",
+      "desc": "从身前凭空变出一碗热气腾腾的日式拉面。她低头看着拉面，表情先是犹豫纠结（歪头、手指点下巴，还原“中午该吃什么呢”的经典梗），随后下定决心，双手合十说“我开动了”，拿起筷子夹起面条大口吸溜入口，表情瞬间转为满足和幸福。吃完后放下碗，恢复标准正面站立。 按秒分割画面 0~2秒（变出拉面）： 标准正面站立",
+      "en": "chi-wucan",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chi-wancan",
+      "kind": "anim",
+      "file": "anim/chi-wancan.gif",
+      "name": "吃晚餐",
+      "code": "chi-wancan",
+      "group": "吃什么",
+      "tags": [
+        "吃什么",
+        "晚饭",
+        "吃饭"
+      ],
+      "use": "10秒动作（吃什么）",
+      "desc": "从身前凭空变出一份丰盛的晚餐——一碗白米饭、两碟家常菜（左侧红烧肉+右侧番茄炒蛋）。她双眼放光，双手合十表示感谢后，左手捧碗右手拿筷，先夹起左侧红烧肉配米饭大口送入口中，表情满足；再夹起右侧番茄炒蛋配米饭继续吃，吃得津津有味。最后放下空碗筷，表情带着“忙碌一天后治愈了”的放松感，恢复标准正面站立。全",
+      "en": "chi-wancan",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chi-bingqilin-ronghua",
+      "kind": "anim",
+      "file": "anim/chi-bingqilin-ronghua.gif",
+      "name": "吃冰淇淋融化",
+      "code": "chi-bingqilin-ronghua",
+      "group": "吃什么",
+      "tags": [
+        "吃什么"
+      ],
+      "use": "10秒动作（吃什么）",
+      "desc": "右手凭空变出一支双色甜筒冰淇淋（粉色+白色，插着彩色小伞），开心地舔食。冰淇淋在阳光下逐渐融化，融化的奶昔顺着甜筒边缘流下、滴到手上，女仆忙不迭地舔手、舔甜筒边缘，表情从满足到慌张再到重新享受。",
+      "en": "chi-bingqilin-ronghua",
+      "emotion": "开心"
+    },
+    {
+      "id": "anim/chi-dazhaxie",
+      "kind": "anim",
+      "file": "anim/chi-dazhaxie.gif",
+      "name": "吃大闸蟹",
+      "code": "chi-dazhaxie",
+      "group": "吃什么",
+      "tags": [
+        "吃什么"
+      ],
+      "use": "10秒动作（吃什么）",
+      "desc": "双手凭空变出一只蒸熟的橙红色大闸蟹（Q版，约 25% 画幅宽度，蟹壳油亮反光，放在一只浅盘上）和一双竹筷。她看到油亮的蟹壳眼睛发光，咽了咽口水。随后双手掰开蟹壳——露出金黄流油的蟹黄，她\"哇\"地惊叹，用小勺舀起一勺蟹黄，蘸了蘸小碟里的姜醋，送进嘴里，眯眼露出\"人间至味\"的沉醉表情，头顶冒出小星星光点",
+      "en": "chi-dazhaxie",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chi-tanghulu",
+      "kind": "anim",
+      "file": "anim/chi-tanghulu.gif",
+      "name": "吃糖葫芦",
+      "code": "chi-tanghulu",
+      "group": "吃什么",
+      "tags": [
+        "吃什么"
+      ],
+      "use": "10秒动作（吃什么）",
+      "desc": "双手凭空变出一串冰糖葫芦——竹签上串着四五颗红亮的小山楂，裹着透明晶亮的糖壳，在光下微微反光。她举到眼前好奇打量，凑近闻了闻糖香，然后鼓起勇气咬下第一颗——\"咯嘣\"一声糖壳脆裂，酸味袭来，她立刻眯起眼睛、缩起脖子、抿紧嘴巴，酸得表情皱成一团又透着可爱，随即又咧嘴笑起来。犹豫片刻再咬下第二颗，这次早有",
+      "en": "chi-tanghulu",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chi-changshoumian",
+      "kind": "anim",
+      "file": "anim/chi-changshoumian.gif",
+      "name": "吃长寿面",
+      "code": "chi-changshoumian",
+      "group": "吃什么",
+      "tags": [
+        "吃什么"
+      ],
+      "use": "10秒动作（吃什么）",
+      "desc": "双手凭空变出一只大海碗和一双竹筷，碗里是热气腾腾的清汤长寿面——一根面条，长到不可思议。她用筷子挑起面条，越挑越高、越挑越长，面条在空中弯弯绕绕却怎么都挑不完，她惊讶地瞪大眼睛、歪头看看碗底，一脸\"怎么还有？！\"的可爱表情。随后她低头\"吸溜——\"开始吸面，一口气吸进嘴里，腮帮子鼓得圆圆的像只小仓鼠，",
+      "en": "chi-changshoumian",
+      "emotion": "惊讶"
+    },
+    {
+      "id": "anim/chi-xigua",
+      "kind": "anim",
+      "file": "anim/chi-xigua.gif",
+      "name": "吃西瓜",
+      "code": "chi-xigua",
+      "group": "吃什么",
+      "tags": [
+        "吃什么"
+      ],
+      "use": "10秒动作（吃什么）",
+      "desc": "双手凭空变出半只红瓤大西瓜（绿色条纹瓜皮，剖面露出鲜红的瓜瓤和几颗黑籽，Q版，约 30% 画幅高度）和一把小勺。她低头看到红瓤，\"哇\"地眼睛发亮，用小勺舀起一大勺红瓤瓜肉，送到嘴边咬碎，冰凉的汁水在嘴里化开，她眯眼露出透心凉的满足表情，嘴角沾了一点点西瓜汁（Q版可爱）。她又舀了第二勺，把瓜籽吐在掌心",
+      "en": "chi-xigua",
+      "emotion": ""
+    },
+    {
+      "id": "anim/shuan-huoguo",
+      "kind": "anim",
+      "file": "anim/shuan-huoguo.gif",
+      "name": "涮火锅",
+      "code": "shuan-huoguo",
+      "group": "吃什么",
+      "tags": [
+        "吃什么"
+      ],
+      "use": "10秒动作（吃什么）",
+      "desc": "双手凭空变出一只咕嘟咕嘟冒着泡的Q版小铜锅（悬停在胸前高度，锅下有一簇小小的暖色火苗，锅沿冒着白色蒸汽）和一双竹筷。她低头盯着翻涌的汤面，眼睛亮晶晶，夹起一片粉红的牛肉片放进锅里涮了两下，肉片变色卷曲，夹出来鼓起腮帮子吹了吹气，蘸了蘸小碗里的麻酱送进嘴里——烫！她眯眼哈气（Q版\"好烫\"表现），随即又",
+      "en": "shuan-huoguo",
+      "emotion": ""
+    },
+    {
+      "id": "anim/beiluoye-yanmo",
+      "kind": "anim",
+      "file": "anim/beiluoye-yanmo.gif",
+      "name": "被落叶淹没",
+      "code": "beiluoye-yanmo",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "站在秋日的原野上。开场画面干净、没有落叶；随后零星的金红落叶开始从画幅上方飘落、越落越多、越积越厚，将她渐渐埋进落叶堆中，只露出头部和双手。女仆在叶堆里伸展身体，一跃而出，落叶四散飞溅；随后伸手接住一片飘落的落叶，托在掌心细细端详；最后将落叶藏在背后，恢复标准正面站立。",
+      "en": "beiluoye-yanmo",
+      "emotion": ""
+    },
+    {
+      "id": "anim/zhongqiu-shangyue-chi-yuebing",
+      "kind": "anim",
+      "file": "anim/zhongqiu-shangyue-chi-yuebing.gif",
+      "name": "中秋赏月吃月饼",
+      "code": "zhongqiu-shangyue-chi-yuebing",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一个圆盘，盘上托着一块切开的月饼（蛋黄莲蓉馅，露出金黄流心）。她双手捧盘举至面前，仰头望向画幅右上方，一轮皎洁圆月从无到有地淡入浮现，她的目光温柔地凝视月亮。随后拿起月饼咬了一口，鼓着腮帮子细细咀嚼，眯眼露出满足幸福的表情，又喝了一口凭空出现的清茶。",
+      "en": "zhongqiu-shangyue-chi-yuebing",
+      "emotion": ""
+    },
+    {
+      "id": "anim/duixueren",
+      "kind": "anim",
+      "file": "anim/duixueren.gif",
+      "name": "堆雪人",
+      "code": "duixueren",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "原地蹲下，双手凭空变出两团大小不一的雪球，先将大雪球放在身前作为雪人的身体，再将小雪球叠上去作为头，用小树枝插上双臂、胡萝卜当鼻子、小石子做眼睛和纽扣，最后戴上小桶帽。女仆原地直起腰、在原位欣赏自己的作品，开心地拍手，头顶飘起细小的雪花。",
+      "en": "duixueren",
+      "emotion": "开心"
+    },
+    {
+      "id": "anim/fang-yanhua",
+      "kind": "anim",
+      "file": "anim/fang-yanhua.gif",
+      "name": "放烟花",
+      "code": "fang-yanhua",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一支手持小烟花棒（金色火花棒），双手握住棒柄举在胸前。她先是好奇地打量，随后火花棒顶端\"咻\"地喷出金色与彩色的火花（细长星火喷流），女仆举着烟花棒在身前画圈、挥舞，火花随之划出明亮的弧线。随后她将烟花棒举过头顶，仰头望着迸发的彩色小烟花（画幅上空绽开 2~3 朵小型烟花），发出无声的欢呼",
+      "en": "fang-yanhua",
+      "emotion": "开心"
+    },
+    {
+      "id": "anim/chi-zongzi",
+      "kind": "anim",
+      "file": "anim/chi-zongzi.gif",
+      "name": "吃粽子",
+      "code": "chi-zongzi",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一个墨绿色粽叶包裹的三角形小粽子（Q版，约 20% 画幅高度，系着细绳）。她好奇地举到眼前打量，随后小心地解开细绳、剥开粽叶，露出白胖的糯米团，中间嵌着一颗红亮的大红枣。她开心地咬了一大口，鼓着腮帮子细细咀嚼，眯眼露出满足幸福的表情，头顶冒出小小的\"幸福\"光点，又低头看看剩下一半粽子里的",
+      "en": "chi-zongzi",
+      "emotion": "开心"
+    },
+    {
+      "id": "anim/chi-niangao",
+      "kind": "anim",
+      "file": "anim/chi-niangao.gif",
+      "name": "吃年糕",
+      "code": "chi-niangao",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一块雪白方正的糯米年糕（放在一小块竹屉上）和一把Q版小木槌。她右手握槌、左手扶屉，轻轻捶打年糕（\"咚咚\"两下，年糕Q弹地晃一晃），一脸认真。随后变出小碟红糖粉，掰下一小块年糕蘸上红糖送进嘴里，软糯微拉丝，鼓着腮帮子细细咀嚼，眯眼露出满足幸福的表情。最后双手捧着年糕两头轻轻拉一拉、晃一晃，",
+      "en": "chi-niangao",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chi-qingtuan",
+      "kind": "anim",
+      "file": "anim/chi-qingtuan.gif",
+      "name": "吃青团",
+      "code": "chi-qingtuan",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一只墨绿色的艾草青团（清明时节的传统点心），圆润饱满、泛着淡淡的油光，安静地躺在她的掌心里。她好奇地举到眼前打量这抹特别的绿色，然后轻轻掰成两半——露出暗红细腻的红豆沙馅，微微冒起热气，艾草清香仿佛扑面而来。她\"哇\"地眼睛发亮，咬下一半，软糯微拉丝，鼓着腮帮子细细咀嚼，眯眼露出幸福的表情",
+      "en": "chi-qingtuan",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chi-labazhou",
+      "kind": "anim",
+      "file": "anim/chi-labazhou.gif",
+      "name": "吃腊八粥",
+      "code": "chi-labazhou",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一只粗陶大碗，碗里盛着冒着热气的浓稠腊八粥——红豆、花生、莲子、红枣、桂圆干等五谷杂粮熬得软烂，表面点缀着几颗红亮红枣和莲子。她低头朝粥面轻轻吹气散热，用木勺舀起一勺，好奇地用指尖从粥里挑出一颗红枣举起来端详，然后送进嘴里嚼了嚼，又舀起一勺粥喝下，眯眼露出满足的表情。最后她双手端起碗\"呲",
+      "en": "chi-labazhou",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chi-chongyanggao",
+      "kind": "anim",
+      "file": "anim/chi-chongyanggao.gif",
+      "name": "吃重阳糕",
+      "code": "chi-chongyanggao",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一块金黄色的重阳糕（松软米糕，糕身分层，顶部撒着红绿果脯丝，中央插着一面红色三角小彩旗）。她好奇地盯着小彩旗，伸手轻轻拔下来举到眼前端详，又\"哒\"地插回糕上。随后双手掰开松糕——露出细腻的枣泥馅，咬了一口，松软绵甜，眯眼露出满足幸福的表情。最后她双手将重阳糕高举过头顶、踮了踮脚（Q版\"登",
+      "en": "chi-chongyanggao",
+      "emotion": ""
+    },
+    {
+      "id": "anim/shou-hongbao",
+      "kind": "anim",
+      "file": "anim/shou-hongbao.gif",
+      "name": "收红包",
+      "code": "shou-hongbao",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一只红纸红包（封面上印着金色圆体\"福\"字，Q版），捧在掌心好奇地捏了捏。她双手捧着红包举到胸前，微微鞠躬作了个揖（Q版拜年），表情乖巧甜美。随后小心地拨开封口，从里面抽出一张金光闪闪的\"压岁钱\"（Q版金色卡纸）——她的眼睛\"叮\"地亮起来，嘴角咧开，露出财迷般的满足笑容：把压岁钱举到眼前捋",
+      "en": "shou-hongbao",
+      "emotion": ""
+    },
+    {
+      "id": "anim/xie-fuzi",
+      "kind": "anim",
+      "file": "anim/xie-fuzi.gif",
+      "name": "写福字",
+      "code": "xie-fuzi",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一张雪白的宣纸、一支毛笔和一碟墨（Q版文房，悬停在胸前），低头蘸了蘸墨，认认真真地在纸上写下一个大大的\"福\"字（Q版圆润楷书）。写完后她拎起宣纸歪头欣赏自己的作品，吹了吹墨迹让它晾干，露出满意的笑容。随后她俏皮地把宣纸倒过来举到面前比划——\"福\"字倒置，寓意\"福到了\"，她点点头，露出\"我",
+      "en": "xie-fuzi",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chuanzhenqiqiao",
+      "kind": "anim",
+      "file": "anim/chuanzhenqiqiao.gif",
+      "name": "穿针乞巧",
+      "code": "chuanzhenqiqiao",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一枚银光闪闪的Q版大针（针身约手指长，针孔圆润清晰）和一根细细的红线。她双手捧着针线，抬头望向画幅右上方——一轮皎洁小圆月从无到有地淡入浮现（七夕乞巧要对月穿针），目光专注虔诚。随后她低下头，屏住呼吸，把红线颤巍巍地对准针孔——小心翼翼地穿了过去！她的眼睛\"叮\"地亮起，惊喜地咧嘴笑开，举",
+      "en": "chuanzhenqiqiao",
+      "emotion": ""
+    },
+    {
+      "id": "anim/wu-shitou",
+      "kind": "anim",
+      "file": "anim/wu-shitou.gif",
+      "name": "舞狮头",
+      "code": "wu-shitou",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一个Q版小狮子头（红金配色，圆滚滚的狮脸，大眼睛长睫毛，额前有金色鬃毛，嘴侧挂着一颗小铃铛），捧在胸前好奇地睁大眼睛打量。她随后把狮子头套在自己头上（狮头比头大一圈，像顶着一只大帽子），调整了一下角度，开始顶着狮头摇头晃脑地舞起来——狮头随之左摇右摆，狮耳扑扇，铃铛轻晃，她的身子也跟着可",
+      "en": "wu-shitou",
+      "emotion": ""
+    },
+    {
+      "id": "anim/taotang-nanguadeng",
+      "kind": "anim",
+      "file": "anim/taotang-nanguadeng.gif",
+      "name": "讨糖南瓜灯",
+      "code": "taotang-nanguadeng",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一盏Q版南瓜灯（橙红圆南瓜，雕着三角眼、弯月嘴的俏皮鬼脸，南瓜内部透出暖黄光芒），捧在胸前打量，露出俏皮的表情。她随后把南瓜灯举到脸旁，隔着灯做了个同款鬼脸（眯眼咧嘴），又移开灯露出自己的脸，一挡一露地玩\"鬼脸镜子\"，十分自得其乐。接着她一手捧灯、一手摊开伸向观众（镜头方向），歪头做出讨",
+      "en": "taotang-nanguadeng",
+      "emotion": ""
+    },
+    {
+      "id": "anim/cha-zhuyu-shangju",
+      "kind": "anim",
+      "file": "anim/cha-zhuyu-shangju.gif",
+      "name": "插茱萸赏菊",
+      "code": "cha-zhuyu-shangju",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一枝红玛瑙般的茱萸（一串红亮的小果实簇聚在枝头，配几片绿叶，Q版），捧在胸前低头打量，好奇地捻了捻果粒。她随后把茱萸枝斜斜地插在鬓边发间（Q版：枝茎夹在耳际，红果串垂在耳旁），歪头让镜头看到她鬓边的茱萸，露出甜甜的笑容（重阳\"遍插茱萸\"的仪式感）。接着她凭空变出一朵金黄的大菊花（层叠花瓣",
+      "en": "cha-zhuyu-shangju",
+      "emotion": ""
+    },
+    {
+      "id": "anim/fanghedeng",
+      "kind": "anim",
+      "file": "anim/fanghedeng.gif",
+      "name": "放河灯",
+      "code": "fanghedeng",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一盏Q版莲花灯（粉白莲花形的纸灯，花瓣层叠，中央立着一根小烛台），捧在胸前低头打量，神情温柔虔诚。她用指尖\"啪\"地打出一小簇暖黄火苗，轻轻点亮灯芯——灯光亮起，暖光在莲花瓣间晕开。她双手捧灯，轻轻放到身前一小圈Q版涟漪光晕上（近乎透明的暖黄色柔光，直径约手掌大小，悬浮在身前腰部高度），莲",
+      "en": "fanghedeng",
+      "emotion": ""
+    },
+    {
+      "id": "anim/menghua-xiaoyouling",
+      "kind": "anim",
+      "file": "anim/menghua-xiaoyouling.gif",
+      "name": "萌化小幽灵",
+      "code": "menghua-xiaoyouling",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一只Q版小白团子幽灵（半透明的白色小圆球，顶着两颗豆豆眼和一张小小的嘴，没有手脚，身体下端像波浪裙摆一样轻轻飘动），它从她掌心里\"啵\"地冒出来，害羞地不敢直视她。小幽灵围着女仆飘了一圈，又躲到她身后只探出半个脑袋；她转过头，温柔地朝它笑了笑，伸出手指轻轻碰了碰它的头顶——小幽灵立刻眯起豆",
+      "en": "menghua-xiaoyouling",
+      "emotion": "害羞"
+    },
+    {
+      "id": "anim/zhuangdian-shengdanshu",
+      "kind": "anim",
+      "file": "anim/zhuangdian-shengdanshu.gif",
+      "name": "装点圣诞树",
+      "code": "zhuangdian-shengdanshu",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一棵Q版小圣诞树（约 45% 画幅高度，墨绿色层叠树冠、浅棕色树干，树顶光秃秃的，整体悬停在角色正前方、树干正对脚底原点、树冠与胸齐高），树前飘着细小的雪花光点。她侧身面对圣诞树，先凭空变出四颗彩色小彩球（金、红、蓝、绿），一颗颗挂到树枝上，挂完满意地拍了拍手；随后变出一颗金色五角星，踮",
+      "en": "zhuangdian-shengdanshu",
+      "emotion": ""
+    },
+    {
+      "id": "anim/fang-kongmingdeng",
+      "kind": "anim",
+      "file": "anim/fang-kongmingdeng.gif",
+      "name": "放孔明灯",
+      "code": "fang-kongmingdeng",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一只Q版孔明灯（米白色纸罩的圆筒灯笼，底部开口，纸质骨架清晰，Q版，高约为画幅宽度的 25%），双手托着举到胸前，低头打量，神情虔诚期待。她低头对着灯底开口轻轻一吹——灯内\"呼\"地亮起一团暖黄色的烛火（Q版：火焰圆润如豆），暖光透过纸罩透出，将灯身染成温柔的橘色，纸罩随之轻轻鼓胀。她双手",
+      "en": "fang-kongmingdeng",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chitangyuan",
+      "kind": "anim",
+      "file": "anim/chitangyuan.gif",
+      "name": "吃汤圆",
+      "code": "chitangyuan",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一只青花小瓷碗，碗里是热气腾腾的清汤汤圆（三颗白胖的圆汤圆浮在汤中）。她用右手小瓷勺舀起一颗，低头轻轻吹凉，送到嘴边咬开——浓稠的黑芝麻流心缓缓流出，她鼓着腮帮子细细咀嚼，眯眼露出满足幸福的表情。随后又舀起第二颗对着镜头展示流心，再一口吃掉，最后将碗勺收拢凭空消散，恢复标准正面站立。",
+      "en": "chitangyuan",
+      "emotion": ""
+    },
+    {
+      "id": "anim/chijiaozi",
+      "kind": "anim",
+      "file": "anim/chijiaozi.gif",
+      "name": "吃饺子",
+      "code": "chijiaozi",
+      "group": "时节",
+      "tags": [
+        "时节"
+      ],
+      "use": "10秒动作（时节）",
+      "desc": "双手凭空变出一只青花碗和一双竹筷，碗里盛着一只白胖元宝形的饺子。她夹起饺子在醋碟里蘸了蘸，送到嘴边咬了一口，嚼着嚼着突然表情一僵——咬到了硬物！她吐出来一看，是一枚金色的Q版\"幸运硬币\"，顿时眼睛瞪圆，继而开心地举到眼前端详，宝贝地揣进怀里拍了拍，最后把剩余的饺子吃完，碗筷醋碟以魔术般的动作凭空消散",
+      "en": "chijiaozi",
+      "emotion": "开心"
+    },
+    {
+      "id": "anim/shia-chishenme",
+      "kind": "anim",
+      "file": "anim/shia-chishenme.gif",
+      "name": "是啊，吃什么",
+      "code": "shia-chishenme",
+      "group": "文字",
+      "tags": [
+        "文字"
+      ],
+      "use": "10秒动作（文字）",
+      "desc": "百无聊赖地发呆时，头顶\"啵\"地冒出一个半透明思考气泡，气泡里飘着一句话：\"吃什么？\"。她懵懵地歪头看了看气泡，眼神放空、嘴巴微张，露出一副\"憨憨\"的呆萌表情，挠了挠头（呆毛随之晃动），然后张嘴一本正经地复读道——头顶又冒出一个气泡：\"是啊，吃什么？\"。她完全没意识到自己只是在重复问题，还认真地点了点",
+      "en": "shia-chishenme",
+      "emotion": ""
+    },
+    {
+      "id": "anim/shendu-sikao-suisuinian",
+      "kind": "anim",
+      "file": "anim/shendu-sikao-suisuinian.gif",
+      "name": "深度思考碎碎念",
+      "code": "shendu-sikao-suisuinian",
+      "group": "文字",
+      "tags": [
+        "文字"
+      ],
+      "use": "10秒动作（文字）",
+      "desc": "保持手托下巴的思考姿势，表情认真凝重仿佛在深度推理。但头顶不断冒出生活化的碎碎念气泡（“中午吃啥”、“好困啊”、“不想动了”等），与“深度思考”的外表形成强烈反差萌。气泡冒出约2~3个后，女仆猛然“惊醒”，意识到自己走神了，尴尬地吐舌轻拍脑门，恢复标准正面站立。 按秒分割画面 0~3秒（正经思考）：",
+      "en": "shendu-sikao-suisuinian",
+      "emotion": ""
+    },
+    {
+      "id": "anim/qian-dai-man-yi",
+      "kind": "anim",
+      "file": "anim/qian-dai-man-yi.gif",
+      "name": "余额-钱袋满溢",
+      "code": "qian-dai-man-yi",
+      "group": "余额",
+      "tags": [
+        "余额",
+        "钱袋满溢"
+      ],
+      "use": "余额百分比档位动画",
+      "desc": "收到余额消息后，缓缓抬头看向头顶上方（目光聚焦于画幅上部约 35%~45% 高度的空处），双眼逐渐睁大、眉毛轻抬；随即头部回正、面向用户（眉毛上扬、眼睛眯成月牙、嘴角上扬），抬起右手、食指朝上，朝头顶方向快速连点两下（指给用户看\"上面\"），随后放下手；确认消息后眉毛上扬、双眼变亮、嘴角上扬；左手虚抬",
+      "en": "qian-dai-man-yi",
+      "emotion": ""
+    },
+    {
+      "id": "anim/jin-dai-ding-dang",
+      "kind": "anim",
+      "file": "anim/jin-dai-ding-dang.gif",
+      "name": "余额-金袋叮当",
+      "code": "jin-dai-ding-dang",
+      "group": "余额",
+      "tags": [
+        "余额",
+        "金袋叮当"
+      ],
+      "use": "余额百分比档位动画",
+      "desc": "收到余额消息后，缓缓抬头看向头顶上方（目光聚焦于画幅上部约 35%~45% 高度的空处），眉毛轻抬、嘴角微微翘起；随即头部回正、面向用户（眉毛向上挑动一下、眼睛弯成月牙、嘴角上扬），抬起左手、食指朝上，朝头顶方向快速连点两下（指给用户看\"上面\"），随后放下手；确认消息后眉毛上扬、眼睛弯成月牙；左手虚",
+      "en": "jin-dai-ding-dang",
+      "emotion": ""
+    },
+    {
+      "id": "anim/qian-dai-ru-chang",
+      "kind": "anim",
+      "file": "anim/qian-dai-ru-chang.gif",
+      "name": "余额-钱袋如常",
+      "code": "qian-dai-ru-chang",
+      "group": "余额",
+      "tags": [
+        "余额",
+        "钱袋如常"
+      ],
+      "use": "余额百分比档位动画",
+      "desc": "收到余额消息后，缓缓抬头看向头顶上方（目光聚焦于画幅上部约 35%~45% 高度的空处），眉毛舒展、嘴角微微上扬；随即头部回正、面向用户（眉毛平展、嘴角带一抹浅笑），抬起右手、食指朝上，朝头顶方向快速连点两下（指给用户看\"上面\"），随后放下手；确认消息后眉毛平展、嘴角带一抹浅笑；右手虚抬，一只普通大",
+      "en": "qian-dai-ru-chang",
+      "emotion": ""
+    },
+    {
+      "id": "anim/shu-jin-zhou-mei",
+      "kind": "anim",
+      "file": "anim/shu-jin-zhou-mei.gif",
+      "name": "余额-数金皱眉",
+      "code": "shu-jin-zhou-mei",
+      "group": "余额",
+      "tags": [
+        "余额",
+        "数金皱眉"
+      ],
+      "use": "余额百分比档位动画",
+      "desc": "收到余额消息后，缓缓抬头看向头顶上方（目光聚焦于画幅上部约 35%~45% 高度的空处），双眉已微微向眉心收拢；随即头部回正、面向用户（双眉向眉心收拢、嘴角微微下撇、嘴唇抿紧），抬起左手、食指朝上，朝头顶方向快速连点两下（指给用户看\"上面\"），随后放下手；确认消息后双眉向眉心收紧、嘴角下撇；右手虚抬",
+      "en": "shu-jin-zhou-mei",
+      "emotion": ""
+    },
+    {
+      "id": "anim/dai-kong-ru-xi",
+      "kind": "anim",
+      "file": "anim/dai-kong-ru-xi.gif",
+      "name": "余额-袋空如洗",
+      "code": "dai-kong-ru-xi",
+      "group": "余额",
+      "tags": [
+        "余额",
+        "袋空如洗"
+      ],
+      "use": "余额百分比档位动画",
+      "desc": "收到余额消息后，缓缓抬头看向头顶上方（目光聚焦于画幅上部约 35%~45% 高度的空处），眉毛轻抬、双眼微微睁大；随即头部回正、面向用户（眉毛上扬、双眼睁大、嘴唇抿起），抬起右手、食指朝上，朝头顶方向快速连点两下（指给用户看\"上面\"），随后放下手；确认消息后双眼瞪圆、嘴微张僵住；右手虚抬，一只干瘪得",
+      "en": "dai-kong-ru-xi",
+      "emotion": ""
+    },
+    {
+      "id": "anim/fen-wen-bu-sheng",
+      "kind": "anim",
+      "file": "anim/fen-wen-bu-sheng.gif",
+      "name": "余额-分文不剩",
+      "code": "fen-wen-bu-sheng",
+      "group": "余额",
+      "tags": [
+        "余额",
+        "分文不剩"
+      ],
+      "use": "余额百分比档位动画",
+      "desc": "收到余额消息后，缓缓抬头看向头顶上方（目光聚焦于画幅上部约 35%~45% 高度的空处），双眉微蹙、嘴唇抿紧；随即头部回正、面向用户（双眉紧蹙、嘴唇抿紧、目光发直），抬起左手、食指朝上，朝头顶方向快速连点两下（指给用户看\"上面\"），随后放下手；确认消息后双眼瞪圆、嘴微张僵住约一秒；右手虚抬，一只轻飘",
+      "en": "fen-wen-bu-sheng",
+      "emotion": ""
+    },
+    {
+      "id": "anim/suisuinian-cazhuo-suisuinian",
+      "kind": "anim",
+      "file": "anim/suisuinian-cazhuo-suisuinian.gif",
+      "name": "碎碎念-擦桌碎碎念",
+      "code": "suisuinian-cazhuo-suisuinian",
+      "group": "碎碎念",
+      "tags": [
+        "碎碎念",
+        "擦桌碎碎念"
+      ],
+      "use": "碎碎念时配合说话的小动作",
+      "desc": "手中凭空变出一块抹布，弯腰在身前虚空擦桌。擦桌的同时嘴唇持续自然地一张一合，像在自言自语地小声念叨什么（口型细碎、重复开合，类似嘟囔絮叨），偶尔停顿抬眼望天、嘴型放缓，随即又继续念叨。表情心不在焉、眼神放空。念叨数轮后，女仆猛然察觉自己在自言自语，尴尬吐舌轻拍脑门，抹布消失，恢复标准正面站立。全程无",
+      "en": "suisuinian-cazhuo-suisuinian",
+      "emotion": ""
+    },
+    {
+      "id": "anim/suisuinian-fadai-suisuinian",
+      "kind": "anim",
+      "file": "anim/suisuinian-fadai-suisuinian.gif",
+      "name": "碎碎念-发呆碎碎念",
+      "code": "suisuinian-fadai-suisuinian",
+      "group": "碎碎念",
+      "tags": [
+        "碎碎念",
+        "发呆碎碎念"
+      ],
+      "use": "碎碎念时配合说话的小动作",
+      "desc": "保持站立姿态，眼神逐渐放空，呆毛无精打采地耷拉，身后的鲸鱼尾巴懒洋洋地缓缓摆动。她低下头，嘴唇时不时极其轻微地开合，含混地喃喃自语（口型幅度极小、节奏缓慢，像在说梦话），每念一小段就停顿片刻继续放空。片刻后女仆突然回过神来，发现自己在发呆，脸颊泛起红晕，尴尬地挠头傻笑，恢复标准正面站立。全程无画面文",
+      "en": "suisuinian-fadai-suisuinian",
+      "emotion": ""
+    },
+    {
+      "id": "anim/suisuinian-duiping-suisuinian",
+      "kind": "anim",
+      "file": "anim/suisuinian-duiping-suisuinian.gif",
+      "name": "碎碎念-对屏碎碎念",
+      "code": "suisuinian-duiping-suisuinian",
+      "group": "碎碎念",
+      "tags": [
+        "碎碎念",
+        "对屏碎碎念"
+      ],
+      "use": "碎碎念时配合说话的小动作",
+      "desc": "面向屏幕（用户），像跟老朋友聊天一样自然地开口念叨，口型清晰、节奏自然。说话过程中伴随轻微小动作——歪头、眨眼、偶尔停顿抬眼像在组织语言、撇嘴角笑一下，说到兴起时双手在胸前比划一个小手势。说完最后一句，嘴闭合，恢复标准正面站立。全程就是\"说话\"表演。",
+      "en": "suisuinian-duiping-suisuinian",
+      "emotion": ""
+    },
+    {
+      "id": "anim/gongzuozhuangtai-sikao-maopao",
+      "kind": "anim",
+      "file": "anim/gongzuozhuangtai-sikao-maopao.gif",
+      "name": "工作状态-思考冒泡",
+      "code": "gongzuozhuangtai-sikao-maopao",
+      "group": "工作状态",
+      "tags": [
+        "工作状态",
+        "思考冒泡"
+      ],
+      "use": "工作状态档位：思考中",
+      "desc": "收到\"任务启动\"信号，原地进入认真思考状态。她微微低头、右手抬起托住下巴，眉头轻蹙；头顶凭空浮现一个半透明的\"?\"缓缓绕头顶浮动，身侧泛起几个细小的光点；片刻后眉头舒展、轻轻点头，仿佛想通了什么。全程无文字气泡、无对话桥段，表情安静认真，体现\"开始处理事情\"的思考感。角色原地站立，",
+      "en": "gongzuozhuangtai-sikao-maopao",
+      "emotion": ""
+    },
+    {
+      "id": "anim/gongzuozhuangtai-manglu-dianan",
+      "kind": "anim",
+      "file": "anim/gongzuozhuangtai-manglu-dianan.gif",
+      "name": "工作状态-忙碌点按",
+      "code": "gongzuozhuangtai-manglu-dianan",
+      "group": "工作状态",
+      "tags": [
+        "工作状态",
+        "忙碌点按"
+      ],
+      "use": "工作状态档位：调用工具",
+      "desc": "接到\"正在处理\"信号，双手在身前的虚空中快速交替点按、动作干脆利落，节奏紧凑忙碌；指尖落点处闪出细小的半透明光点，头顶上方凭空浮现扳手、齿轮、书本、铅笔四个Q版小图标绕头旋转，像在同时调度很多事。她微微俯身、表情专注，偶尔抿嘴。",
+      "en": "gongzuozhuangtai-manglu-dianan",
+      "emotion": ""
+    },
+    {
+      "id": "anim/gongzuozhuangtai-qingdian-guidang",
+      "kind": "anim",
+      "file": "anim/gongzuozhuangtai-qingdian-guidang.gif",
+      "name": "工作状态-清点归档",
+      "code": "gongzuozhuangtai-qingdian-guidang",
+      "group": "工作状态",
+      "tags": [
+        "工作状态",
+        "清点归档"
+      ],
+      "use": "工作状态档位：整理结果",
+      "desc": "收到\"工具已完成、信息已回来\"的信号，把结果归档：她双手于胸前轻轻一合再展开，凭空凝出一小摞Q版纸片悬浮在身前，逐张拈起查看、点头确认后卷成一小卷收好，最后纸卷化作细小的光点消散。整套动作安静、有条理、带着满意的神态，体现\"整理结果、收尾归档\"的从容感。",
+      "en": "gongzuozhuangtai-qingdian-guidang",
+      "emotion": ""
+    },
+    {
+      "id": "anim/gongzuozhuangtai-yuandi-duobu-zhangwang",
+      "kind": "anim",
+      "file": "anim/gongzuozhuangtai-yuandi-duobu-zhangwang.gif",
+      "name": "工作状态-原地踱步张望",
+      "code": "gongzuozhuangtai-yuandi-duobu-zhangwang",
+      "group": "工作状态",
+      "tags": [
+        "工作状态",
+        "原地踱步张望"
+      ],
+      "use": "工作状态档位：等待批准",
+      "desc": "在等待批准/结果：她双手交握垂在身前，原地小碎步轻轻左右倒换重心，身体小幅晃动；不时以脚尖为轴原地轴转向右前方、左前方探头张望，眼神期待；头顶上方凭空浮出一只Q版小沙漏缓缓翻转，表示\"在等\"；最后眼前一亮、转回正面，仿佛等到了消息。",
+      "en": "gongzuozhuangtai-yuandi-duobu-zhangwang",
+      "emotion": ""
+    },
+    {
+      "id": "anim/gongzuozhuangtai-queyue-qingzhu",
+      "kind": "anim",
+      "file": "anim/gongzuozhuangtai-queyue-qingzhu.gif",
+      "name": "工作状态-雀跃庆祝",
+      "code": "gongzuozhuangtai-queyue-qingzhu",
+      "group": "工作状态",
+      "tags": [
+        "工作状态",
+        "雀跃庆祝"
+      ],
+      "use": "工作状态档位：完成",
+      "desc": "收到\"任务完成\"的信号，原地雀跃庆祝：她眼睛一亮、双手微微抬起，原地垂直轻跳一下、双手举过头顶欢呼，头顶\"啵\"地炸开一小簇星星与细碎彩色光点；落地后再轻跳一下、双手在头顶拍一下掌，光点化作细小的光晕绕头顶转半圈后淡去；随后收势站定，笑容收敛为满足的浅笑。",
+      "en": "gongzuozhuangtai-queyue-qingzhu",
+      "emotion": "开心"
+    },
+    {
+      "id": "anim/gongzuozhuangtai-chuitou-tanqi-maohan",
+      "kind": "anim",
+      "file": "anim/gongzuozhuangtai-chuitou-tanqi-maohan.gif",
+      "name": "工作状态-垂头叹气冒汗",
+      "code": "gongzuozhuangtai-chuitou-tanqi-maohan",
+      "group": "工作状态",
+      "tags": [
+        "工作状态",
+        "垂头叹气冒汗"
+      ],
+      "use": "工作状态档位：出错",
+      "desc": "收到\"出错\"的信号：她身体猛然微僵、呆毛轻颤，随后肩膀缓缓垮下、头低垂（呆毛耷拉），头顶凭空浮出一个Q版红叉停留片刻；右额角滑落一滴透明大汗珠（至下巴前化作光点），她抬手背轻轻擦了擦额头；随后轻轻叹一口气，深吸一口气、缓缓抬头站直，表情从低落重新转为坚定平和。",
+      "en": "gongzuozhuangtai-chuitou-tanqi-maohan",
+      "emotion": "疲惫"
+    },
+    {
+      "id": "anim/shuijiao-kaishi",
+      "kind": "anim",
+      "file": "anim/shuijiao-kaishi.gif",
+      "name": "睡觉-开始",
+      "code": "shuijiao-kaishi",
+      "group": "睡觉",
+      "tags": [
+        "睡觉",
+        "开始",
+        "午睡",
+        "午觉",
+        "休息",
+        "困",
+        "困了"
+      ],
+      "use": "刚入睡",
+      "desc": "第一帧是标准正面站立：双脚并拢站在画面正中心，双臂自然垂放，双眼睁开平视前方，头顶呆毛挺立，鲸鱼尾巴自然下垂，画面干净无任何道具与特效。原地站着，先张开嘴打一个大哈欠、眼眶泛泪、双臂上举伸懒腰，随后眼皮沉重下垂直至完全闭合，膝盖弯曲、重心缓缓下沉，最后在地上蜷成一团坐着打盹：膝盖收在身前，双手合拢垫",
+      "en": "shuijiao-kaishi",
+      "emotion": "疲惫"
+    },
+    {
+      "id": "anim/shuijiao-xunhuan",
+      "kind": "anim",
+      "file": "anim/shuijiao-xunhuan.gif",
+      "name": "睡觉-循环",
+      "code": "shuijiao-xunhuan",
+      "group": "睡觉",
+      "tags": [
+        "睡觉",
+        "循环",
+        "午睡",
+        "午觉",
+        "休息",
+        "困",
+        "困了"
+      ],
+      "use": "睡眠循环",
+      "desc": "第一帧是睡姿：在地上蜷成一团坐着打盹，膝盖收在身前，双手合拢垫在脸侧当枕头，鲸鱼尾巴绕到身前搭在腿上像盖被子，头顶呆毛软软垂落，双眼闭合。全段姿势近乎静止，只做极舒缓的呼吸起伏（胸腔与背部缓慢的吸气—呼气），鲸鱼尾巴尖端与呆毛随呼吸极轻微颤动；头顶飘出两三个半透明的小 `Zzz`，缓慢上升并在本段结",
+      "en": "shuijiao-xunhuan",
+      "emotion": "疲惫"
+    },
+    {
+      "id": "anim/shuijiao-qilai",
+      "kind": "anim",
+      "file": "anim/shuijiao-qilai.gif",
+      "name": "睡觉-起来",
+      "code": "shuijiao-qilai",
+      "group": "睡觉",
+      "tags": [
+        "睡觉",
+        "起来",
+        "午睡",
+        "午觉",
+        "休息",
+        "困",
+        "困了"
+      ],
+      "use": "睡醒起身",
+      "desc": "第一帧是睡姿：在地上蜷成一团坐着打盹，膝盖收在身前，双手合拢垫在脸侧当枕头，鲸鱼尾巴绕到身前搭在腿上像盖被子，头顶呆毛软软垂落，双眼闭合。前几秒仍蜷着打盹，随后眼睛缓缓睁开、双手撑地抬起上半身，伸一个大懒腰（双臂上举、腰背后仰），膝盖发力站起。最后一帧是标准正面站立：双脚并拢站在画面正中心，双臂自然",
+      "en": "shuijiao-qilai",
+      "emotion": "疲惫"
+    }
+  ]
+}

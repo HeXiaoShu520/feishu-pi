@@ -1,0 +1,2 @@
+# Used by tools/sticker-frames.py; no visual-model API is needed to preview bundled images.
+Pillow==13.0.0

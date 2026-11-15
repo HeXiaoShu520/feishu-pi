@@ -1,0 +1,325 @@
+{
+  "source": "https://github.com/alwinecor/clawd-stickers",
+  "stickers": [
+    {
+      "id": "hello",
+      "name": "你好，世界",
+      "english": "hello, world",
+      "description": "一边打出 `hello, world` 一边挥手，打招呼用。",
+      "light": "gif/hello.gif",
+      "dark": "gif-dark/hello.gif"
+    },
+    {
+      "id": "thinking",
+      "name": "思考中",
+      "english": "Thinking",
+      "description": "头顶转着 Claude Code 的 ✻ 小星星，点点点一个个冒出来，歪着头思考。",
+      "light": "gif/thinking.gif",
+      "dark": "gif-dark/thinking.gif"
+    },
+    {
+      "id": "ultrathink",
+      "name": "深度思考",
+      "english": "ultrathink",
+      "description": "彩虹色的 `ultrathink` 一个个出现，它想得太用力，全身发红冒烟，最后头顶亮起一个灯泡。",
+      "light": "gif/ultrathink.gif",
+      "dark": "gif-dark/ultrathink.gif"
+    },
+    {
+      "id": "plan",
+      "name": "计划模式",
+      "english": "Plan Mode",
+      "description": "戴上安全帽，展开一张蓝图，先画个小房子再动手写代码。",
+      "light": "gif/plan.gif",
+      "dark": "gif-dark/plan.gif"
+    },
+    {
+      "id": "todo",
+      "name": "待办清单",
+      "english": "Todo List",
+      "description": "盯着待办清单，每一项先变橙色，再被打上勾；四项全部完成时彩纸落下。",
+      "light": "gif/todo.gif",
+      "dark": "gif-dark/todo.gif"
+    },
+    {
+      "id": "simple",
+      "name": "很简单",
+      "english": "It's Simple",
+      "description": "拽着一张标题写着 \"it's simple\" 的需求单，越拉越长，两边的纸堆得越来越高。",
+      "light": "gif/simple.gif",
+      "dark": "gif-dark/simple.gif"
+    },
+    {
+      "id": "subagents",
+      "name": "子代理",
+      "english": "Subagents",
+      "description": "派出三只小小克跑出画面，它们一只只带着对勾回来，主小克欢呼。",
+      "light": "gif/subagents.gif",
+      "dark": "gif-dark/subagents.gif"
+    },
+    {
+      "id": "proceed",
+      "name": "疯狂同意",
+      "english": "Yes, Proceed",
+      "description": "权限确认框一个接一个弹出来，它一直按 yes，越按越快，最后眼睛变成 > <。",
+      "light": "gif/proceed.gif",
+      "dark": "gif-dark/proceed.gif"
+    },
+    {
+      "id": "lgtm",
+      "name": "批准",
+      "english": "LGTM",
+      "description": "举起印章，啪地盖下一个歪歪的红色 LGTM，可以当「同意 / 收到 / 没问题」用。",
+      "light": "gif/lgtm.gif",
+      "dark": "gif-dark/lgtm.gif"
+    },
+    {
+      "id": "right",
+      "name": "您说得对",
+      "english": "You're Absolutely Right!",
+      "description": "`You're absolutely right!` 一行行出现，它拼命点头，身边冒星星。",
+      "light": "gif/right.gif",
+      "dark": "gif-dark/right.gif"
+    },
+    {
+      "id": "compact",
+      "name": "上下文压缩",
+      "english": "/compact",
+      "description": "写着 `/compact` 的铁板压下来，把它压成一张饼；弹回来开心了一下，头顶冒出一个「？」：刚才在干嘛来着？",
+      "light": "gif/compact.gif",
+      "dark": "gif-dark/compact.gif"
+    },
+    {
+      "id": "clear",
+      "name": "清空上下文",
+      "english": "/clear",
+      "description": "终端满屏文字，它眼睛都转晕了；敲下 `/clear`，全部清空，开心地冒星星。",
+      "light": "gif/clear.gif",
+      "dark": "gif-dark/clear.gif"
+    },
+    {
+      "id": "limit",
+      "name": "额度用完",
+      "english": "Usage Limit",
+      "description": "一边敲键盘，头顶的电池一边从绿掉到红；电量耗尽时出现 `limit reached`，它瘫成一张饼，等电池充满才弹起来。",
+      "light": "gif/limit.gif",
+      "dark": "gif-dark/limit.gif"
+    },
+    {
+      "id": "esc",
+      "name": "急停",
+      "english": "Esc",
+      "description": "正全速往前冲，一个大 Esc 键砸在面前，急刹车，脸贴到键上。",
+      "light": "gif/esc.gif",
+      "dark": "gif-dark/esc.gif"
+    },
+    {
+      "id": "banned",
+      "name": "封号",
+      "english": "Banned",
+      "description": "正开心地敲键盘，一把大锤从天而降砸下来；红色 BANNED 印章弹出，它整个变成灰色，铁栏杆落下把它关住。",
+      "light": "gif/banned.gif",
+      "dark": "gif-dark/banned.gif"
+    },
+    {
+      "id": "clone",
+      "name": "克隆",
+      "english": "git clone",
+      "description": "敲下 `git clone`，憋气发抖，分出两只小克，三只轮流蹦，再合回一只。",
+      "light": "gif/clone.gif",
+      "dark": "gif-dark/clone.gif"
+    },
+    {
+      "id": "stash",
+      "name": "藏起来",
+      "english": "git stash",
+      "description": "慌慌张张把散落的改动一股脑塞进宝箱，啪地合上盖子，然后望天吹口哨。",
+      "light": "gif/stash.gif",
+      "dark": "gif-dark/stash.gif"
+    },
+    {
+      "id": "cherry",
+      "name": "摘樱桃",
+      "english": "cherry-pick",
+      "description": "在一排樱桃下面挑着蹦起来，只摘了两颗放进篮子，其余的不碰。",
+      "light": "gif/cherry.gif",
+      "dark": "gif-dark/cherry.gif"
+    },
+    {
+      "id": "conflict",
+      "name": "合并冲突",
+      "english": "Merge Conflict",
+      "description": "`<<<<<<<` 和 `>>>>>>>` 下两只小克顶着脑袋互推冒火花，弹开，互相瞪。",
+      "light": "gif/conflict.gif",
+      "dark": "gif-dark/conflict.gif"
+    },
+    {
+      "id": "forcepush",
+      "name": "强推",
+      "english": "Force Push",
+      "description": "顶着写着 `main` 的大方块使劲推，推飞后欢呼；然后方块又被推回来，把它挤走。",
+      "light": "gif/forcepush.gif",
+      "dark": "gif-dark/forcepush.gif"
+    },
+    {
+      "id": "blame",
+      "name": "甩锅",
+      "english": "git blame",
+      "description": "在 `git blame` 下气冲冲地指着出错的那行，结果作者是自己；默默放下钳子，冒着汗挪走了。",
+      "light": "gif/blame.gif",
+      "dark": "gif-dark/blame.gif"
+    },
+    {
+      "id": "rmrf",
+      "name": "删库",
+      "english": "rm -rf",
+      "description": "一个字一个字敲完 `rm -rf /`，回车，自己从脚开始被删光，只剩一双眼睛，然后从终端里重新掉出来。",
+      "light": "gif/rmrf.gif",
+      "dark": "gif-dark/rmrf.gif"
+    },
+    {
+      "id": "detached",
+      "name": "头掉了",
+      "english": "detached HEAD",
+      "description": "脑袋「啵」地分离浮在原地，身体到处乱跑找头，最后咔哒一下装回去。",
+      "light": "gif/detached.gif",
+      "dark": "gif-dark/detached.gif"
+    },
+    {
+      "id": "notfound",
+      "name": "找不到",
+      "english": "404 Not Found",
+      "description": "写着 404 的纸箱里冒出半个脑袋左右张望，发现被看到了，嗖地缩回去，留下一个「？」。",
+      "light": "gif/notfound.gif",
+      "dark": "gif-dark/notfound.gif"
+    },
+    {
+      "id": "error",
+      "name": "报错",
+      "english": "Error",
+      "description": "头顶红色 Error 闪烁，抱头，然后四脚朝天翻过去，腿乱蹬、头上冒星星，再翻回来。",
+      "light": "gif/error.gif",
+      "dark": "gif-dark/error.gif"
+    },
+    {
+      "id": "bug",
+      "name": "抓虫",
+      "english": "Bug Hunt",
+      "description": "眼睛跟着一只小虫，起跳一屁股坐下去，正得意，结果虫从另一边溜走了。",
+      "light": "gif/bug.gif",
+      "dark": "gif-dark/bug.gif"
+    },
+    {
+      "id": "duck",
+      "name": "小黄鸭调试",
+      "english": "Rubber Duck",
+      "description": "对着一只小黄鸭比划着讲代码，讲着讲着停下来……头顶亮起灯泡，想通了。",
+      "light": "gif/duck.gif",
+      "dark": "gif-dark/duck.gif"
+    },
+    {
+      "id": "loop",
+      "name": "死循环",
+      "english": "while(true)",
+      "description": "在仓鼠轮里狂奔，跑着跑着眼睛变成 > <，汗都甩飞了。",
+      "light": "gif/loop.gif",
+      "dark": "gif-dark/loop.gif"
+    },
+    {
+      "id": "overflow",
+      "name": "栈溢出",
+      "english": "Stack Overflow",
+      "description": "头顶的盘子越叠越高、越晃越厉害，最后整摞倒塌，它晕乎乎地冒星星。",
+      "light": "gif/overflow.gif",
+      "dark": "gif-dark/overflow.gif"
+    },
+    {
+      "id": "leak",
+      "name": "内存泄漏",
+      "english": "Memory Leak",
+      "description": "抱着一个写着 RAM 的罐子，漏洞一个接一个冒出来，水越漏越少，地上积起一滩水。",
+      "light": "gif/leak.gif",
+      "dark": "gif-dark/leak.gif"
+    },
+    {
+      "id": "works",
+      "name": "在我电脑上能跑",
+      "english": "Works on My Machine",
+      "description": "抱着自己的笔记本耸肩，然后抱着电脑冒爱心。",
+      "light": "gif/works.gif",
+      "dark": "gif-dark/works.gif"
+    },
+    {
+      "id": "passed",
+      "name": "测试通过",
+      "english": "Tests Passed",
+      "description": "紧张地盯着，绿色大对勾画出来，彩纸落下，蹦蹦跳跳。",
+      "light": "gif/passed.gif",
+      "dark": "gif-dark/passed.gif"
+    },
+    {
+      "id": "deploy",
+      "name": "周五上线",
+      "english": "Friday Deploy",
+      "description": "头顶写着 `friday deploy`，捧着三炷香闭眼连拜三下。",
+      "light": "gif/deploy.gif",
+      "dark": "gif-dark/deploy.gif"
+    },
+    {
+      "id": "deadline",
+      "name": "赶工",
+      "english": "Deadline",
+      "description": "红色倒计时一路逼近，键盘敲到冒火；归零那一刻出现 `sent!`，整个瘫成一张饼。",
+      "light": "gif/deadline.gif",
+      "dark": "gif-dark/deadline.gif"
+    },
+    {
+      "id": "overtime",
+      "name": "加班",
+      "english": "Overtime",
+      "description": "深夜 02:00，月亮星星，趴在桌前打瞌睡往下沉，一个激灵惊醒，又慢慢闭眼。",
+      "light": "gif/overtime.gif",
+      "dark": "gif-dark/overtime.gif"
+    },
+    {
+      "id": "coffee",
+      "name": "咖啡续命",
+      "english": "Coffee Break",
+      "description": "困得眯眼晃，端起蓝色马克杯一口闷，眼睛瞬间瞪大，满血复活。",
+      "light": "gif/coffee.gif",
+      "dark": "gif-dark/coffee.gif"
+    },
+    {
+      "id": "fish",
+      "name": "摸鱼",
+      "english": "Slacking Off",
+      "description": "怀里抱着一条蓝色小鱼慢慢摸，鱼尾巴摇，冒小爱心。",
+      "light": "gif/fish.gif",
+      "dark": "gif-dark/fish.gif"
+    },
+    {
+      "id": "offwork",
+      "name": "下班",
+      "english": "Clock Out",
+      "description": "盯着时钟从 17:59 跳到 18:00，一溜烟冲出画面；然后时间倒回 17:59，蔫蔫地走回来。",
+      "light": "gif/offwork.gif",
+      "dark": "gif-dark/offwork.gif"
+    },
+    {
+      "id": "sleep",
+      "name": "晚安",
+      "english": "Good Night",
+      "description": "戴着蓝色睡帽睡觉，一串 z 慢慢飘上去。",
+      "light": "gif/sleep.gif",
+      "dark": "gif-dark/sleep.gif"
+    },
+    {
+      "id": "bye",
+      "name": "拜拜",
+      "english": "/exit",
+      "description": "敲下 `/exit`，挥手告别，然后缩小钻进终端里，只留下一句 `bye!`。",
+      "light": "gif/bye.gif",
+      "dark": "gif-dark/bye.gif"
+    }
+  ]
+}

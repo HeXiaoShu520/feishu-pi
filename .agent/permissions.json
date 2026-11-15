@@ -46,6 +46,7 @@
     "Tools(mcp)",
     "Tools(schedule_manager)",
     "Tools(sticker_search)",
-    "Tools(sticker_send)"
+    "Tools(sticker_send)",
+    "Tools(profile_update)"
   ]
 }

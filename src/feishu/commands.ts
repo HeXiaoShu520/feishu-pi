@@ -8,8 +8,6 @@
 import type { Client } from "@larksuiteoapi/node-sdk";
 import type { FeishuInboundMessage } from "./types.ts";
 import { logger } from "../utils/logger.ts";
-import type { FeishuContext } from "../runtime/types.ts";
-import { findMemory, type ManagedMemory, type MemoryManagementAction } from "../assistant/memory-management.ts";
 
 /** 指令处理器接口：match 判定是否命中，execute 返回要发送的卡片 */
 export interface CommandHandler {
@@ -42,30 +40,6 @@ export function markdownCard(content: string): object {
     schema: "2.0",
     body: { elements: [{ tag: "markdown", content }] },
   };
-}
-
-/** Manage only the requesting private-chat user's extracted facts. */
-export class MemoryCommand implements CommandHandler {
-  private readonly manage: (context: FeishuContext, action: MemoryManagementAction, id?: string) => Promise<ManagedMemory[]>;
-  constructor(manage: (context: FeishuContext, action: MemoryManagementAction, id?: string) => Promise<ManagedMemory[]>) { this.manage = manage; }
-  match(text: string): boolean { return /^\/memory(?:\s|$)/i.test(text.trim()); }
-  async execute(message: FeishuInboundMessage): Promise<CommandResult> {
-    if (message.context.chatMode !== "p2p") return { card: errorCard("请在私聊中管理自己的记忆。") };
-    const parts = message.text.trim().split(/\s+/);
-    const action = (parts[1] ?? "list").toLowerCase();
-    if (action !== "list" && action !== "show" && action !== "disable" && action !== "restore") return { card: markdownCard("用法：`/memory list`、`/memory show 记忆ID`、`/memory disable 记忆ID`、`/memory restore 记忆ID`。停用仅影响提炼记忆，不删除原始聊天和其他记录。") };
-    if (action !== "list" && (parts.length !== 3 || !parts[2])) return { card: errorCard("请附上 `/memory list` 中显示的记忆 ID。") };
-    const items = await this.manage(message.context, action === "show" ? "list" : action, action === "show" ? undefined : parts[2]);
-    const escape = (text: string) => text.replace(/[\\`*_\[\]<>]/g, "\\$&").replace(/[\r\n]+/g, " ");
-    if (!items.length) return { card: markdownCard("当前还没有提炼出的记忆。") };
-    if (action === "show") {
-      const item = findMemory(items, parts[2]);
-      const sources = item.evidence?.map(source => `- ${source.kind === "support" ? "支持" : "纠正"} · ${new Date(source.at).toISOString().slice(0, 10)}：${escape(source.quote)}`).join("\n") || "这条记忆没有可展示的原话依据。";
-      return { card: markdownCard(`**记忆详情**\n\n${item.active ? "启用" : "停用"} · ${escape(item.category)} · \`${item.id}\`\n${escape(item.text)}\n\n**原话依据**\n${sources}\n\n记录可能有误，可以直接纠正，或用 /memory disable 停用。`) };
-    }
-    const lines = items.map(item => `- ${item.active ? "启用" : "停用"} · ${escape(item.category)} · \`${item.id}\`\n  ${escape(item.text)}`);
-    return { card: markdownCard(`${action === "list" ? "**提炼记忆**" : "**记忆状态已更新**"}\n\n${lines.join("\n")}\n\n使用 /memory show 记忆ID 查看依据。停用仅影响提炼记忆；原始聊天、近期对话和其他记录不会删除。`) };
-  }
 }
 
 /** 错误提示卡（❌ 前缀）。 */
@@ -246,8 +220,7 @@ export class HelpCommand implements CommandHandler {
 \`/login\` - 登录飞书用户身份（Device Flow 授权，用于"我的视角"能力）
 \`/logout\` - 退出用户身份登录
 \`/help\` - 显示此帮助信息
-\`/memory list\` - 查看自己的提炼记忆（仅私聊）
-\`/memory show 记忆ID\` - 查看关系画像的原话依据
+\`/chatid\` - 查看当前群/会话的 chatId（配置主动发言用）
 \`/bili-auto on|off|status|run\` - 管理 B 站自动互动（仅管理员私聊）
 \`/new\` - 开始新会话（换新的会话 id 与会话目录）
 \`/stop\` - 停止当前 AI 响应
@@ -391,9 +364,22 @@ export class CommandRegistry {
  * /new /stop 需要会话操作依赖，由 bridge 在注册时以 NewCommand/StopCommand 注入；
  * /detail /perm /login /logout 等同样由 bridge/main 按需追加注册。
  */
+/** 在群里 @ 机器人发 /chatid，拿当前会话 ID，用于配置主动发言的群。 */
+export class ChatIdCommand implements CommandHandler {
+  match(text: string): boolean {
+    return /^\/chatid\s*$/i.test(text.trim());
+  }
+  async execute(message: FeishuInboundMessage): Promise<CommandResult> {
+    return {
+      card: markdownCard(`当前会话 chatId：\n\`${message.chatId}\`\n\n把它填进 \`.env\` 的 \`FEISHU_PI_ACTIVE_CHATS\`，并设置 \`FEISHU_PI_PROACTIVE=1\`，大肥鱼才会在这个群主动说话。`),
+    };
+  }
+}
+
 export function createDefaultRegistry(modelInfo?: () => ModelInfo): CommandRegistry {
   const registry = new CommandRegistry();
   if (modelInfo) registry.register(new ModelCommand(modelInfo));
+  registry.register(new ChatIdCommand());
   registry.register(new HelpCommand());
   return registry;
 }

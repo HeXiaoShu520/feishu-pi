@@ -1,7 +1,7 @@
 import type { BiliAutomation } from "../bilibili/automation.ts";
 import type { FeishuInboundMessage } from "./types.ts";
 import { markdownCard, type CommandHandler, type CommandResult } from "./commands.ts";
-import { containsSensitiveText } from "../assistant/memory-safety.ts";
+import { containsSensitiveText } from "../assistant/sensitive.ts";
 
 export class BiliAutoCommand implements CommandHandler {
   private readonly service?: BiliAutomation;

@@ -65,6 +65,17 @@ test/.tmp/
 
 data/
 
+# 表情图库：逐图 txt、索引与许可入库，大包图片留本地，clawd 与 whale-girl 两个小套组整体入库。
+/stickers/**/*
+!/stickers/**/
+!/stickers/README.md
+!/stickers/**/*.txt
+!/stickers/*/metadata.json
+!/stickers/*/NOTICE
+!/stickers/*/LICENSE-ASSETS
+!/stickers/clawd/**
+!/stickers/whale-girl/**
+
 # 本地工具产物
 .claude/
 .pi/
@@ -91,3 +102,7 @@ docs/jev-api-tutorial.md
 
 # IDE-local generated repo knowledge cache (same nature as .pi/)
 .qoder/
+
+# Local persona snapshots are regenerated at startup.
+/.agent/personas/versions/
+.pytest_cache/

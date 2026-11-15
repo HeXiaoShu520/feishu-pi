@@ -1,6 +1,24 @@
 import type { FeishuPiEvent } from "../runtime/types.ts";
 
 /** 每轮独立收集真实工具结果，不从模型正文猜测图片身份。 */
+/** 发图后的「解说腔」：描述图片内容、汇报发了几张、翻库存。真人不会这么说。 */
+const STICKER_COMMENTARY = /^(?:我)?(?:先甩|再甩|甩了|甩两张|发你(?:一|两|几)张|给你(?:发|甩)(?:一|两|几)张)|^(?:我)?(?:从|去|在)?库存.{0,12}(?:挑|翻|找)|^这(?:一|两|几)张(?:表情包|图).{0,12}(?:分别是|一个是|另一个是)/u;
+// Suppress only complaints about the medium, not short in-character retorts.
+const STICKER_NAGGING = /不吭声只[丢发]图|只[丢发]图.{0,12}(没说话|没开口|问号)|看了.{0,8}张.{0,16}(没听|没说|开口)|(?:没听见|还没听到)你说.{0,6}话/u;
+
+export function isStickerCommentary(text: string): boolean {
+  return STICKER_COMMENTARY.test(text) || STICKER_NAGGING.test(text);
+}
+
+/** Remove clear delivery chatter per sentence, without swallowing a real answer.
+ * Formatted/code replies are kept intact: this is only a chat cleanup fallback.
+ */
+export function stripStickerCommentary(text: string): string {
+  if (/```|~~~|!\[|^\s*[#>|]/mu.test(text)) return text;
+  return text.split(/(?<=[。！？!?])|(?=\n)|(?<=\n)/u)
+    .filter(part => !isStickerCommentary(part.trim())).join("").trim();
+}
+
 export class StickerDelivery {
   private pending = new Map<string, { id: string; line: string; markdown: string }>();
   standaloneSent = false;

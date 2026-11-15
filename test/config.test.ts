@@ -6,7 +6,15 @@ const baseEnv = { FEISHU_APP_ID: "cli_x", FEISHU_APP_SECRET: "s", FEISHU_PI_MODE
 describe("loadConfig", () => {
   it("保留稳定的资源配置", () => {
     const config = loadConfig({ ...baseEnv, FEISHU_PI_MAX_RESOURCE_MB: "8" });
-    expect(config.showModelStats).toBe(true);
+    // 统计小字默认不显示（像个人说话），显式开启才出现
+    expect(config.showModelStats).toBe(false);
+    expect(loadConfig({ ...baseEnv, FEISHU_SHOW_MODEL_STATS: "1" }).showModelStats).toBe(true);
+    // 回复文字 emoji 默认允许，可显式关闭
+    expect(config.replyEmoji).toBe(true);
+    expect(loadConfig({ ...baseEnv, FEISHU_PI_REPLY_EMOJI: "0" }).replyEmoji).toBe(false);
+    // 群聊主动接话默认开启，可显式关闭
+    expect(config.groupChime).toBe(true);
+    expect(loadConfig({ ...baseEnv, FEISHU_PI_GROUP_CHIME: "0" }).groupChime).toBe(false);
     expect(config.maxResourceBytes).toBe(8 * 1024 * 1024);
   });
 

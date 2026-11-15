@@ -9,7 +9,9 @@
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { mkdir, writeFile } from "node:fs/promises";
 import { sanitizeFileName } from "../utils/session-paths.ts";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { runProcess } from "../process/runner.ts";
 import { DEFAULT_MAX_RESOURCE_BYTES, toBuffer } from "./resource-buffer.ts";
 import { logger } from "../utils/logger.ts";
 
@@ -17,7 +19,7 @@ import { logger } from "../utils/logger.ts";
 export interface ProcessedImage {
   data: Uint8Array;
   mimeType: string;
-  /** 落盘位置（传 cacheDir 时存在）。图片 base64 不再写入会话记录，消息文本靠它指回原图 */
+  /** 原图落盘位置（传 cacheDir 时存在），用于排查和动图多帧采样。 */
   savedPath?: string;
 }
 
@@ -57,7 +59,7 @@ export class LarkImageProcessor implements FeishuImageProcessor {
       const imageData = await toBuffer(response, maxBytes);
 
       // 可选：落盘到指定目录（会话工作区/images；供排查，失败不影响返回）
-      // 落盘路径回填 savedPath：图片 base64 不再写入会话记录，靠消息文本里的路径指回原图
+      // 原图与模型采样预览分开保存；模型收到的图片也由 Pi 保留在历史中。
       let savedPath: string | undefined;
       if (cacheDir) {
         try {
@@ -72,9 +74,37 @@ export class LarkImageProcessor implements FeishuImageProcessor {
         }
       }
 
-      return { data: new Uint8Array(imageData), mimeType: this.detectMimeType(imageData), savedPath };
+      const mimeType = this.detectMimeType(imageData);
+      // GIF 原样交给模型时，很多视觉接口只取首帧甚至直接忽略；先采样多帧拼成一张 PNG。
+      if (mimeType === "image/gif" && savedPath) {
+        const preview = await this.animatedPreview(savedPath);
+        if (preview) return { ...preview, savedPath };
+      }
+
+      return { data: new Uint8Array(imageData), mimeType, savedPath };
     } catch (err) {
       logger.error("[LarkImageProcessor] 处理图片失败", imageKey, err);
+      return undefined;
+    }
+  }
+
+  /** 动图采样：复用表情预览脚本，把多个时间点拼成一张静态 PNG；失败回退原 GIF。 */
+  private async animatedPreview(path: string): Promise<{ data: Uint8Array; mimeType: string } | undefined> {
+    try {
+      const script = fileURLToPath(new URL("../../tools/sticker-frames.py", import.meta.url));
+      const result = await runProcess(process.env.FEISHU_STICKER_PYTHON || "python", [script], {
+        cwd: dirname(path),
+        // 入站动图只取 3 帧，控制发给模型的图片大小；表情 inspect 仍默认 6 帧。
+        input: JSON.stringify({ path, frames: 3 }),
+        timeoutMs: 30_000,
+        maxChars: 8 * 1024 * 1024,
+      });
+      if (result.exitCode !== 0 || result.truncated) return undefined;
+      const value = JSON.parse(result.stdout) as { data?: unknown; mimeType?: unknown };
+      if (typeof value.data !== "string" || value.mimeType !== "image/png") return undefined;
+      return { data: new Uint8Array(Buffer.from(value.data, "base64")), mimeType: "image/png" };
+    } catch (error) {
+      logger.warn("[LarkImageProcessor] GIF 多帧采样失败，回退原始 GIF:", error instanceof Error ? error.message : error);
       return undefined;
     }
   }

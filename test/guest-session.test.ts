@@ -4,7 +4,6 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FeishuPiRuntime } from "../src/runtime/feishu-pi-runtime.ts";
 import type { FeishuPiConfig } from "../src/runtime/types.ts";
-import { PersonMemory } from "../src/assistant/person-memory.ts";
 
 describe("普通用户权限", () => {
   it("普通用户可私聊和群聊，只注册安全表情工具", async () => {
@@ -12,11 +11,14 @@ describe("普通用户权限", () => {
     const previous = process.env.FEISHU_PI_MODEL_API_KEY;
     process.env.FEISHU_PI_MODEL_API_KEY = "test-key";
     try {
+      const fakeTool = (name: string) => ({ name, label: name, description: name, parameters: { type: "object", properties: {} }, execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }) });
       const config = {
         cwd: process.cwd(), ownerOpenId: "ou_owner", modelProvider: "deepseek", modelName: "deepseek-flash",
         thinkingLevel: "off", sessions: { dirFor: async () => dir }, permissionPolicy: { current: async () => ({}) },
         toolGuard: async () => undefined,
-        guestTools: () => ["sticker_search", "sticker_send", "bash"].map(name => ({ name, label: name, description: name, parameters: { type: "object", properties: {} }, execute: async () => ({ content: [{ type: "text", text: "ok" }], details: {} }) })),
+        guestTools: () => ["sticker_search", "sticker_send", "bash", "profile_update"].map(fakeTool),
+        // 与生产装配对齐（main.ts）：owner 的 sticker 工具来自 sessionTools，而非 .agent/tools 里的同名脚本
+        sessionTools: () => ["sticker_search", "sticker_send"].map(fakeTool),
       } as unknown as FeishuPiConfig;
       const runtime = new FeishuPiRuntime(config);
       const context = { userOpenId: "ou_guest", chatId: "oc_guest", conversationId: "p2p-guest", chatMode: "p2p" as const, isOwner: false };
@@ -30,20 +32,17 @@ describe("普通用户权限", () => {
       const groupSession = await runtime.createSession(undefined, "ou_guest", groupContext);
       const groupRaw = (groupSession as unknown as { raw: { agent: { state: { tools: Array<{ name: string }> } } } }).raw;
       expect(groupRaw.agent.state.tools.map(tool => tool.name).sort()).toEqual(["sticker_search", "sticker_send"]);
-      const groupMemory = (groupSession as unknown as { memory: { recall(query: string): Promise<string> } }).memory;
       await expect(runtime.createSession(undefined, "ou_guest", { ...context, userOpenId: "ou_other" })).rejects.toThrow();
       const ownerSession = await runtime.createSession(undefined, "ou_owner", { ...context, userOpenId: "ou_owner", isOwner: true });
       const ownerRaw = (ownerSession as unknown as { raw: { agent: { state: { tools: Array<{ name: string }> } } } }).raw;
       expect(ownerRaw.agent.state.tools.map(tool => tool.name)).toContain("sticker_search");
       expect(ownerRaw.agent.state.tools.map(tool => tool.name)).toContain("bash");
-      const people = new PersonMemory(join(dir, "people"), async () => JSON.stringify([{ op: "add", category: "preference", text: "喜欢草莓", importance: 2 }]));
-      (runtime as unknown as { personMemory: PersonMemory }).personMemory = people;
-      await people.observe("feishu", "ou_guest", "喜欢草莓", "好的", []);
-      const [fact] = await runtime.manageMemory(context, "list");
-      await expect(runtime.manageMemory({ ...context, userOpenId: "ou_other", isOwner: true }, "disable", fact.id)).rejects.toThrow("没有找到");
-      expect((await runtime.manageMemory(context, "list"))[0].active).toBe(true);
-      expect(await people.recall("feishu-group", "oc_guest:ou_guest", "草莓")).toBe("");
-      expect(await groupMemory.recall("草莓")).not.toContain("草莓");
+      runtime.setMemory({ recall: async () => "", updateProfile: async () => "profile-id" });
+      const withMemory = await runtime.createSession(undefined, "ou_guest", context);
+      const memoryRaw = (withMemory as unknown as { raw: typeof raw }).raw;
+      expect(memoryRaw.agent.state.tools.map(tool => tool.name).sort()).toEqual(["profile_update", "sticker_search", "sticker_send"]);
+      expect(await memoryRaw.agent.beforeToolCall({ toolCall: { name: "profile_update" }, args: {} }, signal)).toBeUndefined();
+      expect(await memoryRaw.agent.beforeToolCall({ toolCall: { name: "bash" }, args: {} }, signal)).toMatchObject({ block: true });
     } finally {
       if (previous === undefined) delete process.env.FEISHU_PI_MODEL_API_KEY; else process.env.FEISHU_PI_MODEL_API_KEY = previous;
       await rm(dir, { recursive: true, force: true });

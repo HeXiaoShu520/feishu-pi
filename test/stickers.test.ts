@@ -8,6 +8,7 @@ import { EMPTY_RULES, type StickerRules } from "../src/stickers/rules.ts";
 import { createGuestStickerSearchTool } from "../src/stickers/guest-search.ts";
 import { createStickerSendTool } from "../src/stickers/send.ts";
 import type { Client } from "@larksuiteoapi/node-sdk";
+import { createHash } from "node:crypto";
 
 const GIF = "GIF89a";
 
@@ -21,7 +22,7 @@ describe("sticker search", () => {
 
   beforeEach(async () => {
     root = await mkdtemp(join(tmpdir(), "sticker-search-"));
-    for (const dir of ["nekowhale/大肥鱼", "nekowhale/大肥鱼和GPT娘", "clawd/gif", "whale-girl/gifs", "bluefish", "emotelab", "dsh-pet/anim", "dsh-pet/memes"]) {
+    for (const dir of ["nekowhale/大肥鱼", "nekowhale/大肥鱼和GPT娘", "clawd/gif", "whale-girl/gifs", "bluefish", "emotelab", "dsh-pet/anim", "dsh-pet/memes", "chinese-bqb/010Cat_是喵星人啦BQB", "chinese-bqb/000Contribution_贡献BQB", "chinese-bqb/035TomAndJerry_猫和老鼠BQB", "emoji-package/搬砖"]) {
       await mkdir(join(root, dir), { recursive: true });
     }
     await writeFile(join(root, "nekowhale/metadata.json"), JSON.stringify({
@@ -48,7 +49,22 @@ describe("sticker search", () => {
         { id: "meme/吃白饭的大肥鱼", file: "memes/吃白饭的大肥鱼.png", name: "吃白饭的大肥鱼", code: "吃白饭的大肥鱼", group: "表情包", emotion: "疲惫", tags: ["偷懒"], use: "适合被吐槽/偷懒", desc: "躺平扒白饭", en: "" },
       ],
     }));
-    for (const file of ["nekowhale/大肥鱼/10N01_开心猫.gif", "nekowhale/大肥鱼/10N02_摸鱼.gif", "nekowhale/大肥鱼和GPT娘/2TT01_喂药.gif", "clawd/gif/passed.gif", "bluefish/laugh.png", "emotelab/001.gif", "dsh-pet/anim/chi-xigua.gif", "dsh-pet/memes/吃白饭的大肥鱼.png"]) {
+    // 中文热梗扩展包（入库脚本派生字段）：与 dsh-pet 同款全字段结构
+    await writeFile(join(root, "chinese-bqb/metadata.json"), JSON.stringify({
+      stickers: [
+        { id: "010/0001", kind: "meme", file: "010Cat_是喵星人啦BQB/是喵星人啦00001-上班偷懒猫.gif", name: "上班偷懒猫", code: "上班偷懒猫", group: "是喵星人啦", tags: [], use: "", desc: "上班偷懒猫", en: "", emotion: "" },
+        { id: "000/7889", kind: "meme", file: "000Contribution_贡献BQB/2c7889dbe9efbf7145d3ef669b11d22d.gif", name: "2c7889dbe9efbf7145d3ef669b11d22d", code: "2c7889dbe9efbf7145d3ef669b11d22d", group: "贡献", tags: [], use: "", desc: "2c7889dbe9efbf7145d3ef669b11d22d", en: "", emotion: "" },
+        // 内置内容安全用例：露骨性内容不应出现在任何候选里
+        { id: "035/0001", kind: "meme", file: "035TomAndJerry_猫和老鼠BQB/我要操你五次.jpg", name: "我要操你五次", code: "我要操你五次", group: "猫和老鼠", tags: [], use: "", desc: "粉色手掌", en: "", emotion: "" },
+      ],
+    }));
+    await writeFile(join(root, "emoji-package/metadata.json"), JSON.stringify({
+      stickers: [
+        { id: "搬砖/今天工地好热，砖头烫手", kind: "meme", file: "搬砖/今天工地好热，砖头烫手.jpg", name: "今天工地好热，砖头烫手", code: "今天工地好热，砖头烫手", group: "搬砖", tags: [], use: "", desc: "今天工地好热，砖头烫手", en: "", emotion: "" },
+        { id: "搬砖/搬砖使我快乐", kind: "meme", file: "搬砖/搬砖使我快乐.jpg", name: "搬砖使我快乐", code: "搬砖使我快乐", group: "搬砖", tags: [], use: "", desc: "搬砖使我快乐", en: "", emotion: "" },
+      ],
+    }));
+    for (const file of ["nekowhale/大肥鱼/10N01_开心猫.gif", "nekowhale/大肥鱼/10N02_摸鱼.gif", "nekowhale/大肥鱼和GPT娘/2TT01_喂药.gif", "clawd/gif/passed.gif", "bluefish/laugh.png", "emotelab/001.gif", "dsh-pet/anim/chi-xigua.gif", "dsh-pet/memes/吃白饭的大肥鱼.png", "chinese-bqb/010Cat_是喵星人啦BQB/是喵星人啦00001-上班偷懒猫.gif", "chinese-bqb/000Contribution_贡献BQB/2c7889dbe9efbf7145d3ef669b11d22d.gif", "chinese-bqb/035TomAndJerry_猫和老鼠BQB/我要操你五次.jpg", "emoji-package/搬砖/今天工地好热，砖头烫手.jpg", "emoji-package/搬砖/搬砖使我快乐.jpg"]) {
       await writeFile(join(root, file), GIF);
     }
   });
@@ -100,6 +116,16 @@ describe("sticker search", () => {
 
     const only = (await searchStickers(root, "", { shuffle: false, rules: rules({ whitelist: ["pack:clawd"] }) })).map((item) => item.id);
     expect(only).toEqual(["clawd:passed"]);
+  });
+
+  it("内置内容安全：色情/辱骂表情不进检索与发送候选，白名单也救不回来", async () => {
+    const all = (await searchStickers(root, "", { shuffle: false })).map((item) => item.id);
+    expect(all).not.toContain("chinese-bqb:035/0001");
+    // 直接点名也取不到
+    expect(await pickSticker(root, "我要操你五次", { rules: rules() })).toBeUndefined();
+    // 白名单明确放行也不能拉回来（代码兜底优先于用户名单）
+    const whitelisted = (await searchStickers(root, "", { shuffle: false, rules: rules({ whitelist: ["code:我要操你五次"] }) })).map((item) => item.id);
+    expect(whitelisted).toEqual([]);
   });
 
   it("情绪词直取：精确名字优先，否则在该情绪下随机取一张", async () => {
@@ -197,42 +223,52 @@ describe("sticker search", () => {
     }
   });
 
-  it("默认嵌入卡片：只上传返回 markdown 片段，不独立发图；standalone 才独立发送", async () => {
+  it("检查后独立发送并记录；standalone:false 只上传嵌卡", async () => {
     const upload = vi.fn(async () => ({ image_key: "img_key_1" }));
     let messageResult: unknown = { code: 0, data: { message_id: "om_x1" } };
     const send = vi.fn(async () => messageResult);
     const client = { im: { v1: { image: { create: upload }, message: { create: send } } } } as unknown as Client;
     const history = new StickerHistory(join(root, "history"));
-    const tool = createStickerSendTool(client, root, "oc_chat1", { rules: async () => EMPTY_RULES, history });
+    const tool = createStickerSendTool(client, root, "oc_chat1", { rules: async () => EMPTY_RULES, history,
+      preview: async () => ({ data: "cHJldmlldw==", mimeType: "image/png", sha256: createHash("sha256").update(GIF).digest("hex"), frameCount: 1, sampledFrames: [1], durationMs: 0 }),
+    });
+    const reviewed = async (id: string) => {
+      const result = await tool.execute("inspect", { id, action: "inspect" }, undefined);
+      const token = JSON.parse((result.content[0] as { text: string }).text).reviewToken;
+      return { id, action: "send", reviewToken: token, reason: "已核对画面和文字，适合当前轻松对话" };
+    };
 
-    // 默认只上传，尚未获得卡片发送回执，不能记为已发送。
-    const ok = await tool.execute("t", { id: "nekowhale:大肥鱼和GPT娘/2TT01_喂药" }, undefined);
-    const parsed = JSON.parse((ok.content[0] as { text: string }).text) as { embedded: boolean; imageKey: string; markdown: string; line: string };
-    expect(parsed.embedded).toBe(true);
-    expect(parsed.imageKey).toBe("img_key_1");
-    expect(parsed.markdown).toContain("](img_key_1)");
-    expect(parsed.markdown.startsWith("![")).toBe(true);
-    expect(parsed.line).toContain("喂药");
+    // 默认独立图片消息：上传并直接发到绑定会话，立即记录。
+    const ok = await tool.execute("t", await reviewed("clawd:passed"), undefined);
+    const parsed = JSON.parse((ok.content[0] as { text: string }).text) as { sent: boolean; messageId: string };
+    expect(parsed.sent).toBe(true);
+    expect(parsed.messageId).toBe("om_x1");
     expect(upload).toHaveBeenCalledTimes(1);
-    expect(send).not.toHaveBeenCalled();
-    expect(recentSent()).not.toContain("nekowhale:大肥鱼和GPT娘/2TT01_喂药");
-    expect(await history.list("oc_chat1")).toEqual([]);
-    expect(parsed).toMatchObject({ sent: false, status: "uploaded_pending_card", meaning: { description: "大肥鱼给GPT娘喂药", direction: "大肥鱼→GPT娘", source: "catalog_metadata" } });
-
-    // standalone：独立图片消息路径
-    const solo = await tool.execute("t", { id: "clawd:passed", standalone: true }, undefined);
-    const soloParsed = JSON.parse((solo.content[0] as { text: string }).text) as { sent: boolean; messageId: string };
-    expect(soloParsed.sent).toBe(true);
-    expect(soloParsed.messageId).toBe("om_x1");
     expect(send).toHaveBeenCalledTimes(1);
     expect(recentSent()).toContain("clawd:passed");
     expect((await history.list("oc_chat1")).map(item => item.id)).toEqual(["clawd:passed"]);
 
-    // standalone 发送失败（飞书返回非零 code）不得进入最近记录，否则失败图也被降权
+    // 默认发送失败（飞书返回非零 code）不得进入最近记录，否则失败图也被降权
     messageResult = { code: 99991, msg: "boom" };
-    await expect(tool.execute("t", { id: "nekowhale:大肥鱼/10N02_摸鱼", standalone: true }, undefined)).rejects.toThrow("飞书图片发送失败");
+    await expect(tool.execute("t", await reviewed("nekowhale:大肥鱼/10N02_摸鱼"), undefined)).rejects.toThrow("飞书图片发送失败");
     expect(recentSent()).not.toContain("nekowhale:大肥鱼/10N02_摸鱼");
+    expect(upload).toHaveBeenCalledTimes(2);
+    expect(send).toHaveBeenCalledTimes(2);
     expect((await history.list("oc_chat1")).map(item => item.id)).toEqual(["clawd:passed"]);
+
+    // standalone:false：嵌入回复卡片，只上传返回 markdown 片段，等待卡片回执后才记录。
+    const solo = await tool.execute("t", { ...await reviewed("nekowhale:大肥鱼和GPT娘/2TT01_喂药"), standalone: false }, undefined);
+    const soloParsed = JSON.parse((solo.content[0] as { text: string }).text) as { embedded: boolean; imageKey: string; markdown: string; line: string };
+    expect(soloParsed.embedded).toBe(true);
+    expect(soloParsed.imageKey).toBe("img_key_1");
+    expect(soloParsed.markdown).toContain("](img_key_1)");
+    expect(soloParsed.markdown.startsWith("![")).toBe(true);
+    expect(soloParsed.line).toContain("喂药");
+    expect(upload).toHaveBeenCalledTimes(3);
+    expect(send).toHaveBeenCalledTimes(2);
+    expect(recentSent()).not.toContain("nekowhale:大肥鱼和GPT娘/2TT01_喂药");
+    expect((await history.list("oc_chat1")).map(item => item.id)).toEqual(["clawd:passed"]);
+    expect(soloParsed).toMatchObject({ sent: false, status: "uploaded_pending_card", meaning: { description: "大肥鱼给GPT娘喂药", direction: "大肥鱼→GPT娘", source: "catalog_metadata_unverified" } });
   });
 
   it("持久历史达到 30 条时，防重复权重不会给旧图片加分", () => {
@@ -263,6 +299,27 @@ describe("sticker search", () => {
     expect(tired).toContain("dsh-pet:meme/吃白饭的大肥鱼");
   });
 
+  it("中文热梗扩展包：文件名派生的 metadata 可被语句检索命中", async () => {
+    // chinese-bqb：按描述词检索（入库脚本从目录名取 group、从文件名取 name/desc）
+    const hits = await searchStickers(root, "偷懒", { pack: "chinese-bqb", shuffle: false });
+    expect(hits.map((item) => item.id)).toEqual(["chinese-bqb:010/0001"]);
+    expect(hits[0]?.group).toBe("是喵星人啦");
+    // 派生字段 tags/emotion 为空时，stickerLine 退化为纯名字（打标后才会带上情绪/标签）
+    expect(stickerLine(hits[0]!)).toBe("上班偷懒猫");
+
+    // emoji-package：文件名即描述句，按语句词命中
+    const lazy = await searchStickers(root, "工地", { pack: "emoji-package", shuffle: false });
+    expect(lazy.map((item) => item.id)).toEqual(["emoji-package:搬砖/今天工地好热，砖头烫手"]);
+
+    // search 结果的完整 id 可直接回填给 send 的 pickSticker
+    expect((await pickSticker(root, "chinese-bqb:010/0001"))?.id).toBe("chinese-bqb:010/0001");
+
+    // 不限 pack 的全量语句搜索也能命中新包；哈希名条目不干扰中文检索
+    const all = await searchStickers(root, "搬砖", { shuffle: false });
+    expect(all.map((item) => item.id)).toContain("emoji-package:搬砖/搬砖使我快乐");
+    expect(all.every((item) => item.pack === "emoji-package")).toBe(true);
+  });
+
   it("搜索空结果时返回可操作的 hint 而不是空数组", async () => {
     const tool = createGuestStickerSearchTool(root);
     const result = await tool.execute("t", { query: "", pack: "dsh-pet", emotion: "开心" }, undefined);
@@ -272,7 +329,7 @@ describe("sticker search", () => {
     expect(String(parsed[0].hint)).toContain("没有命中");
   });
 
-  it("访客搜索结果只含 id / line / use / desc，不含本地路径", async () => {
+  it("访客搜索返回描述和来源，不含本地路径", async () => {
     const tool = createGuestStickerSearchTool(root);
     const result = await tool.execute("t", { query: "庆祝", pack: "clawd" }, undefined);
     const block = result.content[0] as { type: string; text: string };
@@ -282,7 +339,8 @@ describe("sticker search", () => {
     expect(parsed[0].id).toBe("clawd:passed");
     expect(parsed[0].line).toBe("测试通过");
     expect(parsed[0].desc).toBe("开心庆祝");
-    expect(Object.keys(parsed[0]).sort()).toEqual(["desc", "id", "line"]);
+    expect(Object.keys(parsed[0]).sort()).toEqual(["desc", "id", "line", "source", "tags"]);
+    expect(block.text).not.toContain(root);
   });
 
   it("dsh-pet 的画面摘要透传给模型，选图不用猜", async () => {

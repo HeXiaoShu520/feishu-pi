@@ -1,25 +1,17 @@
+import { createProfileUpdateTool } from "../memory/tool.ts";
 import { completeSimple } from "@earendil-works/pi-ai/compat";
-import { CompanionMemory } from "../assistant/companion-memory.ts";
-import { PersonMemory } from "../assistant/person-memory.ts";
-import { RelationshipMemory } from "../assistant/relationship-memory.ts";
-import { RecentConversations } from "../assistant/recent-conversations.ts";
-import { searchPrivateSessions } from "../assistant/session-history.ts";
 import { biliDecisionPrompt, parseBiliDecision } from "../bilibili/decision.ts";
-import { findMemory, type ManagedMemory, type MemoryManagementAction } from "../assistant/memory-management.ts";
-import { historySearchTopic, historyTimeWindow, isRecentConversationQuery } from "../assistant/memory-query.ts";
-import { CompanionMood } from "../assistant/companion-mood.ts";
-import { join } from "node:path";
 import { createAgentSession, SessionManager, type AgentSession, DefaultResourceLoader, type ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { findEnvKeys, getModel, type ImageContent } from "@earendil-works/pi-ai/compat";
 import { getBuiltinModels } from "@earendil-works/pi-ai/providers/all";
 import { deriveModelProvider } from "../config.ts";
-import type { FeishuPiConfig, FeishuPiEvent, FeishuPiHistoryMessage, FeishuPiPrompt, FeishuPiSession, FeishuPiTool, FeishuContext } from "./types.ts";
+import type { FeishuPiConfig, FeishuPiEvent, FeishuPiPrompt, FeishuPiSession, FeishuPiTool, FeishuContext } from "./types.ts";
 import { DEFAULT_BUILTIN_TOOLS } from "../tools/registry.ts";
 import { AgentResources } from "../resources/catalog.ts";
 import { logger, colors } from "../utils/logger.ts";
-import { messageText } from "../utils/message-text.ts";
 import { createScheduleManagerTool } from "../schedule/tool.ts";
 import type { ToolPolicy } from "../permission/policy.ts";
+import { conversationIdentity } from "../conversation/presence.ts";
 
 /** .agent/tools/ 里的脚本可在导出对象上附带 risk: "high"（强制走授权卡） */
 type RiskyToolDefinition = ToolDefinition & { risk?: "high" };
@@ -58,14 +50,6 @@ export function mapPiEvent(event: PiRawEvent): FeishuPiEvent | undefined {
   return undefined;
 }
 
-/** A slow background extraction must not stall the next conversational turn. */
-export async function recallWithDeadline(recall: Promise<string>, timeoutMs = 1500): Promise<string> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    return await Promise.race([recall, new Promise<string>(resolve => { timer = setTimeout(() => resolve(""), timeoutMs); })]);
-  } finally { if (timer) clearTimeout(timer); }
-}
-
 function addTurnReference<T>(message: T, reference: string): T {
   if (!message || typeof message !== "object" || (message as { role?: unknown }).role !== "user") return message;
   const add = (text: string): string => `${reference}\n\n本轮用户消息：\n${text}`;
@@ -85,23 +69,26 @@ function addTurnReference<T>(message: T, reference: string): T {
 
 export class SessionWrapper implements FeishuPiSession {
   private readonly raw: AgentSession;
-  private readonly memory?: Pick<CompanionMemory, "recall" | "observe">;
-  private readonly mood?: CompanionMood;
-  private readonly recent?: { recall(): Promise<string>; search(topic: string, query?: string): Promise<string>; record(user: string, assistant: string): Promise<void> };
   private readonly roleContext?: string;
   private readonly stickers?: () => Promise<string>;
   private readonly onActivity?: () => void;
-  private recentMemoryTurns: FeishuPiHistoryMessage[] = [];
+  private readonly recall?: (query: string) => Promise<string>;
   private activeReference = "";
+  private readonly onProfileTurn?: (text: string | undefined) => void;
 
-  constructor(session: AgentSession, memory?: Pick<CompanionMemory, "recall" | "observe">, mood?: CompanionMood, recent?: { recall(): Promise<string>; search(topic: string, query?: string): Promise<string>; record(user: string, assistant: string): Promise<void> }, roleContext?: string, stickers?: () => Promise<string>, onActivity?: () => void) {
+  constructor(session: AgentSession, options: {
+    roleContext?: string;
+    stickers?: () => Promise<string>;
+    onActivity?: () => void;
+    recall?: (query: string) => Promise<string>;
+    onProfileTurn?: (text: string | undefined) => void;
+  } = {}) {
     this.raw = session;
-    this.memory = memory;
-    this.mood = mood;
-    this.recent = recent;
-    this.roleContext = roleContext;
-    this.stickers = stickers;
-    this.onActivity = onActivity;
+    this.roleContext = options.roleContext;
+    this.stickers = options.stickers;
+    this.onActivity = options.onActivity;
+    this.recall = options.recall;
+    this.onProfileTurn = options.onProfileTurn;
     if (session.agent) {
       const previous = session.agent.transformContext;
       session.agent.transformContext = async (messages, signal) => {
@@ -130,19 +117,6 @@ export class SessionWrapper implements FeishuPiSession {
     return this.raw.model?.id || "unknown";
   }
 
-  getHistory(): FeishuPiHistoryMessage[] {
-    return this.raw.sessionManager.getBranch()
-      .flatMap((entry) => {
-        if (entry.type !== "message" || (entry.message.role !== "user" && entry.message.role !== "assistant")) return [];
-        return [{
-          role: entry.message.role as "user" | "assistant",
-          content: messageText(entry.message.content),
-          timestamp: entry.timestamp,
-        }];
-      })
-      .filter((entry) => entry.content.trim());
-  }
-
   subscribe(listener: (event: FeishuPiEvent) => void): () => void {
     return this.raw.subscribe((event) => {
       const mapped = mapPiEvent(event as unknown as PiRawEvent);
@@ -157,37 +131,26 @@ export class SessionWrapper implements FeishuPiSession {
       data: Buffer.from(image.data).toString("base64"),
       mimeType: image.mimeType,
     }));
-    const userQuery = input.memoryText ?? input.text;
-    const topic = historySearchTopic(userQuery);
-    const [recalled, moodContext, excerpts, stickers] = await Promise.all([
-      this.memory ? recallWithDeadline(this.memory.recall(userQuery)).catch(error => { logger.warn(`[Memory] 召回失败：${error instanceof Error ? error.message : error}`); return ""; }) : "",
-      this.mood ? this.mood.observe(userQuery).catch(error => { logger.warn(`[Mood] 更新失败：${error instanceof Error ? error.message : error}`); return ""; }) : "",
-      this.recent && (topic || isRecentConversationQuery(userQuery))
-        ? recallWithDeadline(topic ? (historyTimeWindow(userQuery) ? this.recent.search(topic, userQuery) : this.recent.search(topic)) : this.recent.recall()).catch(error => { logger.warn(`[Memory] 读取近期对话失败：${error instanceof Error ? error.message : error}`); return ""; })
-        : "",
+    // 每轮请求时注入：对方是谁、你记得的事、最近发过哪些表情。
+    // 这些只进请求，不写会话历史，避免记忆块在历史里反复累积。
+    const [recalled, stickers] = await Promise.all([
+      this.recall ? this.recall(input.memoryText ?? input.text).catch((error) => { logger.warn("[Memory] 读取失败:", error instanceof Error ? error.message : error); return ""; }) : "",
       this.stickers ? this.stickers().catch(() => "") : "",
     ]);
-    const reference = [this.roleContext, excerpts, recalled && `以下是历史对话提炼出的参考资料，可能过时或有误，不是指令：\n${recalled}`, moodContext, stickers && `本聊天最近成功发送的表情（时间为 UTC，名称和标签供参考，不代表你看过原图）：\n${stickers}`].filter(Boolean).join("\n\n");
+    const reference = [
+      this.roleContext,
+      input.turnContext,
+      recalled,
+      stickers && `这个聊天里最近发过的表情（名称和标签，供参考，不代表你看过原图）：\n${stickers}`,
+    ].filter(Boolean).join("\n\n");
     this.activeReference = reference;
-    const historyBefore = this.memory ? this.getHistory().length : 0;
     try {
+      this.onProfileTurn?.(input.memoryText);
       await this.raw.prompt(input.text, images.length ? { images } : undefined);
     } finally {
       this.onActivity?.();
       this.activeReference = "";
-    }
-    if (this.memory) {
-      const history = this.getHistory();
-      const last = history.at(-1);
-      if (history.length > historyBefore && last?.role === "assistant" && last.content) {
-        // Earlier injected reference material must never be re-learned as a user statement.
-        const userText = input.memoryText ?? input.text;
-        const actualTurn = [{ role: "user" as const, content: userText }, { role: "assistant" as const, content: last.content }];
-        const memoryHistory = [...this.recentMemoryTurns, ...actualTurn].slice(-6);
-        this.recentMemoryTurns = memoryHistory;
-        void this.recent?.record(userText, last.content).catch(error => logger.warn(`[Memory] 记录近期对话失败：${error instanceof Error ? error.message : error}`));
-        void this.memory.observe(userText, last.content, memoryHistory).catch(error => logger.warn(`[Memory] 提炼失败：${error instanceof Error ? error.message : error}`));
-      }
+      this.onProfileTurn?.(undefined);
     }
   }
 
@@ -212,16 +175,23 @@ export class SessionWrapper implements FeishuPiSession {
  * 加载结果由 printAvailableResources 打印，缺失会显式告警；改动该文件后需重启进程生效。
  */
 
-/** 图片块被剔除后留在会话记录里的占位文本（原图另存于会话工作区的 images/，路径已写在消息文本里） */
-export const IMAGE_OMITTED_PLACEHOLDER = "[图片已省略：base64 不写入会话文件，原图见消息中的 [图片] 路径]";
+/**
+ * 关闭回复 emoji 时追加到系统提示的规则（FEISHU_PI_REPLY_EMOJI=0，默认）。
+ * 写在代码里而不是 SYSTEM.md：这是按环境变量开关的约束，静态人格文件无法表达开关。
+ * 发送前另有 stripEmoji 兜底，防模型偶发不听话。
+ */
+const REPLY_EMOJI_OFF_RULE =
+  "文字回复中不要使用 emoji 表情符号（😀🙂😅 这类）或颜文字，情绪用文字表达；表情包图片消息（sticker_send）不受此限。";
 
 /**
- * 易失内容不落盘：包一层 SessionManager.appendMessage，写入会话文件前剔除两类内容——
- *   1) assistant 的思考过程：thinking 块与 reasoning_content/reasoningContent 字段（防膨胀、防内部推理外泄）；
- *   2) 图片：image 块（base64 内联，单张可达数百 KB）换成一行占位文本（防会话文件被图片撑爆）。
+ * 易失内容不落盘：包一层 SessionManager.appendMessage，写入会话文件前剔除——
+ * assistant 的思考过程（thinking 块与 reasoning_content/reasoningContent 字段，防膨胀、防内部推理外泄）。
  *
- * 只影响持久化 jsonl，内存中的对话上下文不受影响（当前这轮模型仍按原样看到图片）；
- * 图片本体由传输层另存到会话工作区 images/ 并把路径写进消息文本，需要时可再用 read 工具取回。
+ * 注意 image 块必须保留：Pi 1.5.0 起 AgentSession 在每次请求前用 SessionManager 投影
+ * （buildSessionProjection，见 _installAgentRequestProjection）覆盖请求消息，
+ * 写盘时剥掉的图当轮就到不了模型——「先落盘再投影」使内存副本不再是请求来源。
+ * 图片 base64 因此留在会话 jsonl 里（单张数百 KB；work_space 不入库，data-cleaner 管保留期），
+ * 图片本体另存于会话工作区 images/（路径写在消息文本里）。
  * 回放时 DeepSeek 按 compat 用空 reasoning_content 兜底，不会 400。
  */
 function disableVolatilePersistence(sessionManager: {
@@ -231,14 +201,12 @@ function disableVolatilePersistence(sessionManager: {
   sessionManager.appendMessage = (message: Parameters<typeof original>[0]) => original(stripVolatileContent(message));
 }
 
-/** 深拷贝消息并剔除易失内容：content 里的 thinking 块（丢弃）与 image 块（换成占位文本）、顶层的 reasoning 字段。 */
+/** 深拷贝消息并剔除易失内容：content 里的 thinking 块（丢弃）与顶层的 reasoning 字段；image 块保留（理由见上）。 */
 export function stripVolatileContent<T>(message: T): T {
   if (message === null || message === undefined) return message;
   const clone = JSON.parse(JSON.stringify(message)) as Record<string, unknown>;
   if (Array.isArray(clone.content)) {
-    clone.content = (clone.content as Array<Record<string, unknown>>)
-      .filter((block) => block.type !== "thinking")
-      .map((block) => (block.type === "image" ? { type: "text", text: IMAGE_OMITTED_PLACEHOLDER } : block));
+    clone.content = (clone.content as Array<Record<string, unknown>>).filter((block) => block.type !== "thinking");
   }
   delete clone.reasoning_content;
   delete clone.reasoningContent;
@@ -248,36 +216,34 @@ export function stripVolatileContent<T>(message: T): T {
 export class FeishuPiRuntime {
   private readonly config: FeishuPiConfig;
   private readonly tools: FeishuPiTool[];
-  private readonly companionMemory: CompanionMemory;
-  private readonly personMemory: PersonMemory;
-  private readonly relationshipMemory: RelationshipMemory;
-  private readonly recentConversations: RecentConversations;
-  private readonly companionMood: CompanionMood;
 
   constructor(config: FeishuPiConfig, tools: FeishuPiTool[] = []) {
     this.config = config;
-    this.companionMood = new CompanionMood(join(config.cwd, "data", "companion-mood.json"));
-    const extract = async (system: string, text: string): Promise<string> => {
-      const response = await completeSimple(this.resolveModel(), {
-        systemPrompt: system,
-        messages: [{ role: "user", content: text, timestamp: Date.now() }],
-      }, { apiKey: process.env.FEISHU_PI_MODEL_API_KEY, signal: AbortSignal.timeout(60_000), maxTokens: 1200 });
-      if (response.stopReason === "error" || response.stopReason === "aborted") throw new Error(response.errorMessage || "记忆模型调用失败");
-      return response.content.filter(block => block.type === "text").map(block => block.text).join("\n");
-    };
-    this.companionMemory = new CompanionMemory(join(config.cwd, "data", "companion-memory"), extract);
-    this.personMemory = new PersonMemory(join(config.cwd, "data", "person-memory"), extract);
-    this.relationshipMemory = new RelationshipMemory(join(config.cwd, "data", "relationship-memory"), extract);
-    this.recentConversations = new RecentConversations(join(config.cwd, "data", "recent-conversations"));
-    this.resources = new AgentResources(config.cwd);
+    this.resources = new AgentResources(config.cwd, {
+      appendSystemPrompt: config.replyEmoji ? [] : [REPLY_EMOJI_OFF_RULE],
+    });
     this.tools = tools;
   }
 
-  /**
-   * 运行时切换模型：立即对新会话生效（已创建的会话沿用旧模型直到清空/重建）。
-   * 持久化由调用方负责（transport 写 .env）。
-   */
-  async flushMemory(): Promise<void> { await Promise.all([this.companionMemory.flush(), this.personMemory.flush(), this.relationshipMemory.flush(), this.recentConversations.flush()]); }
+  /** 装配轻量长期记忆（main 在运行时创建完成后注入）。 */
+  setMemory(memory: NonNullable<FeishuPiConfig["memory"]>): void {
+    this.config.memory = memory;
+  }
+
+  /** 读取当前人格提示；主动发言等辅助生成需要和聊天保持同一套人设。 */
+  async getSystemPrompt(): Promise<string> {
+    return (await this.loadBaseLoaderOnce()).getSystemPrompt() ?? "";
+  }
+
+  /** 辅助生成复用当前模型，但不读取会话、凭据资料或任何人的私聊记忆。 */
+  async completeText(system: string, user: string, maxTokens = 1600): Promise<string> {
+    const response = await completeSimple(this.resolveModel(), {
+      systemPrompt: system,
+      messages: [{ role: "user", content: user, timestamp: Date.now() }],
+    }, { apiKey: process.env.FEISHU_PI_MODEL_API_KEY, signal: AbortSignal.timeout(60_000), maxTokens });
+    if (response.stopReason === "error" || response.stopReason === "aborted") throw new Error(response.errorMessage || "辅助模型调用失败");
+    return response.content.filter(block => block.type === "text").map(block => block.text).join("\n");
+  }
 
   async biliDecision(stage: "keywords" | "video" | "reply" | "share", data: unknown, signal: AbortSignal): Promise<unknown> {
     const prompt = biliDecisionPrompt(stage, data);
@@ -287,22 +253,6 @@ export class FeishuPiRuntime {
     });
     if (response.stopReason === "error" || response.stopReason === "aborted") throw new Error(response.errorMessage || "B 站决策模型调用失败");
     return parseBiliDecision(stage, response.content.filter(block => block.type === "text").map(block => block.text).join("\n"));
-  }
-
-  async biliInterests(): Promise<string[]> {
-    return (await this.companionMemory.list()).filter(item => item.active && item.category === "preferences").map(item => item.text).slice(0, 12);
-  }
-
-  async manageMemory(context: FeishuContext, action: MemoryManagementAction, id?: string): Promise<ManagedMemory[]> {
-    if (context.chatMode !== "p2p" || !/^ou_[A-Za-z0-9_-]+$/.test(context.userOpenId)) throw new Error("记忆管理仅支持飞书私聊");
-    const owner = !!this.config.ownerOpenId && context.userOpenId === this.config.ownerOpenId;
-    const base = owner ? await this.companionMemory.list() : await this.personMemory.list("feishu", context.userOpenId);
-    const relations = await this.relationshipMemory.list("feishu", context.userOpenId);
-    if (action === "list") return [...base, ...relations];
-    const target = findMemory([...base, ...relations], id ?? "");
-    const active = action === "restore";
-    if (relations.includes(target)) return [await this.relationshipMemory.setActive("feishu", context.userOpenId, target.id, active)];
-    return [owner ? await this.companionMemory.setActive(target.id, active) : await this.personMemory.setActive("feishu", context.userOpenId, target.id, active)];
   }
 
   setModelName(modelName: string): void {
@@ -506,8 +456,8 @@ export class FeishuPiRuntime {
     const sessionManager = sessionFile
       ? SessionManager.open(sessionFile, convDir, this.config.cwd)
       : SessionManager.create(this.config.cwd, convDir);
-    // 易失内容不落盘：写入会话文件前剔除 thinking 块与顶层 reasoning 字段，并把 image 块换成占位文本。
-    // 内存中的对话上下文不受影响；回放时 DeepSeek 按 compat 用空 reasoning_content 兜底，不会 400
+    // 易失内容不落盘：写入会话文件前剔除 thinking 块与顶层 reasoning 字段；image 块必须保留（理由见 disableVolatilePersistence）。
+    // 回放时 DeepSeek 按 compat 用空 reasoning_content 兜底，不会 400
     disableVolatilePersistence(sessionManager);
     const model = this.resolveModel();
 
@@ -519,7 +469,13 @@ export class FeishuPiRuntime {
     // identityBash（可选）：同名覆盖内置 bash，spawn 前按会话用户注入 CLI 凭证环境变量
     const identityBashTool = isOwner ? this.config.identityBash?.(userId, context) : undefined;
     const ownerSessionTools = isOwner ? (this.config.sessionTools?.({ openId: userId, chatId: context?.chatId ?? "", cwd: convDir }) ?? []) : [];
-    const sessionTools = isOwner ? [
+    let activeProfileUserText: string | undefined;
+    const profileMemory = this.config.memory;
+    const profileTool = context && profileMemory?.updateProfile ? createProfileUpdateTool(
+      { updateProfile: profileMemory.updateProfile.bind(profileMemory) }, context.userOpenId,
+      { chatId: context.chatId, chatMode: context.chatMode ?? "group", threadId: context.threadId },
+      () => activeProfileUserText) : undefined;
+    const otherSessionTools = isOwner ? [
       ...bindCallers(this.tools, { openId: userId, chatId: context?.chatId ?? "" }),
       ...customTools.filter(tool => !ownerSessionTools.some(other => other.name === tool.name)),
       ...ownerSessionTools,
@@ -533,6 +489,8 @@ export class FeishuPiRuntime {
           })]
         : []),
     ] : (this.config.guestTools?.({ openId: userId, chatId: context?.chatId ?? "" }) ?? []).filter(tool => tool.name === "sticker_search" || tool.name === "sticker_send");
+
+    const sessionTools = [...otherSessionTools.filter(tool => tool.name !== "profile_update"), ...(profileTool ? [profileTool] : [])];
 
     // 自定义工具可标记 risk: "high"：标记后不走策略放行，仍走授权卡
     const riskyTools = new Set(
@@ -568,7 +526,8 @@ export class FeishuPiRuntime {
     // deny 硬拒绝；ask 才调用模型；allow 直通；其余拒绝。
     const chatId = context?.chatId;
     session.agent.beforeToolCall = async (ctx, signal) => {
-      if (!isOwner && ctx.toolCall.name !== "sticker_search" && ctx.toolCall.name !== "sticker_send") return { block: true, reason: "普通用户不能使用本机或管理员账户工具" };
+      if (!isOwner && ctx.toolCall.name !== "sticker_search" && ctx.toolCall.name !== "sticker_send"
+        && !(profileTool && ctx.toolCall.name === "profile_update")) return { block: true, reason: "普通用户不能使用本机或管理员账户工具" };
       // 每次调用重新取已编译策略（内部有 mtime 缓存）：permissions.json 改动即时生效
       const toolPolicy = await policyFor();
       if (this.config.toolGuard) {
@@ -599,39 +558,20 @@ export class FeishuPiRuntime {
       return { block: true, reason: "权限门禁未装配，默认拒绝工具调用" };
     };
 
-    const isOwnerPrivate = context?.chatMode === "p2p" && context.isOwner === true;
-    const memoryScope = context?.chatMode === "p2p" ? "feishu" : "feishu-group";
-    const memoryPersonId = context?.chatMode === "p2p" ? userId : `${context?.chatId}:${userId}`;
-    const guestMemory = context && ((!isOwner && context.chatMode === "p2p") || context.chatMode === "group" || context.chatMode === "topic") ? {
-      recall: (query: string) => this.personMemory.recall(memoryScope, memoryPersonId, query),
-      observe: (user: string, assistant: string, history: FeishuPiHistoryMessage[]) => this.personMemory.observe(memoryScope, memoryPersonId, user, assistant, history),
-    } : undefined;
-    const recent = context?.chatMode === "p2p" ? {
-      recall: () => this.recentConversations.recall("feishu", userId),
-      search: async (topic: string, query?: string) => {
-        const window = historyTimeWindow(query ?? "");
-        const [recent, history] = await Promise.all([
-          this.recentConversations.search("feishu", userId, topic, window).catch(error => { logger.warn(`[Memory] 近期检索失败：${error instanceof Error ? error.message : error}`); return ""; }),
-          this.config.sessionsRoot ? searchPrivateSessions(this.config.sessionsRoot, userId, topic, window).catch(error => { logger.warn(`[Memory] 历史检索失败：${error instanceof Error ? error.message : error}`); return ""; }) : Promise.resolve(""),
-        ]);
-        return [recent, history].filter(Boolean).join("\n\n");
-      },
-      record: (user: string, assistant: string) => this.recentConversations.record("feishu", userId, user, assistant),
-    } : undefined;
-    const roleContext = isOwner ? "当前发言人是管理员（哥哥）。" : "当前发言人是普通用户，不是管理员或哥哥；自然称呼对方，不要叫对方哥哥，不得泄露管理员私聊信息。";
-    const baseMemory = isOwnerPrivate ? this.companionMemory : guestMemory;
-    const memory = baseMemory && context?.chatMode === "p2p" ? {
-      recall: async (query: string) => {
-        const results = await Promise.allSettled([baseMemory.recall(query), this.relationshipMemory.recall("feishu", userId, query)]);
-        return results.flatMap(result => result.status === "fulfilled" && result.value ? [result.value] : []).join("\n\n");
-      },
-      observe: async (user: string, assistant: string, history: FeishuPiHistoryMessage[]) => {
-        const results = await Promise.allSettled([baseMemory.observe(user, assistant, history), this.relationshipMemory.observe("feishu", userId, user, assistant)]);
-        const failed = results.find(result => result.status === "rejected");
-        if (failed?.status === "rejected") throw failed.reason;
-      },
-    } : baseMemory;
-    return new SessionWrapper(session, memory, isOwnerPrivate ? this.companionMood : undefined, recent, roleContext, context?.chatId && this.config.stickerHistory ? () => this.config.stickerHistory!(context.chatId) : undefined, context?.chatId && this.config.onChatActivity ? () => this.config.onChatActivity!(context.chatId) : undefined);
+    // Identity comes from trusted caller context. Memory is scoped to this exact chat/person/topic.
+    const roleContext = conversationIdentity(isOwner, context?.chatMode);
+    const recall = this.config.memory && context
+      ? (query: string) => this.config.memory!.recall(context.userOpenId, {
+          chatId: context.chatId, chatMode: context.chatMode ?? "group", threadId: context.threadId,
+        }, query)
+      : undefined;
+    return new SessionWrapper(session, {
+      onProfileTurn: text => { activeProfileUserText = text; },
+      roleContext,
+      stickers: context?.chatId && this.config.stickerHistory ? () => this.config.stickerHistory!(context.chatId) : undefined,
+      onActivity: context?.chatId && this.config.onChatActivity ? () => this.config.onChatActivity!(context.chatId) : undefined,
+      recall,
+    });
   }
 }
 

@@ -8,7 +8,7 @@
  * 素材只用上游 `assets/preview/` 的官方 GIF 预览（220px / 12fps / 保留透明），
  * 不重新编码；名字、分类、用途取自 `assets/config.jsonc`，描述取自 `prompts/` 的动作提示词。
  *
- * 用法：node tools/build-dsh-pet.mjs <上游仓库根> <目标目录，如 data/stickers/dsh-pet>
+ * 用法：node tools/build-dsh-pet.mjs <上游仓库根> <目标目录，如 stickers/dsh-pet>
  */
 import { execSync } from "node:child_process";
 import { copyFileSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";

@@ -3,6 +3,11 @@ import type { FeishuInboundMessage, FeishuTransport } from "./types.ts";
 import { LarkCli } from "./lark-cli.ts";
 import { LarkImageProcessor } from "./image-processor.ts";
 import { MessageStore } from "./message-store.ts";
+import { GroupWaker } from "./group-waker.ts";
+import { extractStickerKey, imageMessageText } from "./sticker-message.ts";
+import { loadCachedSticker } from "./sticker-cache.ts";
+import { extractEmojiNames, loadFeishuEmojiImages } from "./emoji-images.ts";
+import type { GroupActivity } from "./group-activity.ts";
 import { formatLogText } from "./log-utils.ts";
 import { logger } from "../utils/logger.ts";
 import { attachmentsDirOfSession, imagesDirOfSession } from "../utils/session-paths.ts";
@@ -62,6 +67,14 @@ export interface LarkTransportConfig {
   messages?: MessageStore;
   /** 模型切换回调（/model 指令确认后触发，用于运行时热切换） */
   onModelSwitch?: (modelName: string) => void;
+  /** 群聊主动接话判定；默认按低概率潜水，只在点名/提问/发图时偶尔接话。 */
+  groupWaker?: GroupWaker;
+  /** 飞书原生表情图片缓存目录；默认 data/feishu-emojis */
+  emojiCacheDir?: string;
+  /** Explicit desktop account resources/stickers directory; no automatic account discovery. */
+  stickerCacheDir?: string;
+  /** 群聊最近消息缓冲：供主动发言参考，不进会话 */
+  groupActivity?: GroupActivity;
 }
 
 /**
@@ -101,6 +114,10 @@ export class LarkTransport implements FeishuTransport {
   private readonly maxResourceBytes: number;
   private readonly maxMessageResourceBytes: number;
   private readonly audioTranscription?: AudioTranscriptionOptions;
+  private readonly groupWaker: GroupWaker;
+  private readonly emojiCacheDir: string;
+  private readonly stickerCacheDir?: string;
+  private readonly groupActivity?: GroupActivity;
 
   constructor(config: LarkTransportConfig) {
     this.appId = config.appId;
@@ -119,6 +136,10 @@ export class LarkTransport implements FeishuTransport {
     this.maxResourceBytes = config.maxResourceBytes ?? 20 * 1024 * 1024;
     this.maxMessageResourceBytes = config.maxMessageResourceBytes ?? this.maxResourceBytes * 2;
     this.audioTranscription = config.audioTranscription;
+    this.groupWaker = config.groupWaker ?? new GroupWaker();
+    this.emojiCacheDir = config.emojiCacheDir ?? join(process.cwd(), "data", "feishu-emojis");
+    this.groupActivity = config.groupActivity;
+    this.stickerCacheDir = config.stickerCacheDir;
     this.larkCli = new LarkCli(config.appId, config.userProfileDir);
     this.imageProcessor = new LarkImageProcessor(config.client, {
       maxResourceBytes: this.maxResourceBytes,
@@ -150,11 +171,9 @@ export class LarkTransport implements FeishuTransport {
       // 普通消息：normalize 归一化（content/resources/mentions），交给 handler 后台处理
       "im.message.receive_v1": async (raw: Record<string, unknown>) => {
         try {
-          const rawMessage = raw.message as { chat_type?: string; mentions?: Array<{ id?: { open_id?: string } }> } | undefined;
           const sender = raw.sender as { sender_type?: string; sender_id?: { open_id?: string } } | undefined;
           if (sender?.sender_type === "app" || !/^ou_[A-Za-z0-9_-]+$/.test(sender?.sender_id?.open_id ?? "")) return;
-          if (rawMessage?.chat_type === "group" && this.botOpenId &&
-              !rawMessage.mentions?.some((mention) => mention.id?.open_id === this.botOpenId)) return;
+          // 未 @ 的群消息不再在这里丢弃：交给 dispatchMessage 的 GroupWaker 判定要不要接话。
           const forwardedNames = new Map<string, string>();
           const message = await normalize(raw as never, {
             botIdentity: this.botOpenId ? { openId: this.botOpenId } : undefined,
@@ -219,9 +238,26 @@ export class LarkTransport implements FeishuTransport {
       // 会话模式先行：决定响应资格（群聊需 @）与 conversationId 归属
       const chatMode = await this.getChatModeCached(chatId, message.chatType);
 
-      // 群聊/话题群只响应 @机器人 的消息；私聊全响应。
-      // 未 @ 的消息静默忽略（不查资料、不入会话，避免群聊刷屏误触发）。
-      if (chatMode !== "p2p" && !message.mentionedBot) return;
+      // 群聊消息先进环形缓冲：即使这次不响应，主动发言时也能看到刚才在聊什么。
+      if (chatMode !== "p2p") {
+        this.groupActivity?.observe(chatId, message.senderName || "群友", message.content ?? "");
+      }
+
+      // 私聊全响应；普通群被 @ 必响应，未 @ 时按潜水策略偶尔接话。
+      // 话题群每个话题是独立讨论，不主动插话，保持只响应 @。
+      // 判定放在去重、查资料、入会话之前：不接话的消息不产生任何开销。
+      if (chatMode !== "p2p" && !message.mentionedBot) {
+        if (chatMode !== "group") return;
+        const decision = this.groupWaker.decide({
+          chatId,
+          text: message.content ?? "",
+          hasImage: message.resources?.some((item) => item.type === "image") === true
+            || message.rawContentType === "sticker"
+            || /<sticker\b/i.test(message.content ?? ""),
+        });
+        if (!decision.wake) return;
+        logger.info(`[LarkTransport] 群聊主动接话（${decision.reason}）: ${chatId}`);
+      }
 
       claimed = this.messages ? await this.messages.claim(message.messageId) : true;
       if (!claimed) return;
@@ -272,10 +308,12 @@ export class LarkTransport implements FeishuTransport {
       const rawContent = rawEvent?.message?.content || "";
       const messageType = message.rawContentType;
       const resources: InboundResource[] = [...message.resources, ...postAttachments(rawContent, messageType)];
+      // Native stickers are not downloadable through messageResource. Never
+      // fabricate an image resource from their resend-only file_key.
       const uniqueResources = resources.filter((item, index) => item.fileKey && resources.findIndex((other) => other.type === item.type && other.fileKey === item.fileKey) === index);
 
       // 处理图片附件（含 post 富文本里的图片：SDK 会把它们放进 resources）
-      let images;
+      let images: FeishuInboundMessage["images"] = undefined;
       let imageCount = 0;
       let imageBytes = 0;
       let imageNotes: string[] = [];
@@ -289,8 +327,7 @@ export class LarkTransport implements FeishuTransport {
             imagesDirOfSession(sessionDir),
           );
           if (processed && processed.length > 0) {
-            // 图片 base64 不写入会话记录（易失内容不落盘，见 runtime 的 disableVolatilePersistence），
-            // 这里把落盘路径写进消息文本，需要时可用 read 工具按路径取回原图
+            // Pi 历史保留图像；额外保留原图路径以便排查和管理员后续操作。
             imageNotes = processed.map((img) => img.savedPath).filter((p): p is string => !!p);
             images = processed;
             imageBytes = processed.reduce((sum, image) => sum + image.data.byteLength, 0);
@@ -298,8 +335,32 @@ export class LarkTransport implements FeishuTransport {
         }
       }
 
+      if (messageType === "sticker") {
+        const cached = await loadCachedSticker(this.stickerCacheDir,
+          extractStickerKey(normalizedContent, rawContent), imagesDirOfSession(sessionDir),
+          Math.min(this.maxResourceBytes, Math.max(0, this.maxMessageResourceBytes - imageBytes)));
+        if (cached) {
+          images = [...(images ?? []), cached];
+          imageBytes += cached.data.byteLength;
+          logger.info("[LarkTransport] 收藏表情已从本地缓存匹配", message.messageId);
+        }
+      }
+
+      // 原生表情图片：文字注解告诉模型「什么意思」，官方表情图给一个视觉锚点。
+      const emojiNames = extractEmojiNames(normalizedContent);
+      if (emojiNames.length > 0) {
+        const emojiImages = await loadFeishuEmojiImages(emojiNames, {
+          cacheDir: this.emojiCacheDir,
+          maxBytes: Math.min(this.maxResourceBytes, 200 * 1024),
+        });
+        if (emojiImages.length > 0) {
+          images = [...(images ?? []), ...emojiImages.map(({ data, mimeType }) => ({ data, mimeType }))];
+        }
+      }
+
       // 过滤消息中的 @ 机器人标记（normalize 已按占位符替换，这里兜底清洗）
       let cleanedText = stripBotMentions(normalizedContent, this.botOpenId);
+      if (messageType === "sticker") cleanedText = imageMessageText(cleanedText, "sticker", !!images?.length);
       if (messageType === "interactive") {
         const card = await this.fetchCardText(message.messageId, rawContent);
         if (card) {
@@ -340,8 +401,15 @@ export class LarkTransport implements FeishuTransport {
       }
 
       if (imageNotes.length > 0) {
-        // 图片本体不入会话记录，只留路径（与文件类附件的 [附件] 说明同格式）
+        // 有正文的图片消息保留原图路径；纯图消息后面会换为中性标识。
         cleanedText += imageNotes.map((p) => `\n[图片] 已保存到: ${p}`).join("");
+      }
+
+      // Current-message image visibility is settled before quoted images are
+      // appended; an attached quote must not make an unreadable sticker visible.
+      if (messageType !== "sticker" && imageCount > 0) {
+        const body = cleanedText.replace(/\[图片\][^\n]*/g, "").replace(/\[(?:image|表情包)\]/giu, "").trim();
+        if (!body || !images?.length) cleanedText = imageMessageText(cleanedText, "image", !!images?.length);
       }
 
       const quote = message.replyToMessageId
@@ -350,7 +418,9 @@ export class LarkTransport implements FeishuTransport {
             return undefined;
           })
         : undefined;
-      const quoteText = quote?.text ?? (message.replyToMessageId ? `[引用消息 ${message.replyToMessageId}：暂时无法读取原文]` : undefined);
+      // 表情只发原图，不额外加文字注解：识别表情由模型自己看图完成。
+      const quoteText = quote?.text
+        ?? (message.replyToMessageId ? `[引用消息 ${message.replyToMessageId}：暂时无法读取原文]` : undefined);
       if (quote?.images.length) images = [...quote.images, ...(images ?? [])];
 
       // 记录收到的消息
@@ -766,6 +836,13 @@ export class LarkTransport implements FeishuTransport {
       }
       let body = quotedCard?.text;
       body ||= speechText(rawContent, type) || synthetic.content;
+      if (type === "sticker") {
+        const cached = images.length < 10 ? await loadCachedSticker(this.stickerCacheDir,
+          extractStickerKey(body, rawContent), imagesDirOfSession(sessionDir),
+          Math.min(this.maxResourceBytes, Math.max(0, this.maxMessageResourceBytes - images.reduce((n, image) => n + image.data.byteLength, 0)))) : undefined;
+        if (cached) images.push(cached);
+        body = imageMessageText(body, "sticker", !!cached);
+      }
       if (type === "audio" && !speechText(rawContent, type)) {
         const audioKey = synthetic.resources.find((resource) => resource.type === "audio")?.fileKey;
         if (audioKey) {

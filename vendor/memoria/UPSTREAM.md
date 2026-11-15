@@ -1,1 +1,0 @@
-Adapted from https://github.com/rullerzhou-afk/memoria-chat (MIT), revision 92c06a1a9114daa31b56c47f4a69385f44cba2af. Local changes: storage path override, fail-closed read handling, recall-use reinforcement in scoring, and exclusion of disabled memories from automatic deduplication.

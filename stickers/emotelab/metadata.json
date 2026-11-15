@@ -1,0 +1,973 @@
+{
+  "source": "https://github.com/BrickAZ/deepseek-chan-emotes",
+  "stickers": [
+    {
+      "id": 1,
+      "file": "001.gif",
+      "name": "Bug",
+      "original": "deepseek娘_Bug_2026-09-28-22-13-11.gif"
+    },
+    {
+      "id": 2,
+      "file": "002.gif",
+      "name": "PNGTuber 加载中",
+      "original": "deepseek娘_PNGTuber 加载中_2026-09-28-22-25-29.gif"
+    },
+    {
+      "id": 3,
+      "file": "003.gif",
+      "name": "PNGTuber 说教",
+      "original": "deepseek娘_PNGTuber 说教_2026-09-28-22-25-41.gif"
+    },
+    {
+      "id": 4,
+      "file": "004.gif",
+      "name": "PNGTuber 说话",
+      "original": "deepseek娘_PNGTuber 说话_2026-09-28-22-25-34.gif"
+    },
+    {
+      "id": 5,
+      "file": "005.gif",
+      "name": "PNGTuber 闲置",
+      "original": "deepseek娘_PNGTuber 闲置_2026-09-28-22-25-20.gif"
+    },
+    {
+      "id": 6,
+      "file": "006.gif",
+      "name": "Popcat 帧",
+      "original": "deepseek娘_Popcat 帧_2026-09-28-22-25-53.gif"
+    },
+    {
+      "id": 7,
+      "file": "007.gif",
+      "name": "TrashTuber 说教",
+      "original": "deepseek娘_TrashTuber 说教_2026-09-28-22-33-30.gif"
+    },
+    {
+      "id": 8,
+      "file": "008.gif",
+      "name": "TrashTuber 说话",
+      "original": "deepseek娘_TrashTuber 说话_2026-09-28-22-33-26.gif"
+    },
+    {
+      "id": 9,
+      "file": "009.gif",
+      "name": "TrashTuber 闲置",
+      "original": "deepseek娘_TrashTuber 闲置_2026-09-28-22-33-13.gif"
+    },
+    {
+      "id": 10,
+      "file": "010.gif",
+      "name": "一切都好 1",
+      "original": "deepseek娘_一切都好 1_2026-09-28-22-32-32.gif"
+    },
+    {
+      "id": 11,
+      "file": "011.gif",
+      "name": "一切都好 4",
+      "original": "deepseek娘_一切都好 4_2026-09-28-22-32-41.gif"
+    },
+    {
+      "id": 12,
+      "file": "012.gif",
+      "name": "主意",
+      "original": "deepseek娘_主意_2026-09-28-22-20-44.gif"
+    },
+    {
+      "id": 13,
+      "file": "013.gif",
+      "name": "书呆子 1",
+      "original": "deepseek娘_书呆子 1_2026-09-28-22-24-04.gif"
+    },
+    {
+      "id": 14,
+      "file": "014.gif",
+      "name": "停止",
+      "original": "deepseek娘_停止_2026-09-28-22-30-07.gif"
+    },
+    {
+      "id": 15,
+      "file": "015.gif",
+      "name": "停止工作",
+      "original": "deepseek娘_停止工作_2026-09-28-22-30-15.gif"
+    },
+    {
+      "id": 16,
+      "file": "016.gif",
+      "name": "催眠",
+      "original": "deepseek娘_催眠_2026-09-28-22-20-38.gif"
+    },
+    {
+      "id": 17,
+      "file": "017.gif",
+      "name": "像素墨镜反光",
+      "original": "deepseek娘_像素墨镜反光_2026-09-28-22-30-37.gif"
+    },
+    {
+      "id": 18,
+      "file": "018.gif",
+      "name": "六七",
+      "original": "deepseek娘_六七_2026-09-28-22-28-00.gif"
+    },
+    {
+      "id": 19,
+      "file": "019.gif",
+      "name": "冒泡 1",
+      "original": "deepseek娘_冒泡 1_2026-09-28-22-22-26.gif"
+    },
+    {
+      "id": 20,
+      "file": "020.gif",
+      "name": "冒泡 2",
+      "original": "deepseek娘_冒泡 2_2026-09-28-22-22-34.gif"
+    },
+    {
+      "id": 21,
+      "file": "021.gif",
+      "name": "刀 1",
+      "original": "deepseek娘_刀 1_2026-09-28-22-21-09.gif"
+    },
+    {
+      "id": 22,
+      "file": "022.gif",
+      "name": "刀 2",
+      "original": "deepseek娘_刀 2_2026-09-28-22-21-03.gif"
+    },
+    {
+      "id": 23,
+      "file": "023.gif",
+      "name": "切(剪刀)",
+      "original": "deepseek娘_切(剪刀)_2026-09-28-22-16-18.gif"
+    },
+    {
+      "id": 24,
+      "file": "024.gif",
+      "name": "到达(拿勺子)",
+      "original": "deepseek娘_到达(拿勺子)_2026-09-28-22-12-13.gif"
+    },
+    {
+      "id": 25,
+      "file": "025.gif",
+      "name": "到达(拿筷子)",
+      "original": "deepseek娘_到达(拿筷子)_2026-09-28-22-12-04.gif"
+    },
+    {
+      "id": 26,
+      "file": "026.gif",
+      "name": "到达",
+      "original": "deepseek娘_到达_2026-09-28-22-11-43.gif"
+    },
+    {
+      "id": 27,
+      "file": "027.gif",
+      "name": "刷卡",
+      "original": "deepseek娘_刷卡_2026-09-28-22-13-35.gif"
+    },
+    {
+      "id": 28,
+      "file": "028.gif",
+      "name": "加油",
+      "original": "deepseek娘_加油_2026-09-28-22-14-55.gif"
+    },
+    {
+      "id": 29,
+      "file": "029-send.gif",
+      "name": "加载(茶_咖啡杯)",
+      "original": "deepseek娘_加载(茶_咖啡杯)_2026-09-28-22-21-54.gif",
+      "original_file": "029.gif"
+    },
+    {
+      "id": 30,
+      "file": "030-send.gif",
+      "name": "加载(马克杯)",
+      "original": "deepseek娘_加载(马克杯)_2026-09-28-22-22-08.gif",
+      "original_file": "030.gif"
+    },
+    {
+      "id": 31,
+      "file": "031.gif",
+      "name": "反向点赞",
+      "original": "deepseek娘_反向点赞_2026-09-28-22-32-50.gif"
+    },
+    {
+      "id": 32,
+      "file": "032.gif",
+      "name": "反转",
+      "original": "deepseek娘_反转_2026-09-28-22-26-37.gif"
+    },
+    {
+      "id": 33,
+      "file": "033.gif",
+      "name": "叹号",
+      "original": "deepseek娘_叹号_2026-09-28-22-18-58.gif"
+    },
+    {
+      "id": 34,
+      "file": "034.gif",
+      "name": "吃(爆米花)",
+      "original": "deepseek娘_吃(爆米花)_2026-09-28-22-18-41.gif"
+    },
+    {
+      "id": 35,
+      "file": "035.gif",
+      "name": "吃(西瓜)",
+      "original": "deepseek娘_吃(西瓜)_2026-09-28-22-18-34.gif"
+    },
+    {
+      "id": 36,
+      "file": "036.gif",
+      "name": "吉他",
+      "original": "deepseek娘_吉他_2026-09-28-22-20-13.gif"
+    },
+    {
+      "id": 37,
+      "file": "037.gif",
+      "name": "吐舌 1",
+      "original": "deepseek娘_吐舌 1_2026-09-28-22-12-45.gif"
+    },
+    {
+      "id": 38,
+      "file": "038.gif",
+      "name": "吐舌 3",
+      "original": "deepseek娘_吐舌 3_2026-09-28-22-12-40.gif"
+    },
+    {
+      "id": 39,
+      "file": "039.gif",
+      "name": "呆 1",
+      "original": "deepseek娘_呆 1_2026-09-28-22-18-22.gif"
+    },
+    {
+      "id": 40,
+      "file": "040.gif",
+      "name": "哭 1",
+      "original": "deepseek娘_哭 1_2026-09-28-22-16-04.gif"
+    },
+    {
+      "id": 41,
+      "file": "041.gif",
+      "name": "哭 2",
+      "original": "deepseek娘_哭 2_2026-09-28-22-16-12.gif"
+    },
+    {
+      "id": 42,
+      "file": "042.gif",
+      "name": "唱歌",
+      "original": "deepseek娘_唱歌_2026-09-28-22-27-45.gif"
+    },
+    {
+      "id": 43,
+      "file": "043.gif",
+      "name": "喝(饮料杯)",
+      "original": "deepseek娘_喝(饮料杯)_2026-09-28-22-17-47.gif"
+    },
+    {
+      "id": 44,
+      "file": "044.gif",
+      "name": "喷剂",
+      "original": "deepseek娘_喷剂_2026-09-28-22-29-52.gif"
+    },
+    {
+      "id": 45,
+      "file": "045.gif",
+      "name": "坐牢 1",
+      "original": "deepseek娘_坐牢 1_2026-09-28-22-20-51.gif"
+    },
+    {
+      "id": 46,
+      "file": "046.gif",
+      "name": "坐牢 2",
+      "original": "deepseek娘_坐牢 2_2026-09-28-22-20-55.gif"
+    },
+    {
+      "id": 47,
+      "file": "047.gif",
+      "name": "垃圾桶",
+      "original": "deepseek娘_垃圾桶_2026-09-28-22-33-05.gif"
+    },
+    {
+      "id": 48,
+      "file": "048.gif",
+      "name": "墨镜反光",
+      "original": "deepseek娘_墨镜反光_2026-09-28-22-30-22.gif"
+    },
+    {
+      "id": 49,
+      "file": "049.gif",
+      "name": "墨镜循环",
+      "original": "deepseek娘_墨镜循环_2026-09-28-22-30-30.gif"
+    },
+    {
+      "id": 50,
+      "file": "050.gif",
+      "name": "头晕",
+      "original": "deepseek娘_头晕_2026-09-28-22-17-39.gif"
+    },
+    {
+      "id": 51,
+      "file": "051.gif",
+      "name": "害怕 1",
+      "original": "deepseek娘_害怕 1_2026-09-28-22-26-53.gif"
+    },
+    {
+      "id": 52,
+      "file": "052.gif",
+      "name": "害怕 2",
+      "original": "deepseek娘_害怕 2_2026-09-28-22-26-57.gif"
+    },
+    {
+      "id": 53,
+      "file": "053.gif",
+      "name": "害羞 1",
+      "original": "deepseek娘_害羞 1_2026-09-28-22-27-25.gif"
+    },
+    {
+      "id": 54,
+      "file": "054.gif",
+      "name": "害羞 2",
+      "original": "deepseek娘_害羞 2_2026-09-28-22-27-30.gif"
+    },
+    {
+      "id": 55,
+      "file": "055.gif",
+      "name": "害羞 3",
+      "original": "deepseek娘_害羞 3_2026-09-28-22-27-38.gif"
+    },
+    {
+      "id": 56,
+      "file": "056.gif",
+      "name": "小丑 1",
+      "original": "deepseek娘_小丑 1_2026-09-28-22-15-14.gif"
+    },
+    {
+      "id": 57,
+      "file": "057.gif",
+      "name": "小丑 2",
+      "original": "deepseek娘_小丑 2_2026-09-28-22-15-22.gif"
+    },
+    {
+      "id": 58,
+      "file": "058.gif",
+      "name": "工作(小睡)",
+      "original": "deepseek娘_工作(小睡)_2026-09-28-22-35-04.gif"
+    },
+    {
+      "id": 59,
+      "file": "059.gif",
+      "name": "工作(普通)",
+      "original": "deepseek娘_工作(普通)_2026-09-28-22-35-09.gif"
+    },
+    {
+      "id": 60,
+      "file": "060.gif",
+      "name": "工作(生气)",
+      "original": "deepseek娘_工作(生气)_2026-09-28-22-34-51.gif"
+    },
+    {
+      "id": 61,
+      "file": "061.gif",
+      "name": "工作(疲倦)",
+      "original": "deepseek娘_工作(疲倦)_2026-09-28-22-35-17.gif"
+    },
+    {
+      "id": 62,
+      "file": "062.gif",
+      "name": "带薪拉屎(困难模式)",
+      "original": "deepseek娘_带薪拉屎(困难模式)_2026-09-28-22-24-41.gif"
+    },
+    {
+      "id": 63,
+      "file": "063.gif",
+      "name": "带薪拉屎(简单模式)",
+      "original": "deepseek娘_带薪拉屎(简单模式)_2026-09-28-22-24-34.gif"
+    },
+    {
+      "id": 64,
+      "file": "064.gif",
+      "name": "干杯",
+      "original": "deepseek娘_干杯_2026-09-28-22-15-02.gif"
+    },
+    {
+      "id": 65,
+      "file": "065.gif",
+      "name": "庆祝",
+      "original": "deepseek娘_庆祝_2026-09-28-22-14-47.gif"
+    },
+    {
+      "id": 66,
+      "file": "066.gif",
+      "name": "得分(0分)",
+      "original": "deepseek娘_得分(0分)_2026-09-28-22-27-09.gif"
+    },
+    {
+      "id": 67,
+      "file": "067.gif",
+      "name": "得分(10分)",
+      "original": "deepseek娘_得分(10分)_2026-09-28-22-27-19.gif"
+    },
+    {
+      "id": 68,
+      "file": "068.gif",
+      "name": "思考(自信地)",
+      "original": "deepseek娘_思考(自信地)_2026-09-28-22-32-19.gif"
+    },
+    {
+      "id": 69,
+      "file": "069.gif",
+      "name": "思考(认真地)",
+      "original": "deepseek娘_思考(认真地)_2026-09-28-22-32-25.gif"
+    },
+    {
+      "id": 70,
+      "file": "070.gif",
+      "name": "情书",
+      "original": "deepseek娘_情书_2026-09-28-22-22-19.gif"
+    },
+    {
+      "id": 71,
+      "file": "071.gif",
+      "name": "惊吓",
+      "original": "deepseek娘_惊吓_2026-09-28-22-30-55.gif"
+    },
+    {
+      "id": 72,
+      "file": "072.gif",
+      "name": "打字(恼怒)",
+      "original": "deepseek娘_打字(恼怒)_2026-09-28-22-33-39.gif"
+    },
+    {
+      "id": 73,
+      "file": "073.gif",
+      "name": "打字(普通)",
+      "original": "deepseek娘_打字(普通)_2026-09-28-22-33-44.gif"
+    },
+    {
+      "id": 74,
+      "file": "074.gif",
+      "name": "打字(生气)",
+      "original": "deepseek娘_打字(生气)_2026-09-28-22-33-35.gif"
+    },
+    {
+      "id": 75,
+      "file": "075.gif",
+      "name": "打招呼 1",
+      "original": "deepseek娘_打招呼 1_2026-09-28-22-19-55.gif"
+    },
+    {
+      "id": 76,
+      "file": "076.gif",
+      "name": "打招呼 2",
+      "original": "deepseek娘_打招呼 2_2026-09-28-22-20-05.gif"
+    },
+    {
+      "id": 77,
+      "file": "077.gif",
+      "name": "打游戏",
+      "original": "deepseek娘_打游戏_2026-09-28-22-19-14.gif"
+    },
+    {
+      "id": 78,
+      "file": "078.gif",
+      "name": "扩音器",
+      "original": "deepseek娘_扩音器_2026-09-28-22-23-08.gif"
+    },
+    {
+      "id": 79,
+      "file": "079.gif",
+      "name": "抓拍(手机)",
+      "original": "deepseek娘_抓拍(手机)_2026-09-28-22-13-51.gif"
+    },
+    {
+      "id": 80,
+      "file": "080.gif",
+      "name": "抓拍(摄像机)",
+      "original": "deepseek娘_抓拍(摄像机)_2026-09-28-22-14-00.gif"
+    },
+    {
+      "id": 81,
+      "file": "081.gif",
+      "name": "拍蝇",
+      "original": "deepseek娘_拍蝇_2026-09-28-22-30-59.gif"
+    },
+    {
+      "id": 82,
+      "file": "082.gif",
+      "name": "拖鞋 1",
+      "original": "deepseek娘_拖鞋 1_2026-09-28-22-28-59.gif"
+    },
+    {
+      "id": 83,
+      "file": "083.gif",
+      "name": "拖鞋 2",
+      "original": "deepseek娘_拖鞋 2_2026-09-28-22-29-08.gif"
+    },
+    {
+      "id": 84,
+      "file": "084.gif",
+      "name": "拿走我的钱",
+      "original": "deepseek娘_拿走我的钱_2026-09-28-22-31-23.gif"
+    },
+    {
+      "id": 85,
+      "file": "085.gif",
+      "name": "指",
+      "original": "deepseek娘_指_2026-09-28-22-25-47.gif"
+    },
+    {
+      "id": 86,
+      "file": "086.gif",
+      "name": "按",
+      "original": "deepseek娘_按_2026-09-28-22-26-06.gif"
+    },
+    {
+      "id": 87,
+      "file": "087.gif",
+      "name": "按钮 (拍击)",
+      "original": "deepseek娘_按钮 (拍击)_2026-09-28-22-13-22.gif"
+    },
+    {
+      "id": 88,
+      "file": "088.gif",
+      "name": "按钮",
+      "original": "deepseek娘_按钮_2026-09-28-22-13-18.gif"
+    },
+    {
+      "id": 89,
+      "file": "089.gif",
+      "name": "揉头 1",
+      "original": "deepseek娘_揉头 1_2026-09-28-22-26-50.gif"
+    },
+    {
+      "id": 90,
+      "file": "090.gif",
+      "name": "摆动 1",
+      "original": "deepseek娘_摆动 1_2026-09-28-22-34-36.gif"
+    },
+    {
+      "id": 91,
+      "file": "091.gif",
+      "name": "摇可乐",
+      "original": "deepseek娘_摇可乐_2026-09-28-22-15-26.gif"
+    },
+    {
+      "id": 92,
+      "file": "092.gif",
+      "name": "摇头",
+      "original": "deepseek娘_摇头_2026-09-28-22-20-28.gif"
+    },
+    {
+      "id": 93,
+      "file": "093.gif",
+      "name": "摇摆 2",
+      "original": "deepseek娘_摇摆 2_2026-09-28-22-34-29.gif"
+    },
+    {
+      "id": 94,
+      "file": "094.gif",
+      "name": "摇铃",
+      "original": "deepseek娘_摇铃_2026-09-28-22-12-17.gif"
+    },
+    {
+      "id": 95,
+      "file": "095.gif",
+      "name": "摘掉墨镜",
+      "original": "deepseek娘_摘掉墨镜_2026-09-28-22-30-45.gif"
+    },
+    {
+      "id": 96,
+      "file": "096.gif",
+      "name": "摸头 2",
+      "original": "deepseek娘_摸头 2_2026-09-28-22-24-46.gif"
+    },
+    {
+      "id": 97,
+      "file": "097.gif",
+      "name": "摸头",
+      "original": "deepseek娘_摸头_2026-09-28-22-24-52.gif"
+    },
+    {
+      "id": 98,
+      "file": "098.gif",
+      "name": "撬棍 1",
+      "original": "deepseek娘_撬棍 1_2026-09-28-22-15-48.gif"
+    },
+    {
+      "id": 99,
+      "file": "099.gif",
+      "name": "撬棍 2",
+      "original": "deepseek娘_撬棍 2_2026-09-28-22-15-54.gif"
+    },
+    {
+      "id": 100,
+      "file": "100.gif",
+      "name": "敲头",
+      "original": "deepseek娘_敲头_2026-09-28-22-12-52.gif"
+    },
+    {
+      "id": 101,
+      "file": "101.gif",
+      "name": "期待 1",
+      "original": "deepseek娘_期待 1_2026-09-28-22-29-18.gif"
+    },
+    {
+      "id": 102,
+      "file": "102.gif",
+      "name": "期待 2",
+      "original": "deepseek娘_期待 2_2026-09-28-22-29-25.gif"
+    },
+    {
+      "id": 103,
+      "file": "103.gif",
+      "name": "期待 3",
+      "original": "deepseek娘_期待 3_2026-09-28-22-29-37.gif"
+    },
+    {
+      "id": 104,
+      "file": "104.gif",
+      "name": "枕头(舔)",
+      "original": "deepseek娘_枕头(舔)_2026-09-28-22-24-58.gif"
+    },
+    {
+      "id": 105,
+      "file": "105.gif",
+      "name": "枕头(蹭)",
+      "original": "deepseek娘_枕头(蹭)_2026-09-28-22-25-03.gif"
+    },
+    {
+      "id": 106,
+      "file": "106.gif",
+      "name": "枕头(蹭2)",
+      "original": "deepseek娘_枕头(蹭2)_2026-09-28-22-25-10.gif"
+    },
+    {
+      "id": 107,
+      "file": "107.gif",
+      "name": "枪",
+      "original": "deepseek娘_枪_2026-09-28-22-20-18.gif"
+    },
+    {
+      "id": 108,
+      "file": "108.gif",
+      "name": "死亡",
+      "original": "deepseek娘_死亡_2026-09-28-22-17-00.gif"
+    },
+    {
+      "id": 109,
+      "file": "109.gif",
+      "name": "汗",
+      "original": "deepseek娘_汗_2026-09-28-22-31-05.gif"
+    },
+    {
+      "id": 110,
+      "file": "110.gif",
+      "name": "点头",
+      "original": "deepseek娘_点头_2026-09-28-22-20-24.gif"
+    },
+    {
+      "id": 111,
+      "file": "111.gif",
+      "name": "点赞",
+      "original": "deepseek娘_点赞_2026-09-28-22-33-02.gif"
+    },
+    {
+      "id": 112,
+      "file": "112.gif",
+      "name": "烧 1",
+      "original": "deepseek娘_烧 1_2026-09-28-22-19-08.gif"
+    },
+    {
+      "id": 113,
+      "file": "113.gif",
+      "name": "爱心 1",
+      "original": "deepseek娘_爱心 1_2026-09-28-22-22-42.gif"
+    },
+    {
+      "id": 114,
+      "file": "114.gif",
+      "name": "爱心 2",
+      "original": "deepseek娘_爱心 2_2026-09-28-22-22-51.gif"
+    },
+    {
+      "id": 115,
+      "file": "115.gif",
+      "name": "爱心 3",
+      "original": "deepseek娘_爱心 3_2026-09-28-22-22-59.gif"
+    },
+    {
+      "id": 116,
+      "file": "116.gif",
+      "name": "玫瑰",
+      "original": "deepseek娘_玫瑰_2026-09-28-22-26-43.gif"
+    },
+    {
+      "id": 117,
+      "file": "117.gif",
+      "name": "生气",
+      "original": "deepseek娘_生气_2026-09-28-22-11-00.gif"
+    },
+    {
+      "id": 118,
+      "file": "118.gif",
+      "name": "电风扇 1",
+      "original": "deepseek娘_电风扇 1_2026-09-28-22-18-51.gif"
+    },
+    {
+      "id": 119,
+      "file": "119.gif",
+      "name": "画板",
+      "original": "deepseek娘_画板_2026-09-28-22-31-12.gif"
+    },
+    {
+      "id": 120,
+      "file": "120.gif",
+      "name": "眨眼",
+      "original": "deepseek娘_眨眼_2026-09-28-22-34-43.gif"
+    },
+    {
+      "id": 121,
+      "file": "121.gif",
+      "name": "睡觉(准备阶段1)",
+      "original": "deepseek娘_睡觉(准备阶段1)_2026-09-28-22-28-25.gif"
+    },
+    {
+      "id": 122,
+      "file": "122.gif",
+      "name": "睡觉(准备阶段2)",
+      "original": "deepseek娘_睡觉(准备阶段2)_2026-09-28-22-28-34.gif"
+    },
+    {
+      "id": 123,
+      "file": "123.gif",
+      "name": "睡觉(普通)",
+      "original": "deepseek娘_睡觉(普通)_2026-09-28-22-28-15.gif"
+    },
+    {
+      "id": 124,
+      "file": "124.gif",
+      "name": "碰鼻子",
+      "original": "deepseek娘_碰鼻子_2026-09-28-22-13-02.gif"
+    },
+    {
+      "id": 125,
+      "file": "125.gif",
+      "name": "礼物 1",
+      "original": "deepseek娘_礼物 1_2026-09-28-22-19-35.gif"
+    },
+    {
+      "id": 126,
+      "file": "126.gif",
+      "name": "礼物 2",
+      "original": "deepseek娘_礼物 2_2026-09-28-22-19-41.gif"
+    },
+    {
+      "id": 127,
+      "file": "127.gif",
+      "name": "笑(指)",
+      "original": "deepseek娘_笑(指)_2026-09-28-22-21-16.gif"
+    },
+    {
+      "id": 128,
+      "file": "128.gif",
+      "name": "紧张 2",
+      "original": "deepseek娘_紧张 2_2026-09-28-22-24-11.gif"
+    },
+    {
+      "id": 129,
+      "file": "129.gif",
+      "name": "红包 1",
+      "original": "deepseek娘_红包 1_2026-09-28-22-26-22.gif"
+    },
+    {
+      "id": 130,
+      "file": "130.gif",
+      "name": "红包 2",
+      "original": "deepseek娘_红包 2_2026-09-28-22-26-30.gif"
+    },
+    {
+      "id": 131,
+      "file": "131.gif",
+      "name": "耶",
+      "original": "deepseek娘_耶_2026-09-28-22-35-22.gif"
+    },
+    {
+      "id": 132,
+      "file": "132.gif",
+      "name": "胶带",
+      "original": "deepseek娘_胶带_2026-09-28-22-31-30.gif"
+    },
+    {
+      "id": 133,
+      "file": "133.gif",
+      "name": "自我安慰",
+      "original": "deepseek娘_自我安慰_2026-09-28-22-15-37.gif"
+    },
+    {
+      "id": 134,
+      "file": "134.gif",
+      "name": "舔(冰淇淋)",
+      "original": "deepseek娘_舔(冰淇淋)_2026-09-28-22-21-25.gif"
+    },
+    {
+      "id": 135,
+      "file": "135.gif",
+      "name": "舔(棒冰)",
+      "original": "deepseek娘_舔(棒冰)_2026-09-28-22-21-30.gif"
+    },
+    {
+      "id": 136,
+      "file": "136.gif",
+      "name": "舔舔",
+      "original": "deepseek娘_舔舔_2026-09-28-22-21-21.gif"
+    },
+    {
+      "id": 137,
+      "file": "137.gif",
+      "name": "舞蹈(散味)",
+      "original": "deepseek娘_舞蹈(散味)_2026-09-28-22-16-38.gif"
+    },
+    {
+      "id": 138,
+      "file": "138.gif",
+      "name": "茶 1",
+      "original": "deepseek娘_茶 1_2026-09-28-22-31-37.gif"
+    },
+    {
+      "id": 139,
+      "file": "139.gif",
+      "name": "茶 3",
+      "original": "deepseek娘_茶 3_2026-09-28-22-32-13.gif"
+    },
+    {
+      "id": 140,
+      "file": "140.gif",
+      "name": "荧光棒 1",
+      "original": "deepseek娘_荧光棒 1_2026-09-28-22-21-35.gif"
+    },
+    {
+      "id": 141,
+      "file": "141.gif",
+      "name": "荧光棒 2",
+      "original": "deepseek娘_荧光棒 2_2026-09-28-22-21-41.gif"
+    },
+    {
+      "id": 142,
+      "file": "142.gif",
+      "name": "蛋糕",
+      "original": "deepseek娘_蛋糕_2026-09-28-22-13-30.gif"
+    },
+    {
+      "id": 143,
+      "file": "143.gif",
+      "name": "被击中(拖鞋)",
+      "original": "deepseek娘_被击中(拖鞋)_2026-09-28-22-19-23.gif"
+    },
+    {
+      "id": 144,
+      "file": "144.gif",
+      "name": "被击中(爱心)",
+      "original": "deepseek娘_被击中(爱心)_2026-09-28-22-19-27.gif"
+    },
+    {
+      "id": 145,
+      "file": "145.gif",
+      "name": "要米",
+      "original": "deepseek娘_要米_2026-09-28-22-23-49.gif"
+    },
+    {
+      "id": 146,
+      "file": "146.gif",
+      "name": "记录 1",
+      "original": "deepseek娘_记录 1_2026-09-28-22-24-23.gif"
+    },
+    {
+      "id": 147,
+      "file": "147.gif",
+      "name": "记录 2",
+      "original": "deepseek娘_记录 2_2026-09-28-22-24-27.gif"
+    },
+    {
+      "id": 148,
+      "file": "148.gif",
+      "name": "跳舞 1",
+      "original": "deepseek娘_跳舞 1_2026-09-28-22-16-28.gif"
+    },
+    {
+      "id": 149,
+      "file": "149.gif",
+      "name": "钱",
+      "original": "deepseek娘_钱_2026-09-28-22-23-14.gif"
+    },
+    {
+      "id": 150,
+      "file": "150.gif",
+      "name": "问号",
+      "original": "deepseek娘_问号_2026-09-28-22-26-12.gif"
+    },
+    {
+      "id": 151,
+      "file": "151.gif",
+      "name": "雨刮器尾巴",
+      "original": "deepseek娘_雨刮器尾巴_2026-09-28-22-31-17.gif"
+    },
+    {
+      "id": 152,
+      "file": "152.gif",
+      "name": "静音 1",
+      "original": "deepseek娘_静音 1_2026-09-28-22-23-35.gif"
+    },
+    {
+      "id": 153,
+      "file": "153.gif",
+      "name": "静音 2",
+      "original": "deepseek娘_静音 2_2026-09-28-22-23-42.gif"
+    },
+    {
+      "id": 154,
+      "file": "154.gif",
+      "name": "音乐 1",
+      "original": "deepseek娘_音乐 1_2026-09-28-22-23-23.gif"
+    },
+    {
+      "id": 155,
+      "file": "155.gif",
+      "name": "音乐 3",
+      "original": "deepseek娘_音乐 3_2026-09-28-22-23-29.gif"
+    },
+    {
+      "id": 156,
+      "file": "156.gif",
+      "name": "饮料(能量饮料1)",
+      "original": "deepseek娘_饮料(能量饮料1)_2026-09-28-22-17-54.gif"
+    },
+    {
+      "id": 157,
+      "file": "157.gif",
+      "name": "饮料(能量饮料2)",
+      "original": "deepseek娘_饮料(能量饮料2)_2026-09-28-22-18-00.gif"
+    },
+    {
+      "id": 158,
+      "file": "158.gif",
+      "name": "馋(刀叉)",
+      "original": "deepseek娘_馋(刀叉)_2026-09-28-22-18-13.gif"
+    },
+    {
+      "id": 159,
+      "file": "159.gif",
+      "name": "馋(筷子)",
+      "original": "deepseek娘_馋(筷子)_2026-09-28-22-18-09.gif"
+    },
+    {
+      "id": 160,
+      "file": "160.gif",
+      "name": "驾驶",
+      "original": "deepseek娘_驾驶_2026-09-28-22-18-04.gif"
+    },
+    {
+      "id": 161,
+      "file": "161.gif",
+      "name": "魔法",
+      "original": "deepseek娘_魔法_2026-09-28-22-23-03.gif"
+    }
+  ]
+}

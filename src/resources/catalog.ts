@@ -14,9 +14,11 @@ export interface ResourceSnapshot {
 /** One resource snapshot per process; sessions share definitions, not execution state. */
 export class AgentResources {
   private readonly cwd: string;
+  private readonly appendSystemPrompt: string[];
   private snapshot?: Promise<ResourceSnapshot>;
-  constructor(cwd: string) {
+  constructor(cwd: string, options: { appendSystemPrompt?: string[] } = {}) {
     this.cwd = cwd;
+    this.appendSystemPrompt = options.appendSystemPrompt ?? [];
   }
   load(): Promise<ResourceSnapshot> {
     this.snapshot ??= this.loadSnapshot().catch((error) => {
@@ -28,7 +30,7 @@ export class AgentResources {
   private async loadSnapshot(): Promise<ResourceSnapshot> {
     const config = await loadResourceConfig(this.cwd);
     const [loader, tools] = await Promise.all([
-      createProjectResourceLoader(this.cwd, config),
+      createProjectResourceLoader(this.cwd, config, this.appendSystemPrompt),
       createToolRegistryAsync(this.cwd, config.tools),
     ]);
     return { loader, tools };

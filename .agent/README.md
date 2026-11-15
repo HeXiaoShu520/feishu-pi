@@ -29,7 +29,7 @@
 
 工具说明、参数 schema、执行方法写在工具文件里；工具使用方法和时机写在 `description`。`SYSTEM.md` 不重复工具用法。
 
-工具名不能与内置 `read/write/edit/bash/browser/memory/background_task/mcp/ask_user_question/schedule_manager` 冲突。
+工具名不能与内置 `read/write/edit/bash/browser/background_task/mcp/ask_user_question/schedule_manager` 冲突。
 
 运行时加载后缓存技能和自定义工具，修改后重启。权限文件每次调用检查 mtime；MCP 配置在使用时读取，变化后重新连接。MCP 配置中的密钥使用 `${ENV_NAME}` 引用，不写明文。
 

@@ -1,0 +1,13 @@
+图片文件：程序员00006-连自己心爱的人都留不住前端做的再好有什么用.jpg
+画面：戴绿帽的熊猫人物拿着绿色工具，周围排列HTML、CSS、JavaScript、Vue、React、Angular、Node.js等标志。
+动作：静态图片
+图中文字：可辨文字：HTML、CSS、JavaScript、Vue、React、Angular、Node.js。
+表达含义：用一堆前端技术图标表现程序员或前端开发。
+情绪：专注
+关键词：前端、HTML、CSS、JavaScript、Vue、React
+适合接话：聊前端技术或程序员生活。
+不适合：非技术对象或严肃沟通。
+不确定处：部分标志文字较小。
+描述来源：Luna视觉描述，静态，可能有误
+图片SHA256：11890c5fbd1b3607fc74fc153c39d5837b3339ab5229548fe46f136b2e8e6d2d
+生成时间：2026-11-12T03:16:28+08:00

@@ -10,7 +10,12 @@
     "test": "vitest --run",
     "setup": "tsx src/scripts/setup-wizard.ts",
     "resources": "tsx src/scripts/resources.ts",
-    "persona": "tsx src/scripts/persona.ts"
+    "persona": "tsx src/scripts/persona.ts",
+    "persona:eval": "tsx src/scripts/persona-eval.ts",
+    "stickers:describe": "node tools/annotate-stickers.mjs",
+    "stickers:audit": "node tools/annotate-stickers.mjs --audit",
+    "stickers:eval": "tsx src/scripts/sticker-eval.ts",
+    "doctor": "node tools/doctor.mjs"
   },
   "dependencies": {
     "@earendil-works/pi-agent-core": "1.5.0",

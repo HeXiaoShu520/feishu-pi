@@ -7,6 +7,7 @@ import type { ToolPolicy, PermissionPolicy } from "../permission/policy.ts";
 import type { ThinkingLevelConfig } from "../config.ts";
 import type { ScheduleService } from "../schedule/service.ts";
 import type { SessionStore } from "./session-store.ts";
+import type { MemoryContext, MemoryService } from "../memory/service.ts";
 
 /** 飞书请求的统一上下文，所有技能都通过它获取调用者信息。
  *
@@ -37,6 +38,8 @@ export interface FeishuPiPrompt {
   text: string;
   /** 当前发言人的原始正文，供记忆使用；不包含引用、人物表或平台提示。 */
   memoryText?: string;
+  /** Live facts only; injected into the request and never persisted in session history. */
+  turnContext?: string;
   images?: Array<{ data: Uint8Array; mimeType: string }>;
 }
 
@@ -49,13 +52,6 @@ export interface SessionStats {
   contextUsage?: { tokens: number | null; contextWindow: number; percent: number | null };
 }
 
-/** 面向桌面前端的历史消息投影；不暴露 Pi 内部 session entry。 */
-export interface FeishuPiHistoryMessage {
-  role: "user" | "assistant";
-  content: string;
-  timestamp?: string;
-}
-
 /** Runtime 配置：工作目录、模型、权限与可选的 Guard 钩子 */
 export interface FeishuPiConfig {
   cwd: string;
@@ -66,7 +62,12 @@ export interface FeishuPiConfig {
   modelBaseUrl?: string;
   /** 思考档位：off=关闭思考，low/high/max 各模型自动适配等效等级（默认 off） */
   thinkingLevel: ThinkingLevelConfig;
+  /** 是否允许模型在回复文字里用 emoji（默认 true；关闭时追加禁用规则并在发送前剥离） */
+  replyEmoji?: boolean;
   /** 系统提示（身份 + 行为规则）由 Pi 自动发现 <agentDir>/SYSTEM.md（即 .agent/SYSTEM.md）注入，此处不再透传 */
+  /** 轻量长期记忆（可选）：每轮请求时注入，不写入会话历史。 */
+  memory?: { recall(openId: string, context?: MemoryContext, query?: string): Promise<string> }
+    & Partial<Pick<MemoryService, "updateProfile">>;
   /** 统一权限策略（.agent/permissions.json）：工具注册、调用判定、可读范围全部由它驱动 */
   /** 会话注册表：会话目录（jsonl/图片/附件同居其中）的唯一事实来源 */
   sessions: SessionStore;
@@ -101,8 +102,6 @@ export interface FeishuPiSession {
   waitForIdle(): Promise<void>;
   abort(): void;
   getStats(): SessionStats;
-  /** 返回当前分支的可展示历史；持久化事实仍由 Pi session 文件维护。 */
-  getHistory?(): FeishuPiHistoryMessage[];
   getModelName?(): string;
 }
 

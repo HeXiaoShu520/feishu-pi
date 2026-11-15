@@ -1,0 +1,13 @@
+图片文件：心心00020-枪心.jpeg
+画面：荷马·辛普森举着枪，画面把枪标注为“love gun”“compliment gun”“attention gun”“support gun”，并标注自己为“me”。
+动作：静态图片
+图中文字：love gun；compliment gun；attention gun；support gun；me
+表达含义：以玩具化的夸张方式表示要向对方发射爱意、赞美、关注和支持。
+情绪：热情、支持
+关键词：荷马辛普森、爱意、赞美、支持
+适合接话：向朋友表达支持、赞美或热情鼓励。
+不适合：不要用于真实枪械或暴力语境。
+不确定处：各英文标签可辨为“love gun”“compliment gun”“attention gun”“support gun”“me”。
+描述来源：Luna视觉描述，静态图片；自动描述，可能有误
+图片SHA256：25a791b9304ed2776e9b000f8123427c97619d0aff625b32e5684a03de8340a2
+生成时间：2026-11-12T20:40:58.227137+00:00

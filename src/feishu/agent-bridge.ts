@@ -8,15 +8,17 @@ import { ReactionController } from "./reaction-controller.ts";
 import { Spinner, randomFrames } from "./spinner.ts";
 import type { Client } from "@larksuiteoapi/node-sdk";
 import { logger } from "../utils/logger.ts";
-import { createDefaultRegistry, DetailCommand, MemoryCommand, NewCommand, StopCommand, markdownCard, type CommandRegistry, type CommandHandler } from "./commands.ts";
-import type { FeishuContext } from "../runtime/types.ts";
-import type { ManagedMemory, MemoryManagementAction } from "../assistant/memory-management.ts";
+import { createDefaultRegistry, DetailCommand, NewCommand, StopCommand, markdownCard, type CommandRegistry, type CommandHandler } from "./commands.ts";
 import { randomUUID } from "node:crypto";
 import { formatStatsLine, formatToolCall, toolIcon, ReplyParts } from "./reply-parts.ts";
+import { stripEmoji } from "../utils/emoji.ts";
 import { STATS_PLACEHOLDER } from "./cardkit-stream.ts";
 import type { PeopleRoster } from "./people-roster.ts";
-import { annotatePeople, personLabel } from "./inbound-content.ts";
-import { StickerDelivery } from "../stickers/delivery.ts";
+import { annotatePeople } from "./inbound-content.ts";
+import { stripStickerCommentary, StickerDelivery } from "../stickers/delivery.ts";
+import { sendHumanReply, shouldUseCard } from "./human-reply.ts";
+import type { MemoryService } from "../memory/service.ts";
+import { ConversationPresence } from "../conversation/presence.ts";
 
 /** 工具段延迟上屏阈值：工具运行满该时长才显示工具段与小字动画，快速指令不刷屏。 */
 const TOOL_SEGMENT_DELAY_MS = 1000;
@@ -33,20 +35,25 @@ export class FeishuAgentBridge {
   private readonly client?: Client;
   private readonly reactionController?: ReactionController;
   private readonly commandRegistry: CommandRegistry;
-  private readonly memoryCommand?: MemoryCommand;
   /** 详细模式开关：key 为 chatId，true 表示工具调用保留在正文中 */
   private readonly detailMode = new Map<string, boolean>();
   /** 回复末尾是否显示模型统计小字；关闭时只影响终态小字，工具过程状态照常显示 */
   private readonly showModelStats: boolean;
+  /** 回复文字是否允许 emoji；关闭时发送前兜底剥离（提示层已约束模型） */
+  private readonly replyEmoji: boolean;
   /** 预制人员名单（可选）：把消息中按名字提到的人补成提示词，模型才能识别/@ 到人 */
   private readonly peopleRoster?: PeopleRoster;
-  private readonly botName: string;
   private readonly botOpenId?: string;
   private readonly recordSticker?: (chatId: string, id: string, line: string) => Promise<void>;
   /** 待答提问的文字回答通道：命中即消费该条文本，不进模型 */
   private readonly answerAskText?: (openId: string, chatId: string, text: string) => boolean;
   /** 每轮开始回调：重置单轮工具调用计数 */
   private readonly onRoundStart?: (chatId: string) => void;
+  /** 轻量长期记忆：只在入口注入、出口异步提炼，不放运行时里。 */
+  private readonly memory?: Pick<MemoryService, "observe">;
+  private readonly presence = new ConversationPresence();
+  private readonly revisions = new Map<string, symbol>();
+  private readonly onDelivered?: (message: FeishuInboundMessage, text: string) => void;
 
   /** 查询某会话是否开启详细模式（供授权卡撤回等外部逻辑判断）。 */
   isDetailMode(chatId: string): boolean {
@@ -62,20 +69,23 @@ export class FeishuAgentBridge {
       client?: Client;
       /** 额外指令（如 /perm），注册在默认指令之后 */
       extraCommands?: CommandHandler[];
-      /** 回复末尾是否显示模型统计小字（默认显示）；工具过程状态不受影响 */
+      /** 回复末尾是否显示模型统计小字（默认不显示）；工具过程状态不受影响 */
       showModelStats?: boolean;
+      /** 回复文字是否允许 emoji（默认否：系统提示已禁用，发送前再兜底剥离） */
+      replyEmoji?: boolean;
       /** 模型信息提供器（/model 指令展示用）；返回运行中的实时值 */
       modelInfo?: () => { baseUrl?: string; modelName: string; apiKey: string };
       /** 预制人员名单（可选）：按名字提到的人自动补 open_id 提示 */
       peopleRoster?: PeopleRoster;
-      botName?: string;
       botOpenId?: string;
       recordSticker?: (chatId: string, id: string, line: string) => Promise<void>;
       /** 文字回答兜底：等待选项卡作答期间用户直接发文本也算回答；返回 true 表示已消费 */
       answerAskText?: (openId: string, chatId: string, text: string) => boolean;
       /** 每轮开始回调（用于重置单轮工具调用计数） */
       onRoundStart?: (chatId: string) => void;
-      manageMemory?: (context: FeishuContext, action: MemoryManagementAction, id?: string) => Promise<ManagedMemory[]>;
+      /** 轻量长期记忆（可选）：注入自我记忆与该用户的印象 */
+      memory?: Pick<MemoryService, "observe">;
+      onDelivered?: (message: FeishuInboundMessage, text: string) => void;
     },
   ) {
     this.conversations = conversations;
@@ -83,15 +93,18 @@ export class FeishuAgentBridge {
     this.onEvent = options?.onEvent;
     this.messages = options?.messages;
     this.client = options?.client;
-    this.showModelStats = options?.showModelStats ?? true;
+    this.showModelStats = options?.showModelStats ?? false;
+    this.replyEmoji = options?.replyEmoji ?? true;
     this.peopleRoster = options?.peopleRoster;
-    this.botName = options?.botName || "机器人";
     this.botOpenId = options?.botOpenId;
     this.recordSticker = options?.recordSticker;
     this.answerAskText = options?.answerAskText;
     this.onRoundStart = options?.onRoundStart;
-    this.memoryCommand = options?.manageMemory ? new MemoryCommand(options.manageMemory) : undefined;
-    this.reactionController = options?.client ? new ReactionController(options.client) : undefined;
+    this.memory = options?.memory;
+    this.onDelivered = options?.onDelivered;
+    // 不在对方消息上加表情：真人聊天不会每句话都贴一个 reaction。
+    // 机制保留，需要时把第二个参数改成 true 即可启用。
+    this.reactionController = options?.client ? new ReactionController(options.client, false) : undefined;
     this.commandRegistry = createDefaultRegistry(options?.modelInfo);
     // /detail on|off 设置详细/精简模式，状态由 bridge 持有（按 chatId 记忆，默认精简）
     this.commandRegistry.register(new DetailCommand(
@@ -99,7 +112,10 @@ export class FeishuAgentBridge {
       (chatId: string) => this.detailMode.get(chatId) === true,
     ));
     // /new /stop 操作会话，实际逻辑由指令自身完成（见 commands.ts）；/restart 由 main 注入。
-    this.commandRegistry.register(new NewCommand((id, openId) => this.conversations.reset(id, openId)));
+    this.commandRegistry.register(new NewCommand(async (id, openId) => {
+      await this.conversations.reset(id, openId);
+      this.presence.clear(id);
+    }));
     this.commandRegistry.register(new StopCommand((id) => this.conversations.abort(id)));
     for (const command of options?.extraCommands ?? []) {
       this.commandRegistry.register(command);
@@ -116,20 +132,25 @@ export class FeishuAgentBridge {
     const conversationId = message.context.conversationId;
     const userName = message.context.userName;
     const requestStartedAt = Date.now();
+    const revision = Symbol(conversationId);
+    this.revisions.set(conversationId, revision);
+    const isCurrent = () => this.revisions.get(conversationId) === revision;
 
     // 新一轮开始：重置单轮工具调用预算（指令/文字回答路径也不受上一轮残留影响）
     this.onRoundStart?.(message.chatId);
 
     // 检测是否为指令
-    const commandHandler = this.memoryCommand?.match(message.text) ? this.memoryCommand : message.context.isOwner === true ? this.commandRegistry.find(message.text) : undefined;
+    const commandHandler = message.context.isOwner === true ? this.commandRegistry.find(message.text) : undefined;
     if (commandHandler) {
       await this.handleCommand(message, commandHandler);
+      if (isCurrent()) this.revisions.delete(conversationId);
       return;
     }
 
     // 待答提问优先接收文字回答（AskBroker 兜底）：命中即消费，不进模型
     if (this.answerAskText?.(message.context.userOpenId, message.chatId, message.text)) {
       logger.info(`[Bridge] 提问已由文字回答结算: ${conversationId}`);
+      if (isCurrent()) this.revisions.delete(conversationId);
       return;
     }
 
@@ -146,17 +167,18 @@ export class FeishuAgentBridge {
     }
 
     // 添加随机表情 reaction
-    await this.reactionController?.start(message.messageId);
+    await this.reactionController?.start(message.messageId, message.text);
 
     if (!this.client) {
       throw new Error("client 未配置，无法创建 CardKit 回复");
     }
 
+    const replyInThread = resolveReplyInThread(message.context.chatMode, message.context.threadId);
     const reply = new CardKitReply({
       client: this.client,
       chatId: message.chatId,
       messageId: message.messageId,
-      replyInThread: resolveReplyInThread(message.context.chatMode, message.context.threadId),
+      replyInThread,
       onError: (err) => logger.error("[CardKit]", err),
       fallbackNotice: async () => {
         await this.client!.im.message.reply({
@@ -164,7 +186,7 @@ export class FeishuAgentBridge {
           data: {
             msg_type: "text",
             content: JSON.stringify({ text: "卡片发送失败，请重试。" }),
-            reply_in_thread: resolveReplyInThread(message.context.chatMode, message.context.threadId),
+            reply_in_thread: replyInThread,
           },
         });
       },
@@ -174,14 +196,17 @@ export class FeishuAgentBridge {
     let toolTimer: NodeJS.Timeout | undefined;
     // 工具段延迟上屏句柄：快速工具（<1s 完成）不展示，避免快速指令来回刷屏
     let pendingToolTimer: NodeJS.Timeout | undefined;
+    const stickerDelivery = new StickerDelivery();
+    const deliveredParts: string[] = [];
+    let deliveredCardText = "";
 
     try {
       let hasRealContent = false;
       let textEvents = 0;
       let lastTextLength = -1;
-      // 本轮表情发送凭证收集器（sticker_send）：从 tool_finished 的真实工具结果读
-      // standalone 发送与嵌入片段，终态据此判断「光发图撤卡」与「送达后才记发送历史」
-      const stickerDelivery = new StickerDelivery();
+      // 短回复先只缓冲文本，终态再决定发几条普通消息；工具段或长内容才切卡片。
+      let bufferedText = "";
+      let cardMode = false;
       let session: FeishuPiSession | undefined;
 
       // parts 模型（见 reply-parts.ts）：精简模式滚动回收，终态只留最后工具段之后的结论
@@ -221,23 +246,33 @@ export class FeishuAgentBridge {
         hasRealContent = true;
       };
 
-      // 每一轮明确标出真正的发言人；引用的原文保留原作者，实际 @ 与已知姓名附 open_id。
-      const speaker = personLabel(userName, message.context.userOpenId);
-      const body = annotatePeople(message.text, knownPeople);
-      const mentionTargets = knownPeople
-        .filter((person) => person.name && person.name !== person.openId)
-        .map((person) => ({ name: person.name, alias: person.alias, openId: person.openId }));
-      // 输出规则由 SYSTEM.md 告诉模型；这里只提供本轮通道和人物数据，发送层不改写模型正文。
+      // 历史里只留人话：`名字: 正文`。ID、通道、机器人显示名都不再每轮注入——
+      // 只有正文里真的出现 @ 时，才把可 @ 的人名与 open_id 交给模型。
+      // 资料查询失败时不要把 open_id 当人名塞给模型，否则它会追问「哪位」。
+      const displayName = userName?.trim();
+      const speaker = displayName && !/^ou_[A-Za-z0-9_-]+$/.test(displayName)
+        ? displayName
+        : message.context.isOwner
+          ? "哥哥"
+          : message.context.chatMode === "p2p" ? "对方" : "群友";
+      const needsMention = /<at\b|@[_a-zA-Z]/.test(message.text);
+      const body = needsMention ? annotatePeople(message.text, knownPeople) : message.text;
+      const roster = needsMention
+        ? knownPeople
+            .filter((person) => person.name && person.name !== person.openId)
+            .map((person) => `${person.name}(${person.openId})`)
+            .join("、")
+        : "";
       const promptText = [
-        `[飞书回复上下文]\n输出通道：CardKit 2.0 Markdown\n机器人显示名：${JSON.stringify(this.botName)}\n已确认人物：${JSON.stringify(mentionTargets)}\n[/飞书回复上下文]`,
         message.quoteText,
         `${speaker}: ${body}`,
+        roster && `本轮可 @ 的人：${roster}`,
       ].filter(Boolean).join("\n");
 
       session = await this.conversations.prompt(
         {
           conversationId,
-          prompt: { text: promptText, memoryText: message.text, images: message.images },
+          prompt: { text: promptText, memoryText: message.text, turnContext: this.presence.recall(conversationId), images: message.images },
           context: message.context, // 调用者身份（权限组判定、会话目录归属的依据）
         },
         async (event) => {
@@ -246,8 +281,9 @@ export class FeishuAgentBridge {
           if (event.type === "assistant_text") {
             textEvents += 1;
             lastTextLength = event.text.length;
-            startRealContent();
-            await replyParts.appendText(event.text);
+            bufferedText = event.text;
+            // 已切卡片就继续流式渲染；否则只缓冲，避免短回复也弹一整张卡。
+            if (cardMode) await replyParts.appendText(event.text);
           }
           // 工具事件：追加工具摘要段（精简模式只留当前一个），小字位置同步显示动画。
           // 工具段延迟 1s 上屏：跑得比 1s 快的工具（快速指令）什么都不显示，不刷屏；
@@ -255,6 +291,8 @@ export class FeishuAgentBridge {
           if (event.type === "tool_started") {
             // 工具启动不再触发建卡：延迟满 1s 仍未完成才随工具段一起出卡（快速指令完全静默）
             const toolName = event.toolName;
+            // 表情工具永远不弹卡片：图要像群友一样直接甩到聊天里，检索/审核过程不展示。
+            if (toolName === "sticker_search" || toolName === "sticker_send") return;
             const segment = `\n\n${formatToolCall(toolName, event.args)}`;
             clearTimeout(pendingToolTimer);
             pendingToolTimer = setTimeout(() => {
@@ -262,7 +300,10 @@ export class FeishuAgentBridge {
               activeToolName = toolName;
               toolSpinner.withPrefix(`${toolIcon(toolName)} ${toolName}`);
               void (async () => {
+                // 慢工具才出卡：先把已缓冲的正文补进卡片，再追加工具段，保持阅读顺序。
+                cardMode = true;
                 startRealContent();
+                if (bufferedText.trim()) await replyParts.appendText(bufferedText);
                 await replyParts.appendTool(segment);
               })().catch(() => {});
             }, TOOL_SEGMENT_DELAY_MS);
@@ -320,18 +361,26 @@ export class FeishuAgentBridge {
         logger.info(`[Bridge] 本轮无统计小字（会话统计不可用）: ${conversationId}`);
       }
 
-      // 终态：详细=全量；精简=最后一个工具段之后的结论段
-      const finalText = replyParts.composeFinal();
+      // 终态：详细=全量；精简=最后一个工具段之后的结论段。
+      // 关闭 emoji 时发送前兜底剥离：提示层已约束模型，这里防偶发不听话（代码块内容不动）
+      const composed = cardMode ? replyParts.composeFinal() : bufferedText;
+      let finalText = this.replyEmoji ? composed : stripEmoji(composed);
       const sentStandaloneSticker = stickerDelivery.standaloneSent;
-      // 光发图：本轮以 standalone 表情作为整轮回复且无正文 → 撤回复卡，会话里只留那张独立图片
+      // 本轮已经单独发过表情：只删明确的解说腔（描述图片、汇报张数、翻库存），
+      // 正常接话不管长短都保留。
+      if (sentStandaloneSticker) finalText = stripStickerCommentary(finalText);
+      const useCard = cardMode || shouldUseCard(finalText);
+      // 光发图：本轮以 standalone 表情作为整轮回复且无正文 → 不额外发文字，会话里只留那张图
       if (sentStandaloneSticker && !finalText.trim()) {
         await reply.recall().catch((error) => logger.warn("[Bridge] 撤回纯表情回复卡失败:", error));
+      } else if (!useCard) {
+        // 轻量闲聊：拆成几条普通文本消息，带一点打字等待，像人一条条发。
+        await sendHumanReply(this.client, { chatId: message.chatId, messageId: message.messageId, text: finalText, replyInThread,
+          shouldContinue: isCurrent, onDelivered: part => deliveredParts.push(part),
+        });
       } else {
         await reply.close(finalText, statsLine);
-        if (reply.isDelivered && this.recordSticker) {
-          await stickerDelivery.confirm(finalText, (id, line) => this.recordSticker!(message.chatId, id, line))
-            .catch(error => logger.warn("[Sticker] 卡片已发送，但记录保存失败:", error));
-        }
+        if (reply.isDelivered) deliveredCardText = finalText;
       }
 
       // 记录最终响应（含耗时；空文本单独特警，便于发现模型无输出/被拦截的情况；
@@ -354,9 +403,26 @@ export class FeishuAgentBridge {
       await reply.close(`处理失败：${errorMessage}`).catch((closeErr) => logger.error("[Bridge] 关闭回复卡失败:", closeErr));
       throw error;
     } finally {
+      if (isCurrent()) this.revisions.delete(conversationId);
       // 动画定时器兜底清理（prompt 抛错时走这里；已清理过的句柄重复 clear 是无害的）
       clearInterval(toolTimer);
       clearTimeout(pendingToolTimer);
+      // One settlement path for success, interruption and partial text delivery.
+      const deliveredText = deliveredCardText || deliveredParts.join("\n\n");
+      if (deliveredText || stickerDelivery.standaloneSent) {
+        this.presence.delivered(conversationId, deliveredText, stickerDelivery.standaloneSent);
+        try { this.onDelivered?.(message, deliveredText || "[已发送表情图片]"); }
+        catch (error) { logger.warn("[Bridge] 更新群活动失败:", error instanceof Error ? error.message : error); }
+        void this.memory?.observe({
+          openId: message.context.userOpenId,
+          context: { chatId: message.chatId, chatMode: message.context.chatMode ?? "group", threadId: message.context.threadId },
+          userText: message.text, assistantText: deliveredText,
+        }).catch(error => logger.warn("[Memory] 记录失败:", error instanceof Error ? error.message : error));
+      }
+      if (this.recordSticker) {
+        await stickerDelivery.confirm(deliveredText, (id, line) => this.recordSticker!(message.chatId, id, line))
+          .catch(error => logger.warn("[Sticker] 更新发送记录失败:", error instanceof Error ? error.message : error));
+      }
       // 移除 reaction
       await this.reactionController?.stop(message.messageId);
     }

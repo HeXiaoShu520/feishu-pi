@@ -1,0 +1,13 @@
+图片文件：打电话00069-提示音WeAreSorryTheNumberYouHave.png
+画面：简笔熊猫脸下方显示英文电话提示，说明所拨号码目前暂停服务，请检查号码或重拨。
+动作：静态图片
+图中文字：We're sorry, the number you have reached is not in service at this time, please check the number or try your call again.
+表达含义：模仿电话无法接通的录音提示，表示对方暂时联系不上。
+情绪：冷淡、打趣
+关键词：熊猫脸、电话、无法接通、英文
+适合接话：开玩笑表示暂时联系不到对方或不想接电话。
+不适合：不适合用于紧急联络或真实通信故障通知。
+不确定处：英文句子有排版换行，按可见内容连写。
+描述来源：Luna视觉描述，静态图片；自动描述，可能有误
+图片SHA256：2cdc44c51ebe4d96f7e740148efe530f557aa87deee7ff15586d843f602e66b8
+生成时间：2026-11-12T20:35:24.612357+00:00

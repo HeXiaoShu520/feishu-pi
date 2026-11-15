@@ -218,9 +218,10 @@ export class CardKitReply implements FeishuReply {
     }
   }
 
-  /** 发送引用 card_id 的卡片消息（回复原消息或直接发送）。记录每张卡的消息 ID。 */
+  /** 发送引用 card_id 的卡片消息。仅在话题场景（replyInThread）下回复原消息；
+   *  普通群/私聊直接发到群里，不带「回复 xx」引用头，像群友一样直接说话。 */
   private async sendCardReference(cardId: string, replyToMessageId?: string): Promise<void> {
-    if (replyToMessageId) {
+    if (this.replyInThread && replyToMessageId) {
       const res = await this.client.im.message.reply({
         path: { message_id: replyToMessageId },
         data: {
