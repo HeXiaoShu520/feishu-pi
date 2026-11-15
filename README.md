@@ -6,12 +6,12 @@
 
 ## 开始使用
 
-本发布分支自带默认人格、配置模板、clawd 和 whale-girl 两套表情原图及逐图描述，不需要重新识图。仍需使用者配置自己的飞书应用和模型接口，仓库不包含作者账号或聊天数据。
+本发布分支自带默认人格、配置模板、本机图库的全量表情原图及逐图描述，不需要重新识图。仍需使用者配置自己的飞书应用和模型接口，仓库不包含作者账号或聊天数据。
 
 建议 Windows、最新 Node.js 22.x 或更新版本、Python 3.11+、Git。模型需支持图片输入与工具调用。浏览器默认使用本机 Edge，也可配置 Chrome。
 
 ```sh
-git clone --branch release/ready-to-run-20261116 --single-branch https://github.com/HeXiaoShu520/feishu-pi.git
+git clone --depth 1 --branch release/ready-to-run-20261116 --single-branch https://github.com/HeXiaoShu520/feishu-pi.git
 cd feishu-pi
 npm ci
 python -m pip install -r requirements-stickers.txt
@@ -64,13 +64,13 @@ npm start
 
 `sticker_search` 使用这些描述筛选候选。`sticker_send` 先以 `action=inspect` 返回实际图片预览和描述，此时不上传、不发送；模型结合当前聊天自行判断，适合才带一次性 `reviewToken` 和接话理由调用 `action=send`，不适合继续换选或只回文字。只接受完整表情 ID，不能再用“开心”等情绪词直接随机发送。凭证绑定会话、图片和描述，五分钟失效；修改图片或描述后需要重新检查。流程保证先提供看图机会，语境判断仍可能出错。
 
-`npm run stickers:describe` 为磁盘上全部图片生成描述；已有且图片指纹匹配的文件跳过，已有不匹配的文件保留并报告待复核。`npm run stickers:audit` 核对覆盖率和图片指纹。生成默认使用已配置的模型接口；可通过 `FEISHU_STICKER_VISION_*` 单独指定视觉模型，进度及失败清单在 `data/sticker-annotation/`。描述文件随 Git 保存，大包原图仍需另行备份。工具代码改动需重启，描述内容约五秒刷新缓存。
+`npm run stickers:describe` 为磁盘上全部图片生成描述；已有且图片指纹匹配的文件跳过，已有不匹配的文件保留并报告待复核。`npm run stickers:audit` 核对覆盖率和图片指纹。生成默认使用已配置的模型接口；可通过 `FEISHU_STICKER_VISION_*` 单独指定视觉模型，进度及失败清单在 `data/sticker-annotation/`。原图和描述文件均随本分支保存。工具代码改动需重启，描述内容约五秒刷新缓存。
 
 成功发送的表情名称、描述和时间按聊天隔离保存在 `data/sticker-history/`，每个聊天保留最近 30 条；最近发送的表情在检索中降权，明确指定的表情仍可重复发送。最近 5 条描述可供模型参考，但不代表模型看过原图。记录写入失败不代表发送失败。
 
 搜索工具支持按思考、工作、等待、成功、失败、休息、打招呼等场景查找 dsh-pet 动作；是否调用搜索及发送仍由模型结合实际对话判断，不会每次任务状态变化都自动发图。状态图需以真实任务结果为依据，严肃话题可不发。场景搜索同样遵守表情黑白名单和当前聊天的近期去重。
 
-本地表情库位于工程根 `stickers/`（不再放在 `data/` 下）。8 套组的 `metadata.json` 索引与许可文件入库 Git；图片仅 clawd、whale-girl 两个小套组随库提交，其余大包留本地，换机器后按来源重新采集、配合入库索引即可重建。`sticker_search` 按名称、情绪和描述检索（加权字段 + 中文二元组兜底，近期发过的自动降权避免连发重复），`sticker_send` 将所选表情发送到当前飞书会话；黑白名单在 `.agent/stickers.json`，用户配置优先、模型不可改。各套素材的作者、来源及授权以原项目和图库目录中的说明为准：
+本地表情库位于工程根 `stickers/`（不再放在 `data/` 下）。全部现有表情原图、逐图描述、各套组 `metadata.json` 索引与来源许可文件随本分支提交，图库约2.27 GB，克隆后无需重新采集。`sticker_search` 按名称、情绪和描述检索（加权字段 + 中文二元组兜底，近期发过的自动降权避免连发重复），`sticker_send` 将所选表情发送到当前飞书会话；黑白名单在 `.agent/stickers.json`，用户配置优先、模型不可改。各套素材的作者、来源及授权以原项目和图库目录中的说明为准：
 
 斗图还可按自己的回应方向检索（反击、闪避、认输等），选图后须预览再发送。**飞书收藏表情消息不支持通过公开消息资源接口下载，机器人不能据占位符理解画面**；要让它看图接招，请以普通图片消息发送。`npm run stickers:eval -- --live` 可在本地模拟发送并验证真实模型的检索和预览流程。
 
@@ -86,7 +86,7 @@ npm start
 | 微信表情包合集（emoji-package） | [getActivity/EmojiPackage](https://github.com/getActivity/EmojiPackage)，2073 张；收集性质，版权归原作者所有，仅自用请勿再分发。 |
 | 大肥鱼角色表情（dafeiyu） | [diwer/ai-biaoqingbao](https://github.com/diwer/ai-biaoqingbao)，100 张中文 GIF，蓝发鲸鱼娘二创；AI 辅助二创，角色许可边界未完全明确，仅自用、不再分发，来源与许可见 `stickers/dafeiyu/NOTICE.txt`。 |
 
-来源说明和许可文件也保留在对应图库目录中；大包图片不入库，迁移或备份时需单独保存 `stickers/` 下未随库提交的套组目录。
+来源说明和许可文件也保留在对应图库目录中；本分支全量图片入库，迁移时完整克隆并保留 `stickers/` 即可。
 
 ## 人格与回复形态
 

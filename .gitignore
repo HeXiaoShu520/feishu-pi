@@ -65,7 +65,7 @@ test/.tmp/
 
 data/
 
-# 表情图库：逐图 txt、索引与许可入库，大包图片留本地，clawd 与 whale-girl 两个小套组整体入库。
+# 表情图库：全量原图、逐图描述、索引和来源许可入库；排除临时备份等其他文件。
 /stickers/**/*
 !/stickers/**/
 !/stickers/README.md
@@ -73,6 +73,13 @@ data/
 !/stickers/*/metadata.json
 !/stickers/*/NOTICE
 !/stickers/*/LICENSE-ASSETS
+!/stickers/*/LICENSE*
+!/stickers/**/*.gif
+!/stickers/**/*.png
+!/stickers/**/*.jpg
+!/stickers/**/*.jpeg
+!/stickers/**/*.webp
+!/stickers/**/*.md
 !/stickers/clawd/**
 !/stickers/whale-girl/**
 

@@ -28,8 +28,8 @@ function walk(dir) {
 for (const pack of ["clawd", "whale-girl"]) {
   const dir = join(cwd, "stickers", pack);
   check(existsSync(join(dir, "metadata.json")), `内置图库 ${pack}`, "请完整克隆本分支，保留 stickers 目录");
-  walk(dir);
 }
+walk(join(cwd, "stickers"));
 check(images > 0, `内置表情原图（${images} 张）`, "当前副本缺少原图，仅描述文件不能发送表情");
 check(existsSync(join(cwd, ".agent", "SYSTEM.md")), "默认人格", "缺少 .agent/SYSTEM.md");
 if (!process.argv.includes("--no-config")) {
