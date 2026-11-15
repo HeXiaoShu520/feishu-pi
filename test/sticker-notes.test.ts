@@ -63,7 +63,11 @@ describe("每张图片的独立描述", () => {
     const preview = async (_root: string, path: string) => ({ data: "cHJldmlldw==", mimeType: "image/png" as const, sha256: createHash("sha256").update(await readFile(path)).digest("hex"), frameCount: 1, sampledFrames: [1], durationMs: 0 });
     const first = createStickerSendTool(client, root, "chat-a", { preview });
     const other = createStickerSendTool(client, root, "chat-b", { preview });
-    const inspect = async () => parseResult(await first.execute("i", { id: "emotelab:1" }, undefined)).reviewToken as string;
+    const inspect = async () => {
+      const result = parseResult(await first.execute("i", { id: "emotelab:1" }, undefined));
+      expect(result.meaning.source).toBe("image_description_file");
+      return result.reviewToken as string;
+    };
     const payload = (token: string) => ({ id: "emotelab:1", action: "send", reviewToken: token, reason: "对方刚问了难题，这张自嘲图是在说自己没想明白" });
     const token = await inspect();
     expect(upload).not.toHaveBeenCalled();

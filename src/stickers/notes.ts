@@ -1,5 +1,5 @@
 import { readFile, realpath, stat } from "node:fs/promises";
-import { basename, extname, isAbsolute, relative, resolve, sep } from "node:path";
+import { basename, extname, isAbsolute, relative, sep } from "node:path";
 
 /** Human-readable, one-image-one-file descriptions; image basenames are never model instructions. */
 export interface StickerNote {
@@ -50,9 +50,11 @@ export async function libraryPath(root: string, path: string): Promise<string> {
 
 const cache = new Map<string, { stamp: string; note?: StickerNote }>();
 export async function readStickerNote(root: string, image: string, options: { fresh?: boolean } = {}): Promise<StickerNote | undefined> {
-  const rel = relative(resolve(root), resolve(image));
-  if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return undefined;
-  for (const file of notePaths(image)) {
+  // Compare canonical paths on both sides: Windows TEMP may use RUNNER~1 while
+  // realpath(image) returns runneradmin. Lexical comparison rejects that valid pair.
+  let safeImage: string;
+  try { safeImage = await libraryPath(root, image); } catch { return undefined; }
+  for (const file of notePaths(safeImage)) {
     try {
       const safe = await libraryPath(root, file);
       const info = await stat(safe);
@@ -60,7 +62,7 @@ export async function readStickerNote(root: string, image: string, options: { fr
       const stamp = `${info.mtimeMs}:${info.size}:${safe}`;
       const previous = cache.get(file);
       if (!options.fresh && previous?.stamp === stamp) return previous.note;
-      const note = parseStickerNote(await readFile(safe, "utf8"), image);
+      const note = parseStickerNote(await readFile(safe, "utf8"), safeImage);
       if (cache.size > 12_000) cache.clear();
       cache.set(file, { stamp, note });
       return note;
