@@ -64,7 +64,9 @@ export function createStickerSendTool(
       const jpeg = image.subarray(0, 3).equals(Buffer.from([0xff, 0xd8, 0xff])); // 新增的中文热梗包大半是 jpg
       if (!(gif || png || jpeg)) throw new Error("仅支持图库中的 GIF、PNG 和 JPG 表情");
       const sha256 = createHash("sha256").update(image).digest("hex");
-      const note = await readStickerNote(root, path);
+      // Timestamp/size caches can collide after a same-size rewrite on Windows.
+      // Inspect/send must compare the current text, not the search cache.
+      const note = await readStickerNote(root, path, { fresh: true });
       const currentNote = note?.sha256 === sha256 ? note : undefined;
       const meaning = currentNote ? {
         description: currentNote.description, motion: currentNote.motion, text: currentNote.text,

@@ -1,6 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createHash } from "node:crypto";
-import { mkdtemp, mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, symlink, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Client } from "@larksuiteoapi/node-sdk";
@@ -79,8 +79,11 @@ describe("每张图片的独立描述", () => {
     await writeFile(one, Buffer.from("GIF89a changed"));
     await expect(first.execute("s", payload(changedImage), undefined)).rejects.toThrow("inspect");
     await writeFile(one, bytes);
+    const timestamp = new Date("2026-01-01T00:00:00Z");
+    await utimes(join(root, "emotelab/one.txt"), timestamp, timestamp);
     const changedNote = await inspect();
     await writeFile(join(root, "emotelab/one.txt"), note(one, "描述已经更正，现在表达的是另一种意思"));
+    await utimes(join(root, "emotelab/one.txt"), timestamp, timestamp);
     await expect(first.execute("s", payload(changedNote), undefined)).rejects.toThrow("inspect");
     expect(send).not.toHaveBeenCalled();
     const accepted = await inspect();

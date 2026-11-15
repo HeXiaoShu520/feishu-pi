@@ -49,7 +49,7 @@ export async function libraryPath(root: string, path: string): Promise<string> {
 }
 
 const cache = new Map<string, { stamp: string; note?: StickerNote }>();
-export async function readStickerNote(root: string, image: string): Promise<StickerNote | undefined> {
+export async function readStickerNote(root: string, image: string, options: { fresh?: boolean } = {}): Promise<StickerNote | undefined> {
   const rel = relative(resolve(root), resolve(image));
   if (!rel || rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return undefined;
   for (const file of notePaths(image)) {
@@ -59,7 +59,7 @@ export async function readStickerNote(root: string, image: string): Promise<Stic
       if (!info.isFile() || info.size > 16_000) continue;
       const stamp = `${info.mtimeMs}:${info.size}:${safe}`;
       const previous = cache.get(file);
-      if (previous?.stamp === stamp) return previous.note;
+      if (!options.fresh && previous?.stamp === stamp) return previous.note;
       const note = parseStickerNote(await readFile(safe, "utf8"), image);
       if (cache.size > 12_000) cache.clear();
       cache.set(file, { stamp, note });
